@@ -520,6 +520,61 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   ok('empty batch_model omits --model entirely', !argv.includes('--model'));
   ok('empty batch_effort omits --effort entirely', !argv.includes('--effort'));
 }
+{
+  // digest must drop harness boilerplate (command echo / isMeta / tool results) — verified
+  // against a real transcript where 17 of 18 user turns were noise and every batch went NO-OP.
+  const dir = sandbox('digest-noise');
+  const input = path.join(dir, 'noisy.jsonl');
+  fs.writeFileSync(input, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: '진짜 사용자 발화입니다' }, promptSource: 'queued' }),
+    JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '커맨드 본문이 확장된 메타 턴' } }),
+    JSON.stringify({ type: 'user', toolUseResult: { ok: true }, message: { role: 'user', content: '도구 결과가 user 턴으로 들어온 것' } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: '<command-name>/okf:okf-config</command-name>' } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: '<local-command-stdout>실행 출력</local-command-stdout>' } }),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '진짜 어시스턴트 답변' }] } }),
+  ].join('\n') + '\n');
+  const out = path.join(dir, 'out.digest.md');
+  digestFile(input, out, 150);
+  const text = fs.readFileSync(out, 'utf8');
+  ok('digest keeps genuine user speech', text.includes('진짜 사용자 발화입니다'));
+  ok('digest keeps genuine assistant reply', text.includes('진짜 어시스턴트 답변'));
+  ok('digest drops isMeta turns', !text.includes('커맨드 본문이 확장된 메타 턴'));
+  ok('digest drops toolUseResult turns', !text.includes('도구 결과가 user 턴으로'));
+  ok('digest drops slash-command echo', !text.includes('okf:okf-config'));
+  ok('digest drops local-command output', !text.includes('실행 출력'));
+}
+{
+  // a turn mixing real text with boilerplate must keep the real text (strip, don't drop wholesale)
+  const dir = sandbox('digest-mixed');
+  const input = path.join(dir, 'mixed.jsonl');
+  fs.writeFileSync(input, JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: '<command-name>/foo</command-name>\n이건 사용자가 같이 쓴 진짜 문장' },
+  }) + '\n');
+  const out = path.join(dir, 'out.digest.md');
+  digestFile(input, out, 150);
+  const text = fs.readFileSync(out, 'utf8');
+  ok('digest strips boilerplate but keeps real text in the same turn', text.includes('이건 사용자가 같이 쓴 진짜 문장') && !text.includes('/foo'));
+}
+{
+  // size-based run budget: many small sessions ride along in one run; oversized backlog defers.
+  const home = bootstrapped('digest-budget');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, batch_max_digest_kb: 1, batch_max_sessions: 50 });
+  fs.mkdirSync(okfPaths(home).raw, { recursive: true });
+  // each fixture digests to well under 1KB, so several fit the budget and the rest defer
+  const big = 'x'.repeat(700);
+  for (let i = 0; i < 5; i++) {
+    fs.writeFileSync(
+      path.join(okfPaths(home).raw, `2026-07-15--proj--aaaaaaaa-0000-0000-0000-00000000000${i}.jsonl`),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: `${big} 세션 ${i}` } }) + '\n'
+    );
+  }
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  const processed = listRemoveCandidate(home).length;
+  const deferredLeft = listRaw(home).length;
+  ok('budget processes more than one small session per run', processed >= 1);
+  ok('budget defers the rest back to raw instead of dropping them', processed + deferredLeft === 5, `processed=${processed} left=${deferredLeft}`);
+}
 
 // ---------------------------------------------------------------------------
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -259,6 +259,36 @@ function generateDigests(okfHome, stagingDir, files, capKb) {
   return digestPaths;
 }
 
+// 실행당 digest 총량 예산을 적용한다. 예산을 넘는 세션은 raw로 되돌려 다음 회차로 미룬다.
+//
+// 왜 개수가 아니라 크기인가: 세션 하나가 100바이트일 수도 100KB일 수도 있어서 개수 상한은
+// 비용을 전혀 대변하지 못했다. 잡담 10개로 회차를 소진하는 동안 실제 처리량은 0에 가깝고,
+// 그 사이 유입은 계속돼 backlog가 영구히 증가했다(실측: pendingAfter가 매 회차 증가).
+// 바이트 예산이면 작은 세션은 얼마든지 한 번에 딸려 들어가고, 큰 세션만 회차를 차지한다.
+//
+// 최소 1개는 항상 통과시킨다 — 단일 세션이 예산보다 크면 영원히 처리 못 하고 raw에 갇힌다
+// (digest는 batch_digest_cap_kb로 이미 파일당 상한이 걸려 있으므로 폭주하지 않는다).
+function applyDigestBudget(okfHome, digestPaths, budgetBytes) {
+  const selected = [];
+  const deferred = [];
+  let total = 0;
+  for (const dp of digestPaths) {
+    let size = 0;
+    try {
+      size = fs.statSync(dp.digest).size;
+    } catch {
+      // 크기를 못 재면 0으로 두고 통과시킨다 — 어차피 LLM 입력이 거의 없다는 뜻이다
+    }
+    if (selected.length > 0 && total + size > budgetBytes) {
+      deferred.push(dp);
+    } else {
+      selected.push(dp);
+      total += size;
+    }
+  }
+  return { selected, deferred, totalBytes: total };
+}
+
 // ---------- 6. 청크별 순차 처리 ----------
 function chunkBySize(digestPaths, limitBytes) {
   const chunks = [];
@@ -525,7 +555,24 @@ function runBatch() {
       return;
     }
 
-    const chunks = chunkBySize(digestPaths, CHUNK_BYTE_LIMIT);
+    // 실행당 비용 상한(크기 기반). 예산 밖 세션은 raw로 되돌려 다음 회차가 가져간다.
+    const budgetBytes = Math.max(1, config.batch_max_digest_kb) * 1024;
+    const { selected, deferred, totalBytes } = applyDigestBudget(okfHome, digestPaths, budgetBytes);
+    if (deferred.length > 0) {
+      const paths = okfPaths(okfHome);
+      for (const dp of deferred) {
+        try {
+          fs.renameSync(dp.source, path.join(paths.raw, path.basename(dp.source)));
+          tryUnlink(dp.digest);
+        } catch (err) {
+          log(okfHome, `예산 초과분 raw 반환 실패 ${dp.source}: ${err.message}`);
+        }
+      }
+      log(okfHome, `digest 예산 ${config.batch_max_digest_kb}KB 초과 — ${selected.length}개 처리, ${deferred.length}개 다음 회차로 이월`);
+    }
+    log(okfHome, `이번 회차 처리 대상: 세션 ${selected.length}개, digest 합계 ${(totalBytes / 1024).toFixed(1)}KB`);
+
+    const chunks = chunkBySize(selected, CHUNK_BYTE_LIMIT);
     const { processedChunks, aborted } = processChunks(okfHome, chunks, pluginRootDir, config);
 
     try {

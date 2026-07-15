@@ -11,7 +11,7 @@
 2. 백그라운드에서(cron 같은 스케줄러가 아니라 기회주의적 배치 작업으로) 캡처된
    세션들을 `claude -p`로 **압축**해 재사용 가능한 지식 — 결정, 프로젝트 정보,
    선호, 패턴, 참고자료, 트러블슈팅 — 을 구조화된
-   [OKF(Open Knowledge Format)](https://okf.md) 번들로 추출합니다.
+   [OKF(Open Knowledge Format)](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr) 번들로 추출합니다.
 3. 새 세션이 시작될 때마다 이 번들의 인덱스를 컨텍스트에 **필수 게이트로 주입**해서,
    관련 작업을 할 때마다 매번 처음부터 시작하지 않고 실제로 과거 지식을 Read하고
    시작하도록 합니다.
@@ -86,7 +86,7 @@ SessionEnd → raw/에                      │
 - 구조 린터가 번들을 항상 스펙 준수 상태로 유지합니다 — 배치 결과가 조금이라도
   형식에 안 맞으면 커밋 전에 자동으로 원복됩니다.
 
-기반이 되는 포맷 스펙은 [okf.md](https://okf.md)를 참고하세요 — YAML frontmatter가
+포맷의 배경과 설계 의도는 Google Cloud의 [Open Knowledge Format 발표글](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr)을 참고하세요 — YAML frontmatter가
 붙은 마크다운 파일일 뿐이라 이 플러그인 없이도 어떤 도구로든 읽을 수 있습니다.
 
 ## 설정

@@ -11,7 +11,7 @@
 2. 在后台(不是 cron 之类的定时任务,而是一种机会主义式的批处理)使用
    `claude -p` **压缩**已捕获的会话,提取可复用的知识 —— 决策、项目信息、
    偏好、模式、参考资料、故障排查经验 —— 整理成结构化的
-   [OKF(Open Knowledge Format)](https://okf.md) 知识包。
+   [OKF(Open Knowledge Format)](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr) 知识包。
 3. 每次新会话启动时,将该知识包的索引作为**强制性网关**注入上下文,使
    Claude 在处理相关工作前真正去 Read 过去的相关知识,而不是每次都从零
    开始。
@@ -82,7 +82,7 @@ SessionEnd → 无损捕获到                  │
 - 结构化 linter 始终保证知识包符合规范:如果某次批处理的结果存在任何格式
   问题,会在提交前自动回滚。
 
-底层格式规范请参考 [okf.md](https://okf.md)—— 它只是带有 YAML frontmatter
+关于该格式的背景与设计理念,请参考 Google Cloud 的 [Open Knowledge Format 发布文章](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr)—— 它只是带有 YAML frontmatter
 的 markdown 文件,即使不用这个插件,任何工具都能读取。
 
 ## 配置

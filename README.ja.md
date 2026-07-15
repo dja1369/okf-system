@@ -13,7 +13,7 @@
    として)キャプチャ済みセッションを `claude -p` で**圧縮**し、再利用可能な
    知識 — 決定事項、プロジェクト情報、好み、パターン、参考資料、
    トラブルシューティング — を構造化された
-   [OKF(Open Knowledge Format)](https://okf.md) バンドルとして抽出します。
+   [OKF(Open Knowledge Format)](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr) バンドルとして抽出します。
 3. 新しいセッションが始まるたびに、そのバンドルのインデックスを
    コンテキストに**必須ゲートとして注入**し、関連する作業のたびに毎回ゼロから
    始めるのではなく、実際に過去の知識を Read してから取り掛かるようにします。
@@ -92,7 +92,7 @@ SessionEnd → raw/ へ                      │
 - 構造リンターがバンドルを常に仕様準拠の状態に保ちます — バッチの結果が
   少しでも不正な形式であれば、コミット前に自動的にロールバックされます。
 
-基盤となるフォーマット仕様については [okf.md](https://okf.md) を参照して
+フォーマットの背景と設計意図については Google Cloud の [Open Knowledge Format 発表記事](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr) を参照して
 ください — YAML frontmatter 付きの markdown ファイルにすぎないため、この
 プラグインなしでもどんなツールでも読み取れます。
 

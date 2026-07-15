@@ -11,7 +11,7 @@ base — automatically. No manual note-taking, no separate tool to run.
 2. **Compresses** captured sessions in the background (an opportunistic batch job,
    not a cron/scheduled task) using `claude -p` to extract reusable knowledge —
    decisions, project facts, preferences, patterns, references, troubleshooting —
-   into a structured [OKF (Open Knowledge Format)](https://okf.md) bundle.
+   into a structured [OKF (Open Knowledge Format)](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr) bundle.
 3. **Injects** an index of that bundle into every new session's context as a
    mandatory gate, so Claude actually reads relevant past knowledge before working
    on something related, instead of starting from zero every time.
@@ -88,7 +88,7 @@ SessionEnd → lossless capture           │
 - A structural linter keeps the bundle always spec-conformant: if a batch run
   would leave anything malformed, it's automatically rolled back before commit.
 
-See [okf.md](https://okf.md) for the underlying format spec — it's just markdown
+See Google Cloud's [Open Knowledge Format announcement](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr) for the format's background and design rationale — it's just markdown
 files with YAML frontmatter, readable by any tool, not specific to this plugin.
 
 ## Configuration
