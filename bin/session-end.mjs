@@ -4,6 +4,7 @@ import { readConfig } from '../lib/config.mjs';
 import { captureSession } from '../lib/capture.mjs';
 import { matchGlob } from '../lib/glob.mjs';
 import { maybeSpawnBatch } from '../lib/batch-gate.mjs';
+import { recordCaptureStatus, safeErrorCode } from '../lib/status.mjs';
 
 function readStdin() {
   try {
@@ -16,33 +17,49 @@ function readStdin() {
 function main() {
   if (process.env.OKF_BATCH === '1') return; // §7-1 loop guard (defense-in-depth)
 
+  const okfHome = resolveOkfHome();
+
   let input;
   try {
     input = JSON.parse(readStdin());
   } catch {
+    recordCaptureStatus(okfHome, { status: 'error', stage: 'input', errorCode: 'INVALID_JSON' });
     return;
   }
 
-  const okfHome = resolveOkfHome();
+  const configWarnings = [];
   let config;
   try {
-    config = readConfig(okfHome);
-  } catch {
+    config = readConfig(okfHome, (warning) => configWarnings.push(`${warning.key}:${warning.code}`));
+  } catch (err) {
+    recordCaptureStatus(okfHome, { status: 'error', stage: 'config', errorCode: safeErrorCode(err) });
     return;
   }
   if (!config.enabled) return;
 
   const cwd = input.cwd || process.cwd();
-  if (matchGlob(cwd, config.capture_exclude_cwd)) return; // 사용자가 명시적으로 opt-out한 경로만 제외
+  if (matchGlob(cwd, config.capture_exclude_cwd)) {
+    recordCaptureStatus(okfHome, { status: 'skipped', stage: 'excluded', configWarnings });
+    return;
+  }
 
   try {
-    captureSession({
+    const result = captureSession({
       okfHome,
       cwd,
       sessionId: input.session_id,
       transcriptPath: input.transcript_path,
     });
-  } catch {
+    recordCaptureStatus(okfHome, {
+      status: result.captured ? 'ok' : (result.reason === 'empty' ? 'skipped' : 'error'),
+      stage: result.captured ? 'captured' : `transcript_${result.reason}`,
+      errorCode: result.reason === 'unavailable'
+        ? 'TRANSCRIPT_UNAVAILABLE'
+        : (result.reason === 'busy' ? 'CAPTURE_BUSY' : null),
+      configWarnings,
+    });
+  } catch (err) {
+    recordCaptureStatus(okfHome, { status: 'error', stage: 'capture', errorCode: safeErrorCode(err), configWarnings });
     // 캡처 실패가 세션 종료를 막으면 안 된다(§5-2, §7-6) — 유실분은 배치의 sweep(§7-8)이 회수.
   }
 

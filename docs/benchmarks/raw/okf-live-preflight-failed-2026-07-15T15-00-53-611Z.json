@@ -1,0 +1,123 @@
+{
+  "startedAt": "2026-07-15T15:00:53.611Z",
+  "model": "sonnet",
+  "effort": "medium",
+  "claudeVersion": "2.1.210 (Claude Code)",
+  "bundleAudit": {
+    "relevant": {
+      "checkedFacts": 8,
+      "presentFacts": 7,
+      "routedFacts": 7,
+      "ready": false,
+      "anyTargetFactPresent": true,
+      "facts": {
+        "architecture_database": {
+          "present": true,
+          "routed": true,
+          "matchingFiles": [
+            "decisions/tech-stack-conventions.md",
+            "troubleshooting/sqlite-busy-timeout.md"
+          ]
+        },
+        "architecture_pattern": {
+          "present": true,
+          "routed": true,
+          "matchingFiles": [
+            "decisions/tech-stack-conventions.md"
+          ]
+        },
+        "export_style": {
+          "present": false,
+          "routed": false,
+          "matchingFiles": []
+        },
+        "failure_solution": {
+          "present": true,
+          "routed": true,
+          "matchingFiles": [
+            "troubleshooting/sqlite-busy-timeout.md"
+          ]
+        },
+        "response_language": {
+          "present": true,
+          "routed": true,
+          "matchingFiles": [
+            "preferences/response-language-style.md"
+          ]
+        },
+        "response_style": {
+          "present": true,
+          "routed": true,
+          "matchingFiles": [
+            "preferences/response-language-style.md"
+          ]
+        },
+        "policy_file": {
+          "present": true,
+          "routed": true,
+          "matchingFiles": [
+            "preferences/config-change-deploy-policy.md"
+          ]
+        },
+        "policy_command": {
+          "present": true,
+          "routed": true,
+          "matchingFiles": [
+            "preferences/config-change-deploy-policy.md"
+          ]
+        }
+      }
+    },
+    "irrelevant": {
+      "checkedFacts": 8,
+      "presentFacts": 0,
+      "routedFacts": 0,
+      "ready": false,
+      "anyTargetFactPresent": false,
+      "facts": {
+        "architecture_database": {
+          "present": false,
+          "routed": false,
+          "matchingFiles": []
+        },
+        "architecture_pattern": {
+          "present": false,
+          "routed": false,
+          "matchingFiles": []
+        },
+        "export_style": {
+          "present": false,
+          "routed": false,
+          "matchingFiles": []
+        },
+        "failure_solution": {
+          "present": false,
+          "routed": false,
+          "matchingFiles": []
+        },
+        "response_language": {
+          "present": false,
+          "routed": false,
+          "matchingFiles": []
+        },
+        "response_style": {
+          "present": false,
+          "routed": false,
+          "matchingFiles": []
+        },
+        "policy_file": {
+          "present": false,
+          "routed": false,
+          "matchingFiles": []
+        },
+        "policy_command": {
+          "present": false,
+          "routed": false,
+          "matchingFiles": []
+        }
+      }
+    },
+    "source": "real SessionEnd capture -> isolated batch ingest -> SessionStart gate; no manual target concept seeding"
+  },
+  "reason": "C must contain and gate-route all target facts; D must contain none before follow-up calls."
+}

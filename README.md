@@ -1,231 +1,201 @@
 # OKF for Claude Code
 
-**Your agent forgets everything you told it yesterday. This fixes that — and the
-memory it builds is a folder of markdown you own, not a database you're locked into.**
+**Turn decisions from past Claude Code sessions into a local, reviewable knowledge bundle that future sessions can actually use.**
 
 ![MIT license](https://img.shields.io/badge/license-MIT-blue) ![OKF v0.1](https://img.shields.io/badge/OKF-v0.1%20Draft-4ecdc4) ![Node only](https://img.shields.io/badge/runtime-Node%20only-5c6bc0) ![no npm install](https://img.shields.io/badge/dependencies-vendored-66bb6a)
 
 **English** · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português](README.pt-BR.md)
 
-![OKF knowledge graph — concepts linked to the code they describe](docs/okf-graph.png)
+OKF captures a completed session, distills reusable decisions and troubleshooting into plain Markdown, then injects a compact index into the next session. The bundle is a local git repository you can inspect, diff, back up, or delete.
 
-<sub>`/okf:okf-visualize` — your knowledge (outlined nodes) and your codebase in one graph.
-The dashed yellow edges are the point: each concept linked to the source files it's
-actually about.</sub>
+## One-minute quick start
 
-Every session starts from zero. You re-explain the same architecture decision, the
-same deploy policy, the same "we tried that and it broke" — and the moment the
-session ends, it's gone again. Meanwhile the knowledge that *would* have answered
-the question is scattered across wikis, code comments, and, as Google's OKF
-announcement puts it, "the heads of a few senior engineers."
+Requirements: Claude Code with plugin support, Node.js, and git. There is no `npm install` step.
 
-This plugin closes that loop automatically: it captures what you actually discussed,
-distills the reusable parts into a structured knowledge bundle, and puts that
-knowledge back in front of the model at the start of every session.
-
-## The format
-
-Knowledge is stored in **[OKF (Open Knowledge Format)](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)** —
-an open specification Google Cloud [published in June 2026](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr)
-(v0.1 Draft, Apache-2.0). It's deliberately unremarkable, and that's the point:
-
-> "The format is intentionally minimal: a directory of markdown files with YAML
-> frontmatter. There is no schema registry, no central authority, and no required
-> tooling. **If you can `cat` a file, you can read OKF; if you can `git clone` a
-> repo, you can ship it.**"
-
-OKF formalizes the "LLM wiki" pattern that [Andrej Karpathy sketched](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-ten weeks earlier — Google's announcement says so explicitly. Since publication a
-[small ecosystem](https://github.com/search?q=%22open+knowledge+format%22&type=repositories)
-of generators, linters, viewers, and MCP servers has formed around it, and the format
-turns up outside Google too (AWS has a [sample](https://github.com/aws-samples/sample-okf-llm-wiki)
-serving Glue databases as OKF bundles). It's early — most of that ecosystem is weeks
-old — but the format is doing what it claims: being readable without its author's tools.
-
-**Why a format and not a memory product.** Tools like mem0, Letta, Zep, and Cognee
-are memory *runtimes* — you attach a library or host a service, and your memory lives
-in its vector or graph store. They're a different layer, not a competitor; some of
-them could store OKF. The practical difference is **exit cost**: knowledge embedded in
-a graph DB is legible only to that system, while an OKF bundle opens in your editor,
-renders on GitHub, diffs in a pull request, and is read by any other agent without a
-translation step. This plugin never asks you to trust it with the only copy.
-
-## What it does
-
-1. **Captures** every session's full conversation, losslessly, when it ends.
-2. **Compresses** captured sessions in the background (an opportunistic batch job,
-   not a cron/scheduled task) using `claude -p` to extract reusable knowledge —
-   decisions, project facts, preferences, patterns, references, troubleshooting.
-3. **Injects** an index of that bundle into every new session's context as a
-   mandatory gate, so Claude actually reads relevant past knowledge before working
-   on something related, instead of starting from zero every time.
-4. **Visualizes** the bundle and your codebase as one graph, linking each concept to
-   the files it's actually about (`/okf:okf-visualize`).
-
-Everything lives in a local git repository under `~/.claude/okf` (or
-`$CLAUDE_CONFIG_DIR/okf`). Nothing is pushed anywhere. The only network calls are
-the ones you already make to Anthropic's API — the batch step is just another
-`claude -p` call, run locally.
-
-## Requirements
-
-- Claude Code with plugin support
-- Node.js (whatever `claude` itself already requires — no extra runtime)
-- git
-
-No `npm install` step. No external services. No configuration required to get
-started.
-
-## Install
-
-```
+```sh
 claude plugin marketplace add dja1369/okf-system
 claude plugin install okf@okf-marketplace
 ```
 
-(Installing from a local clone instead: `claude plugin marketplace add /path/to/your/clone`.)
+Restart Claude Code, finish a normal session, then inspect the system:
 
-That's it — restart your session and the gate/capture hooks are active. On the
-next session start, the bundle is bootstrapped automatically (a local git repo is
-created under `~/.claude/okf` with the base structure).
+```text
+/okf:okf-status
+/okf:okf-index
+```
 
-To uninstall: `claude plugin uninstall okf`. Your data in `~/.claude/okf` is left
-untouched — it's a plain git repo you can inspect, back up, or delete manually
-with `rm -rf ~/.claude/okf`.
+The first `SessionStart` creates `~/.claude/okf` (or `$CLAUDE_CONFIG_DIR/okf`). Normal capture and opportunistic batch ingest are automatic.
 
-## Usage
+## The continuity loop
 
-Normal usage requires nothing from you. Capture and batch compression happen
-automatically. Five commands are available for manual inspection/control —
-**note the `okf:` prefix**, required because these are plugin-scoped commands:
+```text
+Session 1             SessionEnd              Background batch           Session 2
+make a decision  ->   lossless raw copy  ->   reusable OKF Markdown  ->  compact index injected
+                                                 |                            |
+                                                 +-- local git history        +-- Read relevant concept
+```
 
-| Command | What it does |
+Example: one session records “deploy 10% → 50% → 100%, roll back above 0.5% errors.” After capture and ingest, a later session can discover that exact policy through the injected index without the user pasting it again. The index is a routing layer, not the whole memory: Claude must `Read` the relevant concept before acting.
+
+## Commands
+
+Plugin commands always require the `okf:` namespace.
+
+| Command | Purpose |
 |---|---|
-| `/okf:okf-status` | Reports last batch run, pending sessions, lock state |
-| `/okf:okf-batch` | Forces an immediate batch run (ignores the interval gate, still respects the lock) |
-| `/okf:okf-config` | Shows and lets you edit the current configuration |
-| `/okf:okf-index` | Prints a readable overview of the bundle — every category and concept title, plus recent `log.md` changes |
-| `/okf:okf-visualize [path]` | Renders the bundle + a codebase as one interactive graph (self-contained HTML). Defaults to the current directory; pass a path to analyze any other repo |
+| `/okf:okf-status` | Last capture/batch result, pending sessions, and lock state |
+| `/okf:okf-batch` | Run ingest now; still respects the batch lock |
+| `/okf:okf-config` | Show or edit validated configuration |
+| `/okf:okf-index` | List categories, concept titles, and recent changes |
+| `/okf:okf-visualize` | Render OKF concepts and concept-to-concept links only |
+| `/okf:okf-analysis [path]` | Analyze a repository and show code plus only related OKF concepts |
 
-A fresh install isn't empty: the bundle ships seeded with concepts describing OKF
-itself, this plugin's architecture, and the bundle's writing rules — so the gate has
-something real to point at from the first session, and the bundle documents itself.
+`visualize` answers “what does my bundle know?” and never scans a repository. `analysis` answers “what is this codebase, given what my bundle knows?” It rejects missing/non-directory paths, reports truncated analysis and hidden unrelated concepts, and exposes language-level file/declaration/internal-edge counts.
 
-## Visualization
+Both commands produce self-contained HTML with no CDN or runtime network requests.
 
-`/okf:okf-visualize` renders your knowledge and your code as a single graph. With no argument it
-analyzes the directory the session is in; pass a path (`/okf:okf-visualize ~/work/api`) to point it
-at any other repo. The bundle is always the same global one — only the code side changes. The interesting
-part isn't either half — it's the dashed links between them, connecting each concept
-to the source files it actually talks about.
+## Optional statusline
 
-If [Understand-Anything](https://github.com/Egonex-AI/Understand-Anything) has already
-analyzed the repo (`.understand-anything/` or `.ua/knowledge-graph.json`), that richer
-LLM-summarized graph is used. Otherwise this plugin's own analyzer builds one — pure
-Node, no native modules — extracting files, functions, and classes across JS/TS,
-Python, Go, Rust, Java/Kotlin, Ruby, PHP, C/C++, C#, and Swift.
+`bin/statusline.mjs` prints a cheap local summary without network calls or graph analysis:
 
-Import *edges* follow each language's own resolution rules rather than one guess applied
-everywhere — because the rules genuinely differ, and guessing invents dependencies that
-don't exist. Relative specifiers in JS/TS (including NodeNext's `./x.js` naming an `x.ts`
-source), dotted module paths in Python, quoted includes in C/C++, `require_relative`,
-Rust's `mod`/`use crate::`, and package paths in Java/Kotlin. Go and C# import a
-*package* and a *namespace* rather than a file, so those become package nodes read from
-`go.mod` and from the namespaces the repo actually declares. Anything a language treats
-as an outside name — stdlib, third-party — never matches a same-named local file.
+```text
+OKF 12 · +3 · 2h ago
+OKF 12 · batch running
+OKF 12 · last: partial: 1/3 chunks
+```
 
-It's regex-based, not a real parser: zero dependencies, at some cost in accuracy on
-unusual formatting. Measured on real repositories:
+Claude Code permits one `statusLine`. OKF does not install or overwrite it. Point your existing statusline script at `node /path/to/okf/bin/statusline.mjs` and append its single-line output, or configure it directly if you do not already have one.
 
-| Repo | Language | Files | Import edges | Files connected |
-|---|---|---|---|---|
-| gson | Java | 307 | 1011 | 74% |
-| express | JavaScript | 206 | 153 | 67% |
-| okhttp | Kotlin/Java | 791 | 1747 | 60% |
-| ripgrep | Rust | 217 | 73 | 39% |
-| zod | TypeScript | 559 | 499 | 38% |
-| axios | JS/TS | 445 | 289 | 35% |
-| flask | Python | 226 | 176 | 31% |
-| Polly | C# | 1003 | 449 | 27% |
-| requests | Python | 121 | 106 | 27% |
-| gin | Go | 127 | 26 | 16% |
+## OKF effectiveness benchmark
 
-All under 200ms. Treat it as a map of the main structure, not a complete call graph —
-Go's low number is honest: its dependencies are package-level, so file-to-file edges
-mostly don't exist to find.
+<!-- okf-live-benchmark: valid-2026-07-15T15-03-01Z -->
 
-## How it works
+Live run on 2026-07-15: Claude Code `2.1.210`, requested `sonnet`/medium (resolved Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, commit `c00d3fc`, five crossed-order runs per condition. Before follow-up calls, C had all 8/8 target facts in concepts and all 8/8 were gate-routed; D had 0/8.
 
-![Architecture: sessions capture into raw, a background batch distills to an OKF bundle, the bundle index is injected back into the next session](docs/architecture.svg)
+The opt-in harness compares at least five repeated runs of:
 
-- **Capture** is a pure file copy — no parsing, no filtering, no size cap. The full
-  transcript goes to `raw/` on every `SessionEnd`. This is by design: a knowledge
-  base built from a partial memory of what happened is worse than none.
-- **Compression** only happens at batch time, on a scratch copy — the captured
-  original is never touched. It runs with tool access restricted to
-  `Read/Glob/Grep/Write/Edit` (no `Bash`) and with all of *your* other hooks,
-  plugins, and MCP servers disabled for that one call (`--safe-mode`), so it can't
-  loop back into capturing itself.
-- **The gate** injects a compact category index (not full concept text) plus
-  recent changes, and instructs Claude to actually `Read` the relevant file before
-  touching related work — the index alone isn't enough for it to act on stale
-  assumptions.
-- A structural linter keeps the bundle always spec-conformant: if a batch run
-  would leave anything malformed, it's automatically rolled back before commit.
+| Condition | Continuity | Token activity p50 / p95 | Wall p50 / p95 | Cost p50 |
+|---|---:|---:|---:|---:|
+| A — no memory | 0/5 | 27,320 / 27,574 | 16.40 / 18.17 s | $0.024037 |
+| B — manual restatement | 5/5 | 9,070 / 9,093 | 6.07 / 7.42 s | $0.008410 |
+| C — OKF enabled | 5/5 | 22,857 / 22,883 | 11.33 / 12.80 s | $0.033189 |
+| D — irrelevant OKF | 0/5 | 21,507 / 22,261 | 16.92 / 18.88 s | $0.030332 |
 
-See Google Cloud's [Open Knowledge Format announcement](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr) for the format's background and design rationale — it's just markdown
-files with YAML frontmatter, readable by any tool, not specific to this plugin.
+C recovered every target fact, but it did **not** reduce tokens, response time, tools, or cost versus equally correct B. Median C used 13,787 more token activity and 5.26 s more wall time. Batch ingest added 111,381 token activity and $0.164360; because B−C saving was negative, token and cost break-even are not measurable.
+
+It measures success, decision compliance, wrong assumptions, extra questions, tool calls, first valid response, API/wall time, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and CLI-reported cost. Token categories remain separate in raw JSON. Batch ingest and repair usage are included in break-even calculations. Values the Claude CLI does not expose separately—such as user-only or gate-only tokens—remain `null`; they are not estimated.
+
+```sh
+OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs
+```
+
+This is paid, authenticated, and intentionally excluded from smoke tests and CI. Token categories remain separate; user-only/gate-only/transcript tokens unavailable from the CLI remain `null`. See the [valid report](docs/benchmarks/okf-live-2026-07-15T15-03-01-343Z.md), [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T15-03-01-343Z.json), and [usage guide](docs/USAGE.md).
+
+### Local overhead (not the OKF effectiveness result)
+
+Fresh local measurement on 2026-07-15: macOS arm64, Node `v26.4.0`, median with min/max range.
+
+| Local operation | Median | Range |
+|---|---:|---:|
+| SessionStart gate process | 57.4 ms | 56.7–58.2 ms |
+| SessionEnd lossless capture process | 43.4 ms | 41.8–43.9 ms |
+| Statusline process | 36.7 ms | 34.8–36.8 ms |
+
+Reproduce with `node test/bench.mjs [repository]`. These numbers measure local hook/process cost only; they do not prove token savings or faster model responses.
+
+### Batch cost and break-even
+
+The live harness records batch ingest and repair usage through an explicit privacy-safe telemetry file. It calculates both token-activity and CLI-reported cost break-even only when the measured median saving is positive:
+
+```text
+initial OKF cost = batch ingest + repair + measured irrelevant-gate overhead
+per-session net saving = manual-restatement median - OKF median
+break-even sessions = ceil(initial OKF cost / positive per-session net saving)
+```
+
+Measured B-C savings were negative, so token and cost break-even do not exist in this run.
+
+## Language support
+
+The fallback analyzer is deterministic, dependency-free, and intentionally conservative. “File discovered” is distinct from “structure analyzed”; `/okf:okf-analysis` reports both.
+
+| Language | Internal relationships | Declarations | Important limits |
+|---|---|---|---|
+| JavaScript / TypeScript | relative import/export/require, NodeNext `.js` → TS | function, class | bare packages remain external |
+| Python | absolute/relative dotted modules | function, class | dynamic imports are not resolved |
+| Go | module-internal package nodes from `go.mod` | function, struct | not fabricated as file-to-file imports |
+| Rust | `mod`, `use crate/self/super` | function, struct/enum/trait | macro-generated structure omitted |
+| Java / Kotlin | repository-declared package/class paths | class/interface/enum, Kotlin function | reflection omitted |
+| Ruby | `require_relative` | class, method | gems remain external |
+| PHP | namespace/use/alias/grouped use, require/include | class/interface/trait/enum/function | dynamic autoload/call targets omitted |
+| C / C++ | quoted include; explicit-path unique local angle include | class/struct/enum/union/typedef/namespace/function definition | regex parser; macros and complex multiline syntax may be missed |
+| C# | repository-declared namespace nodes | class/interface/struct/record/enum | external namespaces remain external |
+| Swift | explicit inheritance, conformance, extension targets | class/struct/enum/protocol/actor/extension/typealias/function | nested cross-file targets omitted to avoid name collisions |
+
+At 2,000 files the graph is marked `truncated`. Files above 512 KiB remain visible but are marked unanalyzed. Vendor/generated directories are excluded conservatively; unusual layouts can still require interpretation.
+
+## Real open-source validation
+
+Pinned repositories were cloned and representative edges were checked against source. Times are operational-safety single runs, not model-speed benchmarks.
+
+| Repository | Commit | Language files | Declarations | Internal edges | Truncated |
+|---|---|---:|---:|---:|---:|
+| [Slim](https://github.com/slimphp/Slim) | `80900fb` | 125 | 127 | 305 | no |
+| [Redis](https://github.com/redis/redis) | `f76dff7` | 784 | 5,796 | 990 | no |
+| [fmt](https://github.com/fmtlib/fmt) | `a79df45` | 46 | 283 | 121 | no |
+| [Alamofire](https://github.com/Alamofire/Alamofire) | `903c53c` | 98 | 2,052 | 215 | no |
+
+The validation found and fixed two false edges: Swift standard `Error` linking to an unrelated nested `Error`, and C standard headers linking to vendored compatibility headers. Source-line checks and remaining gaps are in [the validation report](docs/benchmarks/oss-analysis-2026-07-15.md).
+
+## Data flow and privacy
+
+- `SessionEnd` copies the full transcript into `raw/`; it is not parsed or truncated during capture.
+- Batch creates a capped digest and sends that digest to Anthropic through a separate `claude -p` call. This is the only extra model/API transfer introduced by OKF.
+- Batch runs with `--safe-mode`, a restricted tool set, prompt over stdin, lint/rollback, and no Bash tool.
+- Raw and processed transcripts are git-ignored. Only extracted Markdown knowledge is committed locally.
+- The plugin never pushes or adds a remote. POSIX directories are `0700`; raw/state/log files are `0600`. Windows uses account ACLs.
+- Persistent diagnostic logs exclude transcript text, Claude stdout/stderr, credentials, and full raw paths.
+- The live benchmark fixture is synthetic and contains no personal data or credentials.
 
 ## Configuration
 
-Edit `~/.claude/okf/.okf/config.md` directly (frontmatter), or use
-`/okf:okf-config`.
+Edit `~/.claude/okf/.okf/config.md` or use `/okf:okf-config`. Unknown or invalid values are ignored with safe defaults.
 
 | Key | Default | Meaning |
-|---|---|---|
-| `enabled` | `true` | Master on/off switch (capture, gate, and batch all follow it) |
-| `batch_interval_hours` | `1` | Minimum time between batch runs |
-| `batch_max_digest_kb` | `600` | Per-run budget on total digest bytes — the real cost cap. Sessions over budget roll to the next run |
-| `batch_max_sessions` | `50` | Safety ceiling only; `batch_max_digest_kb` is the actual dial |
-| `seed_language` | `en` | Language of the concepts seeded at first bootstrap (`en`, `ko`; unknown values fall back to `en`) |
-| `batch_model` | `claude-sonnet-5` | Model used for batch ingestion; empty = CLI default |
-| `batch_effort` | `medium` | Reasoning effort for batch ingestion (`low`/`medium`/`high`/`xhigh`/`max`); empty = CLI default |
-| `capture_exclude_cwd` | `[]` | Glob patterns for directories to skip capturing (opt-out only — capture itself is never partial) |
-| `batch_digest_cap_kb` | `150` | Per-session size cap for the LLM-facing summary (the captured original is never capped) |
-| `remove_candidate_ttl_days` | `30` | How long processed raw transcripts are kept before deletion |
-| `inject_max_lines` / `inject_max_bytes` | `120` / `16384` | Gate injection size caps |
-| `claude_bin` / `node_bin` | *(empty)* | Absolute path overrides if `PATH` resolution fails in your environment |
+|---|---:|---|
+| `enabled` | `true` | Master switch for capture, gate, and batch |
+| `batch_interval_hours` | `1` | Minimum interval between opportunistic batches |
+| `batch_max_digest_kb` | `600` | Total per-batch digest budget |
+| `batch_max_sessions` | `50` | Runaway ceiling; byte budget is the cost control |
+| `batch_model` / `batch_effort` | `claude-sonnet-5` / `medium` | Batch model controls; empty uses CLI defaults |
+| `capture_exclude_cwd` | `[]` | Explicit capture opt-out globs |
+| `batch_digest_cap_kb` | `150` | Per-session LLM-facing digest cap; raw stays complete |
+| `remove_candidate_ttl_days` | `30` | Retention before processed raw deletion |
+| `inject_max_lines` / `inject_max_bytes` | `120` / `9000` | Inline gate limits below Claude Code’s 10,000-character threshold |
 
-## Data & privacy
+## Removal
 
-- Everything stays local: `~/.claude/okf` is its own plain git repository, entirely
-  separate from any repository you happen to be working in. **No code path in this
-  plugin ever runs `git push`, `git remote add`, or anything network-related on
-  it** — the only git operations used anywhere are `init`, `commit`, `checkout`,
-  and `clean` (verifiable: `grep -n "push\|remote" lib/*.mjs bin/*.mjs` — the only
-  matches are unrelated `Array.push()` calls). Your bundle never leaves your
-  machine unless you deliberately `git push` it yourself.
-- The batch step sends session content to the Anthropic API to do the
-  summarization/extraction — the same API your normal Claude Code usage already
-  talks to, just via one more `claude -p` call. No third-party service is
-  involved.
-- `raw/` (full captured transcripts) and processed-but-pending-deletion transcripts
-  are git-ignored, not committed — only the extracted knowledge bundle is.
+```sh
+claude plugin uninstall okf
+```
 
-## Portability
+The data bundle remains at `~/.claude/okf`. Review or back it up, then delete it manually if desired.
 
-No path is ever hardcoded — everything resolves through `os.homedir()` /
-`process.env.CLAUDE_CONFIG_DIR` / `process.env.HOME`, so a fresh install on a
-different machine or user account produces its own independent bundle. This is
-exercised by the test suite (`test/smoke.mjs`) under isolated
-`HOME`/`CLAUDE_CONFIG_DIR` sandboxes, including one with **no git identity
-configured at all** — the plugin never depends on your `user.name`/`user.email`;
-its own automated commits always use a fixed synthetic identity
-(`OKF Batch <okf-batch@localhost>`). macOS and Linux are exercised this way
-directly; Windows-specific paths (`shell:true` for `claude.cmd`, path separators)
-are implemented per the design doc's requirements but not yet run on an actual
-Windows machine — treat that combination as unverified until someone confirms it.
+## Development verification
 
-## License
+```sh
+node test/smoke.mjs
+node test/bench.mjs
+for file in $(rg --files -g '*.mjs'); do node --check "$file"; done
+claude plugin validate .claude-plugin/plugin.json
+claude plugin validate .claude-plugin/marketplace.json
+git diff --check
+```
 
-MIT
+The live benchmark is separate and opt-in: `OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs`.
+
+## References and license
+
+README structure was informed by the concise installation/reproduction patterns used by [uv](https://github.com/astral-sh/uv), [Ruff](https://github.com/astral-sh/ruff), [Playwright](https://github.com/microsoft/playwright), [fmt](https://github.com/fmtlib/fmt), and [Slim](https://github.com/slimphp/Slim); no wording or benchmark claim is copied.
+
+OKF background: [Open Knowledge Format specification](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md). This plugin is licensed under [MIT](LICENSE).

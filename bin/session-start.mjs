@@ -72,10 +72,14 @@ function main() {
   ensureBootstrap(okfHome, (msg) => console.error(`[okf bootstrap] ${msg}`));
 
   let config;
+  const configWarnings = [];
   try {
-    config = readConfig(okfHome);
+    config = readConfig(okfHome, (warning) => configWarnings.push(warning));
   } catch {
     config = DEFAULT_CONFIG;
+  }
+  for (const warning of configWarnings) {
+    console.error(`[okf config] ${warning.key}: ${warning.code} — 기본값 사용`);
   }
 
   // "enabled: false"는 게이트 주입까지 포함한 전역 kill switch로 취급한다 — 캡처만 끄고

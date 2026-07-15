@@ -1,198 +1,163 @@
 # OKF for Claude Code
 
-**エージェントは、昨日あなたが伝えたことをすべて忘れている。これはそれを直す。しかも
-出来上がる記憶は、あなたが所有する markdown のフォルダであって、囲い込まれるデータベース
-ではない。**
+**過去の Claude Code セッションで決めたことを、次のセッションが実際に使えるローカルの知識バンドルにします。**
 
-![MIT ライセンス](https://img.shields.io/badge/license-MIT-blue) ![OKF v0.1](https://img.shields.io/badge/OKF-v0.1%20Draft-4ecdc4) ![Node のみ](https://img.shields.io/badge/runtime-Node%20only-5c6bc0) ![npm install 不要](https://img.shields.io/badge/dependencies-vendored-66bb6a)
+[English](README.md) · [한국어](README.ko.md) · **日本語** · [简体中文](README.zh-CN.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português](README.pt-BR.md)
 
-**[English](README.md) · [한국어](README.ko.md) · 日本語 · [简体中文](README.zh-CN.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português](README.pt-BR.md)**
+セッション終了時に会話を保存し、再利用できる決定や障害対応を Markdown に抽出して、次のセッションへ小さな索引を注入します。データは閲覧・diff・バックアップ・削除できるローカル git リポジトリです。
 
-![OKF ナレッジグラフ — 各概念が、それを説明しているコードにリンクされている](docs/okf-graph.png)
+## 1 分クイックスタート
 
-<sub>`/okf:okf-visualize` — あなたの知識（輪郭付きのノード）とコードベースを 1 つのグラフに。
-重要なのは黄色の破線エッジだ。各概念が、実際にそれについて書かれているソースファイルへ
-リンクされている。</sub>
+Claude Code のプラグイン対応、Node.js、git が必要です。`npm install` は不要です。
 
-セッションは毎回ゼロから始まる。同じアーキテクチャ上の決定、同じデプロイ方針、同じ
-「それは試したが壊れた」を説明し直す。そしてセッションが終わった瞬間、それはまた消える。
-一方で、その質問に答えられた*はず*の知識は、wiki やコードコメント、そして Google の OKF
-発表の言葉を借りれば「数人のシニアエンジニアの頭の中」に散らばっている。
-
-このプラグインは、そのループを自動的に閉じる。実際に話した内容をキャプチャし、再利用できる
-部分を構造化されたナレッジバンドルへ蒸留し、その知識を毎セッションの開始時にモデルの前へ
-戻す。
-
-## フォーマット
-
-知識は **[OKF (Open Knowledge Format)](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)** で保存される。
-Google Cloud が [2026 年 6 月に公開した](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr)
-オープン仕様だ（v0.1 Draft、Apache-2.0）。意図的に平凡であり、そこが肝だ。
-
-> "The format is intentionally minimal: a directory of markdown files with YAML
-> frontmatter. There is no schema registry, no central authority, and no required
-> tooling. **If you can `cat` a file, you can read OKF; if you can `git clone` a
-> repo, you can ship it.**"
-
-OKF は、その 10 週間前に [Andrej Karpathy がスケッチした](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-「LLM wiki」パターンを形式化したものだ。Google の発表がそう明言している。公開以降、
-ジェネレータ、リンター、ビューア、MCP サーバーからなる[小さなエコシステム](https://github.com/search?q=%22open+knowledge+format%22&type=repositories)
-がその周りに形成され、フォーマットは Google の外にも現れている（AWS には Glue データベースを
-OKF バンドルとして提供する[サンプル](https://github.com/aws-samples/sample-okf-llm-wiki)がある）。
-まだ初期段階で、そのエコシステムの大半は数週間前にできたものだ。それでもフォーマットは主張
-どおりのことをしている。作者のツールがなくても読める、ということだ。
-
-**なぜメモリ製品ではなくフォーマットなのか。** mem0、Letta、Zep、Cognee といったツールは
-メモリ*ランタイム*だ。ライブラリを組み込むかサービスをホストすると、記憶はそのベクトルストア
-やグラフストアの中に置かれる。競合ではなく別のレイヤーであり、そのいくつかは OKF を保存する
-こともできるだろう。実務上の違いは**離脱コスト**だ。グラフ DB に埋め込まれた知識はその
-システムからしか読めないが、OKF バンドルはエディタで開き、GitHub でレンダリングされ、
-プルリクエストで差分が出て、変換を挟まずに他のどのエージェントからも読める。このプラグインが、
-唯一のコピーを預けてくれと求めることはない。
-
-## 何をするか
-
-1. セッションが終わるとき、その全会話を無損失で**キャプチャする**。
-2. キャプチャしたセッションをバックグラウンドで**圧縮する**（cron やスケジュールタスクでは
-   なく、機会があれば走るバッチジョブ）。`claude -p` を使って再利用可能な知識 —
-   decisions、project facts、preferences、patterns、references、troubleshooting — を抽出する。
-3. そのバンドルのインデックスを、新しいセッションのコンテキストへ必須のゲートとして
-   **注入する**。これにより Claude は、関連する作業に取りかかる前に過去の関連知識を実際に
-   読む。毎回ゼロから始めることがなくなる。
-4. バンドルとコードベースを 1 つのグラフとして**可視化する**。各概念を、それが実際に対象と
-   しているファイルへリンクする（`/okf:okf-visualize`）。
-
-すべては `~/.claude/okf`（または `$CLAUDE_CONFIG_DIR/okf`）配下のローカル git リポジトリに
-置かれる。どこにも push されない。発生するネットワーク通信は、あなたがすでに行っている
-Anthropic API への呼び出しだけだ。バッチ処理も、ローカルで実行されるもう 1 回の
-`claude -p` 呼び出しにすぎない。
-
-## 必要なもの
-
-- プラグインをサポートする Claude Code
-- Node.js（`claude` 自体がすでに要求するもの。追加のランタイムは不要）
-- git
-
-`npm install` の手順はない。外部サービスもない。使い始めるのに設定も要らない。
-
-## インストール
-
-```
+```sh
 claude plugin marketplace add dja1369/okf-system
 claude plugin install okf@okf-marketplace
 ```
 
-（代わりにローカルのクローンからインストールする場合は `claude plugin marketplace add /path/to/your/clone`。）
+Claude Code を再起動し、通常のセッションを終了してから確認します。
 
-これだけだ。セッションを再起動すれば、ゲートとキャプチャのフックが有効になる。次のセッション
-開始時に、バンドルは自動的にブートストラップされる（`~/.claude/okf` 配下に基本構造を持つ
-ローカル git リポジトリが作られる）。
+```text
+/okf:okf-status
+/okf:okf-index
+```
 
-アンインストールは `claude plugin uninstall okf`。`~/.claude/okf` のデータはそのまま残る。
-ただの git リポジトリなので、中を見るのもバックアップするのも、`rm -rf ~/.claude/okf` で
-手動削除するのも自由だ。
+最初の `SessionStart` で `~/.claude/okf`（または `$CLAUDE_CONFIG_DIR/okf`）が作成され、その後の capture と opportunistic batch は自動です。
 
-## 使い方
+## 継続性の流れ
 
-通常の利用にあなたの操作は要らない。キャプチャとバッチ圧縮は自動で行われる。手動での確認・
-制御用に 5 つのコマンドがある。**`okf:` プレフィックスに注意**。これらはプラグインスコープの
-コマンドなので必須だ。
+```text
+Session 1 の決定 -> SessionEnd の無損失コピー -> batch で OKF Markdown 化 -> Session 2 に索引注入 -> 関連 concept を Read
+```
 
-| コマンド | 何をするか |
+たとえば「10% → 50% → 100% で deploy、error rate が 0.5% を超えたら rollback」という決定を、次のセッションで再入力せず発見できます。索引は本文ではなくルーティング層なので、Claude は作業前に関連 concept を `Read` します。
+
+## コマンド
+
+| コマンド | 用途 |
 |---|---|
-| `/okf:okf-status` | 最後のバッチ実行、待機中のセッション、ロック状態を報告する |
-| `/okf:okf-batch` | バッチを即座に強制実行する（インターバルのゲートは無視するが、ロックは尊重する） |
-| `/okf:okf-config` | 現在の設定を表示し、編集できるようにする |
-| `/okf:okf-index` | バンドルの読みやすい概要を出力する — すべてのカテゴリと概念のタイトル、加えて最近の `log.md` の変更 |
-| `/okf:okf-visualize [パス]` | バンドルとコードベースを 1 つのインタラクティブなグラフとして描画する（自己完結型 HTML） |
+| `/okf:okf-status` | 最後の capture/batch、待機セッション、lock 状態 |
+| `/okf:okf-batch` | lock を尊重して即時 ingest |
+| `/okf:okf-config` | 検証済み設定の表示・編集 |
+| `/okf:okf-index` | category、concept title、最近の変更 |
+| `/okf:okf-visualize` | OKF concept と concept 間リンクのみ可視化 |
+| `/okf:okf-analysis [path]` | repository と関連する OKF concept を一緒に分析 |
 
-インストール直後のバンドルは空ではない。OKF そのもの、このプラグインのアーキテクチャ、
-バンドルの記述ルールを説明する概念がシードされた状態で配布される。だからゲートは最初の
-セッションから実体のあるものを指し示せるし、バンドルは自分自身をドキュメント化している。
+`visualize` は repository を走査しません。`analysis` は存在しない path や file path を拒否し、truncated 状態、除外した無関係 concept、言語別 file/declaration/internal edge 数を報告します。どちらも外部 CDN や実行時 network request のない自己完結 HTML です。
 
-## 可視化
+## 任意の statusline
 
-`/okf:okf-visualize` は、あなたの知識とコードを 1 つのグラフとして描画する。面白いのはどちらの
-半分でもない。その間を結ぶ破線のリンクが、各概念を、それが実際に語っているソースファイルへ
-つなぐ。
+`bin/statusline.mjs` は network や graph 分析なしで `OKF 12 · +3 · 2h ago` のような一行を出力します。Claude Code の `statusLine` は一つだけなので、OKF は自動設定も上書きもしません。既存 script から `node /path/to/okf/bin/statusline.mjs` を呼び、その出力を結合してください。
 
-[Understand-Anything](https://github.com/Egonex-AI/Understand-Anything) がすでにリポジトリを
-解析済みなら（`.understand-anything/` または `.ua/knowledge-graph.json`）、その LLM で要約された
-より豊かなグラフが使われる。そうでなければ、このプラグイン自身のアナライザが構築する。純粋な
-Node のみでネイティブモジュールはなく、JS/TS、Python、Go、Rust、Java/Kotlin、Ruby、PHP、
-C/C++、C#、Swift からファイル、関数、クラス、そして import グラフを抽出する。
+## OKF 効果ベンチマーク
 
-出力は自己完結型の HTML ファイルだ。CDN なし、ネットワークリクエストなし、バックエンドなし。
-オフラインで開く。自分のナレッジベースを開くのに、どこかへ通信する必要などないからだ。
+<!-- okf-live-benchmark: valid-2026-07-15T15-03-01Z -->
 
-## 仕組み
+2026-07-15、Claude Code `2.1.210`、`sonnet`/medium（Sonnet 5 + Haiku 4.5）、macOS arm64、Node `v26.4.0`、commit `c00d3fc`、各条件5回。C は follow-up 前に対象事実 8/8 が concept に存在し gate に 8/8 routing、D は 0/8 でした。
 
-![アーキテクチャ: セッションが raw にキャプチャされ、バックグラウンドのバッチが OKF バンドルへ蒸留し、バンドルのインデックスが次のセッションへ注入される](docs/architecture.svg)
+| 条件 | 継続成功 | token activity p50 / p95 | wall p50 / p95 | cost p50 |
+|---|---:|---:|---:|---:|
+| A — no memory | 0/5 | 27,320 / 27,574 | 16.40 / 18.17 s | $0.024037 |
+| B — manual restatement | 5/5 | 9,070 / 9,093 | 6.07 / 7.42 s | $0.008410 |
+| C — OKF enabled | 5/5 | 22,857 / 22,883 | 11.33 / 12.80 s | $0.033189 |
+| D — irrelevant OKF | 0/5 | 21,507 / 22,261 | 16.92 / 18.88 s | $0.030332 |
 
-- **キャプチャ**は純粋なファイルコピーだ。パースもフィルタリングもサイズ上限もない。
-  `SessionEnd` のたびに、トランスクリプト全体が `raw/` に入る。これは意図的な設計だ。何が
-  起きたかの部分的な記憶から作られたナレッジベースは、無いよりも悪い。
-- **圧縮**はバッチ時にのみ、作業用のコピーに対して行われる。キャプチャされた原本には一切
-  触れない。ツールアクセスは `Read/Glob/Grep/Write/Edit` に制限され（`Bash` はなし）、その
-  1 回の呼び出しに限って*あなたの*他のフック、プラグイン、MCP サーバーはすべて無効化される
-  （`--safe-mode`）。そのため、自分自身をキャプチャするループに陥ることがない。
-- **ゲート**は、コンパクトなカテゴリインデックス（概念の全文ではない）と最近の変更を注入し、
-  関連する作業に手をつける前に該当ファイルを実際に `Read` するよう Claude に指示する。
-  インデックスだけでは、古くなった前提のまま動くには足りない。
-- 構造リンターがバンドルを常に仕様準拠に保つ。バッチ実行が不正な形式を残すことになる場合、
-  コミット前に自動でロールバックされる。
+C は全対象事実を回収しましたが、同じ正答率の B より token activity が中央値で 13,787 多く、wall time も 5.26 s 長く、改善は確認できません。batch 1回は 111,381 token activity/$0.164360。B−C が負のため break-even はありません。
 
-フォーマットの背景と設計思想については、Google Cloud の [Open Knowledge Format 発表](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr)を参照。YAML frontmatter を持つただの markdown
-ファイルであり、どんなツールでも読め、このプラグイン固有のものではない。
+各条件を最低 5 回繰り返し、成功率、決定準拠、誤った仮定、追加質問、tool call、最初の有効応答、API/wall time、`input_tokens`、`output_tokens`、`cache_creation_input_tokens`、`cache_read_input_tokens`、CLI cost を保存します。token category は raw JSON で分離し、batch/repair cost も break-even に含めます。CLI が分離して提供しない user-only/gate-only token は推測せず `null` にします。
 
-## 設定
+```sh
+OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs
+```
 
-`~/.claude/okf/.okf/config.md` を直接編集する（frontmatter）か、`/okf:okf-config` を使う。
+有料・認証必須で CI から除外します。詳細は [valid report](docs/benchmarks/okf-live-2026-07-15T15-03-01-343Z.md)、[raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T15-03-01-343Z.json)、[docs/USAGE.md](docs/USAGE.md) を参照してください。
 
-| キー | デフォルト | 意味 |
+### ローカル overhead（効果ベンチマークではありません）
+
+2026-07-15、macOS arm64、Node `v26.4.0` の新しい測定です。
+
+| 処理 | median | range |
+|---|---:|---:|
+| SessionStart gate process | 57.4 ms | 56.7–58.2 ms |
+| SessionEnd lossless capture process | 43.4 ms | 41.8–43.9 ms |
+| statusline process | 36.7 ms | 34.8–36.8 ms |
+
+`node test/bench.mjs [repository]` で再現できます。これは local process cost であり、token や model response の改善を証明しません。
+
+### Batch cost と break-even
+
+```text
+initial OKF cost = batch ingest + repair + measured irrelevant-gate overhead
+per-session saving = manual-restatement median - OKF median
+break-even sessions = ceil(initial OKF cost / positive per-session saving)
+```
+
+B−C の実測差が負のため、この run に token・cost break-even はありません。
+
+## 対応言語
+
+fallback analyzer は deterministic・依存なし・保守的です。「file を発見」と「構造を解析」を区別します。
+
+| 言語 | 関係・宣言 | 主な制限 |
 |---|---|---|
-| `enabled` | `true` | マスターの on/off スイッチ（キャプチャ、ゲート、バッチのすべてがこれに従う） |
-| `batch_interval_hours` | `1` | バッチ実行の最小間隔 |
-| `batch_max_digest_kb` | `600` | 1 回の実行あたりのダイジェスト総バイト数の予算 — 実質的なコスト上限。予算を超えたセッションは次の実行に回る |
-| `batch_max_sessions` | `50` | 安全上の上限にすぎない。実際に調整するのは `batch_max_digest_kb` |
-| `seed_language` | `en` | 最初のブートストラップでシードされる概念の言語（`en`、`ko`。不明な値は `en` にフォールバック） |
-| `batch_model` | `claude-sonnet-5` | バッチ取り込みに使うモデル。空なら CLI のデフォルト |
-| `batch_effort` | `medium` | バッチ取り込みの推論エフォート（`low`/`medium`/`high`/`xhigh`/`max`）。空なら CLI のデフォルト |
-| `capture_exclude_cwd` | `[]` | キャプチャをスキップするディレクトリの glob パターン（オプトアウト専用 — キャプチャ自体が部分的になることはない） |
-| `batch_digest_cap_kb` | `150` | LLM に渡す要約のセッションごとのサイズ上限（キャプチャされた原本に上限はかからない） |
-| `remove_candidate_ttl_days` | `30` | 処理済みの raw トランスクリプトを削除するまで保持する期間 |
-| `inject_max_lines` / `inject_max_bytes` | `120` / `16384` | ゲート注入のサイズ上限 |
-| `claude_bin` / `node_bin` | *(空)* | 環境で `PATH` の解決に失敗する場合の絶対パス上書き |
+| JavaScript / TypeScript | relative import/export/require、function/class | bare package は外部 |
+| Python | dotted module、function/class | dynamic import は未解決 |
+| Go | `go.mod` 内 package node、function/struct | 偽の file edge を作らない |
+| Rust | `mod`/`use`、function/struct/enum/trait | macro 生成構造を省略 |
+| Java / Kotlin | package/class path、type/Kotlin function | reflection を省略 |
+| Ruby | `require_relative`、class/method | gem は外部 |
+| PHP | namespace/use/alias/grouped use、require/include、主要 type/function | dynamic autoload を省略 |
+| C / C++ | quoted include、明示 path の unique local angle include、主要 type/namespace/function definition | regex のため macro・複雑な複数行構文を逃す場合あり |
+| C# | repository 内 namespace node、主要 type | 外部 namespace は外部 |
+| Swift | 明示的 inheritance/conformance/extension、主要 type/function | name collision 防止のため nested cross-file target を省略 |
 
-## データとプライバシー
+2,000 files で `truncated`、512 KiB 超の file は visible ですが unanalyzed と表示します。
 
-- すべてはローカルに留まる。`~/.claude/okf` はそれ自体が独立したただの git リポジトリで、
-  あなたがたまたま作業しているリポジトリとは完全に別物だ。**このプラグインのどのコードパスも、
-  それに対して `git push`、`git remote add`、その他ネットワーク関連の操作を実行することは
-  ない**。どこであれ使われる git 操作は `init`、`commit`、`checkout`、`clean` だけだ
-  （検証可能: `grep -n "push\|remote" lib/*.mjs bin/*.mjs` — ヒットするのは無関係な
-  `Array.push()` の呼び出しだけ）。あなたが自分で意図的に `git push` しない限り、バンドルが
-  マシンの外に出ることはない。
-- バッチ処理は、要約と抽出を行うためにセッションの内容を Anthropic API へ送る。普段の
-  Claude Code の利用がすでに通信しているのと同じ API に、`claude -p` の呼び出しが 1 回
-  増えるだけだ。サードパーティのサービスは関与しない。
-- `raw/`（キャプチャされたトランスクリプト全体）と、処理済みだが削除待ちのトランスクリプトは
-  git-ignore され、コミットされない。コミットされるのは、抽出されたナレッジバンドルだけだ。
+## 実オープンソース検証
 
-## ポータビリティ
+固定 commit を clone し、代表 edge を source と照合しました。時間は運用安全性用で model-speed benchmark ではありません。
 
-パスがハードコードされている箇所は 1 つもない。すべて `os.homedir()` /
-`process.env.CLAUDE_CONFIG_DIR` / `process.env.HOME` を通して解決されるので、別のマシンや
-ユーザーアカウントに新規インストールすれば、そこには独立したバンドルができる。これはテスト
-スイート（`test/smoke.mjs`）が、隔離された `HOME`/`CLAUDE_CONFIG_DIR` の
-サンドボックス上で検証している。その中には **git の identity がまったく設定されていない**
-ケースも含まれる。プラグインはあなたの `user.name`/`user.email` に依存しない。自身の自動
-コミットには、常に固定の合成 identity（`OKF Batch <okf-batch@localhost>`）を使う。macOS と
-Linux はこの方法で直接検証されている。Windows 固有の処理（`claude.cmd` のための
-`shell:true`、パス区切り文字）は設計ドキュメントの要件どおりに実装されているが、実際の
-Windows マシンではまだ実行していない。誰かが確認するまで、その組み合わせは未検証として
-扱ってほしい。
+| Repository | Commit | 言語 files | Declarations | Internal edges | Truncated |
+|---|---|---:|---:|---:|---:|
+| [Slim](https://github.com/slimphp/Slim) | `80900fb` | 125 | 127 | 305 | no |
+| [Redis](https://github.com/redis/redis) | `f76dff7` | 784 | 5,796 | 990 | no |
+| [fmt](https://github.com/fmtlib/fmt) | `a79df45` | 46 | 283 | 121 | no |
+| [Alamofire](https://github.com/Alamofire/Alamofire) | `903c53c` | 98 | 2,052 | 215 | no |
 
-## ライセンス
+Swift 標準 `Error` と同名 nested type の誤接続、C standard header と vendored compatibility header の誤接続を検証中に修正しました。詳細は [検証 report](docs/benchmarks/oss-analysis-2026-07-15.md) にあります。
 
-MIT
+## Data と privacy
+
+- `SessionEnd` は full transcript を `raw/` に無損失コピーします。
+- batch は capped digest を別の `claude -p` で Anthropic に送ります。これが追加される唯一の model/API 転送です。
+- `--safe-mode`、制限 tools、stdin prompt、lint/rollback、Bash なしで実行します。
+- raw transcript は git-ignore、抽出 Markdown のみ local commit します。push/remote 追加はしません。
+- POSIX directory は `0700`、raw/state/log は `0600`。persistent log には transcript、Claude stdout/stderr、credential、full raw path を保存しません。
+- live fixture は synthetic で個人情報や credential を含みません。
+
+## 設定・削除
+
+`~/.claude/okf/.okf/config.md` または `/okf:okf-config` を使います。主要 default は `enabled: true`、`batch_interval_hours: 1`、`batch_max_digest_kb: 600`、`batch_digest_cap_kb: 150`、`remove_candidate_ttl_days: 30`、`inject_max_lines` / `inject_max_bytes`: `120` / `9000` です。無効・未知の値は安全な default に戻ります。
+
+```sh
+claude plugin uninstall okf
+```
+
+bundle は `~/.claude/okf` に残るため、確認・backup 後に必要なら手動削除します。
+
+## 開発時の検証
+
+```sh
+node test/smoke.mjs
+node test/bench.mjs
+for file in $(rg --files -g '*.mjs'); do node --check "$file"; done
+claude plugin validate .claude-plugin/plugin.json
+claude plugin validate .claude-plugin/marketplace.json
+git diff --check
+```
+
+live: `OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs`。
+
+## 参考・license
+
+README の構成は [uv](https://github.com/astral-sh/uv)、[Ruff](https://github.com/astral-sh/ruff)、[Playwright](https://github.com/microsoft/playwright)、[fmt](https://github.com/fmtlib/fmt)、[Slim](https://github.com/slimphp/Slim) の簡潔な install/reproduction 表現を参考にし、文言や benchmark claim はコピーしていません。[OKF specification](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)。License: [MIT](LICENSE)。

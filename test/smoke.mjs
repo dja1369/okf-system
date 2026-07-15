@@ -6,12 +6,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { ensureBootstrap } from '../lib/bootstrap.mjs';
 import { okfPaths } from '../lib/paths.mjs';
-import { DEFAULT_CONFIG } from '../lib/config.mjs';
+import { DEFAULT_CONFIG, readConfig } from '../lib/config.mjs';
 import { runLint, formatReport } from '../lib/lint.mjs';
 import { regenerateIndex } from '../lib/index-gen.mjs';
 import { digestFile } from '../lib/digest.mjs';
@@ -19,9 +19,11 @@ import { captureSession, sanitizeForFilename } from '../lib/capture.mjs';
 import { git } from '../lib/git.mjs';
 import { analyzeProject } from '../lib/analyze.mjs';
 import { buildGraph, renderHtml } from '../lib/viz.mjs';
+import { recordCaptureStatus } from '../lib/status.mjs';
+import { auditBenchmarkBundle, matchesBenchmarkAnswer } from '../lib/bench-audit.mjs';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const FAKE_CLAUDE = path.join(PLUGIN_ROOT, 'test', 'fixtures', 'fake-claude.mjs');
+const FAKE_CLAUDE = path.join(PLUGIN_ROOT, 'test', 'fixtures', process.platform === 'win32' ? 'fake-claude.cmd' : 'fake-claude.mjs');
 const SAMPLE_TRANSCRIPT = path.join(PLUGIN_ROOT, 'test', 'fixtures', 'sample-transcript.jsonl');
 
 let pass = 0;
@@ -40,13 +42,14 @@ function sandbox(label) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `okf-smoke-${label}-`));
 }
 
-// Polls a synchronous predicate, blocking via a real `sleep` subprocess between checks
-// (Node has no synchronous sleep) — used only to wait out detached/unref'd child batches.
+// Polls a synchronous predicate without relying on a Unix-only `sleep` executable.
+// Atomics.wait is available in Node on every supported desktop platform.
 function waitUntil(predicate, timeoutMs = 8000, intervalMs = 200) {
   const deadline = Date.now() + timeoutMs;
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
   while (Date.now() < deadline) {
     if (predicate()) return true;
-    execFileSync('sleep', [String(intervalMs / 1000)]);
+    Atomics.wait(sleeper, 0, 0, intervalMs);
   }
   return predicate();
 }
@@ -64,11 +67,31 @@ function writeConfig(okfHome, overrides) {
 }
 
 function runHook(scriptRelPath, { okfHome, stdin = '{}', env = {} }) {
-  return execFileSync(process.execPath, [path.join(PLUGIN_ROOT, scriptRelPath)], {
-    input: stdin,
-    env: { ...process.env, OKF_HOME: okfHome, ...env },
-    encoding: 'utf8',
-  });
+  const home = env.HOME || isolatedHome();
+  const suppressAutoBatch = scriptRelPath === 'bin/session-start.mjs';
+  const lockPath = okfPaths(okfHome).lock;
+  let temporaryLock = false;
+  if (suppressAutoBatch && !fs.existsSync(lockPath)) {
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedEpochMs: Date.now() }));
+    temporaryLock = true;
+  }
+  try {
+    return execFileSync(process.execPath, [path.join(PLUGIN_ROOT, scriptRelPath)], {
+      input: stdin,
+      env: {
+        ...process.env,
+        OKF_HOME: okfHome,
+        HOME: home,
+        USERPROFILE: home,
+        CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
+        ...env,
+      },
+      encoding: 'utf8',
+    });
+  } finally {
+    if (temporaryLock) fs.rmSync(lockPath, { force: true });
+  }
 }
 
 // sweepOrphanSessions scans os.homedir()/.claude/projects — without overriding
@@ -83,7 +106,7 @@ function runBatch({ okfHome, env = {} }) {
   const home = env.HOME || isolatedHome();
   return execFileSync(process.execPath, [path.join(PLUGIN_ROOT, 'bin', 'batch.mjs')], {
     cwd: okfHome,
-    env: { ...process.env, OKF_HOME: okfHome, HOME: home, USERPROFILE: home, ...env },
+    env: { ...process.env, OKF_HOME: okfHome, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude'), ...env },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -120,10 +143,45 @@ console.log('\n=== bootstrap ===');
   ok('bootstrap creates root index.md with okf_version', fs.readFileSync(paths.rootIndex, 'utf8').includes('okf_version'));
   ok('bootstrap creates SCHEMA.md with type: schema', fs.readFileSync(paths.schema, 'utf8').includes('type: schema'));
   ok('bootstrap creates config.md', fs.existsSync(paths.config));
+  if (process.platform !== 'win32') {
+    ok('bootstrap restricts OKF home to owner-only', (fs.statSync(paths.home).mode & 0o777) === 0o700);
+    ok('bootstrap restricts runtime state directory to owner-only', (fs.statSync(paths.state).mode & 0o777) === 0o700);
+  }
   const before = git(['log', '--oneline'], home);
   ensureBootstrap(home); // idempotent re-run
   const after = git(['log', '--oneline'], home);
   ok('bootstrap re-run is a no-op (no new commit)', before === after);
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n=== config validation ===');
+{
+  const home = bootstrapped('config-invalid');
+  writeConfig(home, {
+    enabled: 'false',
+    batch_interval_hours: -1,
+    batch_max_digest_kb: 0,
+    batch_max_sessions: -50,
+    batch_digest_cap_kb: 'huge',
+    remove_candidate_ttl_days: -30,
+    inject_max_lines: 0,
+    inject_max_bytes: 999999,
+    capture_exclude_cwd: '/private/**',
+    batch_model: 'claude-sonnet-5 & calc',
+    batch_effort: 'turbo',
+    claude_bin: 'claude.cmd & calc',
+    node_bin: 'node.exe | calc',
+    seed_language: 'xx-NOPE',
+    unexpected_key: 'must not escape normalization',
+  });
+  const warnings = [];
+  const config = readConfig(home, (warning) => warnings.push(warning));
+  for (const key of Object.keys(DEFAULT_CONFIG)) {
+    ok(`invalid config falls back safely: ${key}`, config[key] === DEFAULT_CONFIG[key] || JSON.stringify(config[key]) === JSON.stringify(DEFAULT_CONFIG[key]));
+  }
+  ok('unknown config keys are ignored', !Object.hasOwn(config, 'unexpected_key'));
+  ok('invalid config diagnostics name keys without echoing values', warnings.length >= Object.keys(DEFAULT_CONFIG).length && warnings.every((w) => w.key && !Object.hasOwn(w, 'value')));
+  ok('default hook context stays below Claude Code 10,000-character cap', DEFAULT_CONFIG.inject_max_bytes <= 9000);
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +194,9 @@ console.log('\n=== capture (lib-level) ===');
   const raw1 = fs.readFileSync(r1.dest);
   const src = fs.readFileSync(SAMPLE_TRANSCRIPT);
   ok('captured raw file is byte-for-byte identical to source', Buffer.compare(raw1, src) === 0);
+  if (process.platform !== 'win32') {
+    ok('captured raw transcript is owner-readable only', (fs.statSync(r1.dest).mode & 0o777) === 0o600);
+  }
 
   // resume: same session_id, longer transcript -> must overwrite same dest, not create a 2nd file
   const resumedPath = path.join(sandbox('resume-src'), 'resumed.jsonl');
@@ -145,21 +206,51 @@ console.log('\n=== capture (lib-level) ===');
   ok('raw/ still has exactly one file for this session', listRaw(home).length === 1);
   ok('resumed content actually landed (superset)', fs.readFileSync(r2.dest, 'utf8').includes('추가 대화'));
 
+  captureSession({ okfHome: home, cwd, sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', transcriptPath: SAMPLE_TRANSCRIPT });
+  ok('out-of-order older capture cannot truncate a resumed session', fs.readFileSync(r2.dest, 'utf8').includes('추가 대화'));
+
   const empty = sandbox('empty-transcript');
   const emptyPath = path.join(empty, 'empty.jsonl');
   fs.writeFileSync(emptyPath, '');
   const r3 = captureSession({ okfHome: home, cwd, sessionId: 'bbbbbbbb-0000-0000-0000-000000000000', transcriptPath: emptyPath });
   ok('empty transcript is skipped', r3.captured === false);
 
+  const largeSource = path.join(sandbox('large-transcript'), 'large.jsonl');
+  const largeContent = `${JSON.stringify({ type: 'user', message: { role: 'user', content: `한글-${'x'.repeat(2 * 1024 * 1024)}` } })}\n`;
+  fs.writeFileSync(largeSource, largeContent);
+  const largeResult = captureSession({ okfHome: home, cwd, sessionId: 'bbbbbbbb-1111-2222-3333-444444444444', transcriptPath: largeSource });
+  ok('large UTF-8 transcript is captured byte-for-byte', Buffer.compare(fs.readFileSync(largeSource), fs.readFileSync(largeResult.dest)) === 0);
+
   ok('sanitizeForFilename replaces forbidden chars', sanitizeForFilename('a:b?c') === 'a_b_c');
   ok('sanitizeForFilename prefixes reserved Windows names', sanitizeForFilename('CON') === '_CON');
   ok('sanitizeForFilename is case-insensitive on reserved names', sanitizeForFilename('con') === '_con');
   ok('sanitizeForFilename falls back on empty result', sanitizeForFilename('') === 'project');
+
+  const hostileHome = bootstrapped('capture-hostile-session-id');
+  let hostileResult = null;
+  try {
+    hostileResult = captureSession({ okfHome: hostileHome, cwd, sessionId: '../../../../outside', transcriptPath: SAMPLE_TRANSCRIPT });
+  } catch {
+    // A rejected/escaped filename is a failed boundary contract, but keep the runner alive.
+  }
+  ok('capture confines untrusted session ids to raw/', hostileResult?.captured === true
+    && path.dirname(hostileResult.dest) === okfPaths(hostileHome).raw
+    && !path.basename(hostileResult.dest).includes('..'));
 }
 
 // ---------------------------------------------------------------------------
 console.log('\n=== session-end.mjs (subprocess) ===');
 {
+  const blockedStatusHome = sandbox('capture-status-blocked');
+  fs.writeFileSync(path.join(blockedStatusHome, '.okf'), 'not-a-directory');
+  let statusThrew = false;
+  try {
+    recordCaptureStatus(blockedStatusHome, { status: 'error', stage: 'test', errorCode: 'TEST' });
+  } catch {
+    statusThrew = true;
+  }
+  ok('diagnostic status write failure never interrupts capture flow', !statusThrew);
+
   const home = bootstrapped('session-end');
   const input = JSON.stringify({
     session_id: 'cccccccc-1111-2222-3333-444444444444',
@@ -168,6 +259,23 @@ console.log('\n=== session-end.mjs (subprocess) ===');
   });
   runHook('bin/session-end.mjs', { okfHome: home, stdin: input });
   ok('session-end hook writes a raw file', listRaw(home).length === 1);
+  const captureStatusPath = path.join(okfPaths(home).state, 'capture-status.json');
+  ok('session-end records a privacy-safe capture status', fs.existsSync(captureStatusPath));
+  if (fs.existsSync(captureStatusPath)) {
+    const captureStatus = JSON.parse(fs.readFileSync(captureStatusPath, 'utf8'));
+    ok('capture status reports success without transcript paths', captureStatus.lastStatus === 'ok' && !JSON.stringify(captureStatus).includes(SAMPLE_TRANSCRIPT));
+    if (process.platform !== 'win32') {
+      ok('capture status file is owner-readable only', (fs.statSync(captureStatusPath).mode & 0o777) === 0o600);
+    }
+  }
+
+  const missingHome = bootstrapped('session-end-missing');
+  runHook('bin/session-end.mjs', {
+    okfHome: missingHome,
+    stdin: JSON.stringify({ session_id: 'eeeeeeee-1111-2222-3333-444444444444', transcript_path: path.join(missingHome, 'does-not-exist.jsonl'), cwd: '/Users/tester/proj-x' }),
+  });
+  const missingStatus = JSON.parse(fs.readFileSync(okfPaths(missingHome).captureStatus, 'utf8'));
+  ok('missing transcript is visible without leaking its path', missingStatus.lastStatus === 'error' && missingStatus.errorCode === 'TRANSCRIPT_UNAVAILABLE' && !JSON.stringify(missingStatus).includes('does-not-exist'));
 
   // capture_exclude_cwd
   const home2 = bootstrapped('session-end-exclude');
@@ -188,6 +296,11 @@ console.log('\n=== session-end.mjs (subprocess) ===');
     threw = true;
   }
   ok('session-end hook never throws on malformed stdin (fail-open)', !threw);
+
+  const hookConfig = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, 'hooks', 'hooks.json'), 'utf8'));
+  const sessionEndHook = hookConfig.hooks.SessionEnd[0].hooks[0];
+  ok('SessionEnd capture runs asynchronously beyond the plugin hook budget', sessionEndHook.async === true);
+  ok('SessionEnd allows the documented ten-minute async copy window', sessionEndHook.timeout >= 600);
 }
 
 // ---------------------------------------------------------------------------
@@ -358,12 +471,23 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
 {
   // 9a. success
   const home = setupBatchSandbox('success');
-  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  const usagePath = path.join(sandbox('batch-usage'), 'usage.jsonl');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', OKF_BENCH_USAGE_FILE: usagePath } });
   ok('success: raw/ drained', listRaw(home).length === 0);
   ok('success: file landed in _remove_candidate/', listRemoveCandidate(home).length === 1);
   ok('success: concept file committed', fs.existsSync(path.join(home, 'decisions', 'fake-test-concept.md')));
   ok('success: lastResult is ok', lastBatch(home).lastResult === 'ok');
   ok('success: post-lint clean (HEAD stays conformant)', runLint(home).errors.length === 0);
+  const usageText = fs.existsSync(usagePath) ? fs.readFileSync(usagePath, 'utf8') : '';
+  const usageRecord = usageText ? JSON.parse(usageText.trim()) : null;
+  ok('live benchmark opt-in records batch token and cache usage', usageRecord?.usage?.input_tokens === 100 && usageRecord.usage.cache_read_input_tokens === 25);
+  ok('live benchmark telemetry identifies the resolved batch model', usageRecord?.models?.includes('claude-sonnet-5'));
+  ok('live benchmark usage record excludes Claude response text', !usageText.includes('done') && !usageText.includes('result'));
+  if (process.platform !== 'win32') {
+    ok('batch status file is owner-readable only', (fs.statSync(okfPaths(home).lastBatch).mode & 0o777) === 0o600);
+    const logFiles = fs.readdirSync(okfPaths(home).logs);
+    ok('batch diagnostic logs are owner-readable only', logFiles.length > 0 && logFiles.every((name) => (fs.statSync(path.join(okfPaths(home).logs, name)).mode & 0o777) === 0o600));
+  }
 }
 {
   // 9b. NO-OP
@@ -383,6 +507,31 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   ok('fail: nothing landed in _remove_candidate/', listRemoveCandidate(home).length === 0);
   const status = git(['status', '--porcelain'], home);
   ok('fail: working tree is clean after rollback', status.trim() === '');
+}
+{
+  const home = setupBatchSandbox('private-error-log');
+  const secret = 'SECRET_TRANSCRIPT_TOKEN_DO_NOT_LOG';
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'leak-fail', FAKE_CLAUDE_SECRET: secret } });
+  const logs = fs.readdirSync(okfPaths(home).logs)
+    .map((name) => fs.readFileSync(path.join(okfPaths(home).logs, name), 'utf8'))
+    .join('\n');
+  ok('batch logs redact Claude stderr and transcript-derived secrets', !logs.includes(secret));
+  ok('batch logs do not persist full raw transcript paths', !logs.includes(path.join(home, 'raw')));
+
+  const lintHome = setupBatchSandbox('private-lint-log');
+  runBatch({ okfHome: lintHome, env: { FAKE_CLAUDE_MODE: 'secret-lint', FAKE_CLAUDE_SECRET: secret } });
+  const lintLogs = fs.readdirSync(okfPaths(lintHome).logs)
+    .map((name) => fs.readFileSync(path.join(okfPaths(lintHome).logs, name), 'utf8'))
+    .join('\n');
+  ok('batch logs redact transcript-derived lint values', !lintLogs.includes(secret));
+}
+{
+  // A clean process exit is not enough: Claude reports max-turn exhaustion in the JSON result.
+  const home = setupBatchSandbox('max-turns');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'maxturns' } });
+  ok('max-turns result returns raw for retry', listRaw(home).length === 1);
+  ok('max-turns result is not archived as successfully processed', listRemoveCandidate(home).length === 0);
+  ok('max-turns result is visible in last-batch status', lastBatch(home).lastResult.startsWith('partial:'));
 }
 {
   // 9d. lint fails, repair succeeds
@@ -405,7 +554,7 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   // 9f (§7-4 코덱스 2차 지적 regression): crash remnant must NOT be treated as user edit
   const home = setupBatchSandbox('stale-lock-crash');
   // simulate a crashed prior batch: dead-PID lock + a dirty working tree left behind mid-chunk
-  const deadPid = execFileSync('sh', ['-c', 'echo $$']).toString().trim();
+  const deadPid = execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))']).toString().trim();
   fs.writeFileSync(okfPaths(home).lock, JSON.stringify({ pid: Number(deadPid), startedEpochMs: Date.now() - 1000 }));
   fs.writeFileSync(path.join(home, 'decisions', 'crash-remnant.md'), 'frontmatter 없는 크래시 잔여물\n');
   // raw/ already has one fixture session from setupBatchSandbox; keep FAKE_CLAUDE_MODE=success
@@ -477,11 +626,72 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   );
 }
 {
+  // The paid live benchmark must use only its synthetic captured fixture while preserving the
+  // user's real Claude auth. It therefore opts out of the orphan-recovery side channel explicitly.
+  const home = setupBatchSandbox('bench-isolated-sweep');
+  const fakeHome = sandbox('fake-home-for-bench-isolated-sweep');
+  const configDir = path.join(fakeHome, '.claude');
+  const foreignSessionId = 'd4d4d4d4-1111-2222-3333-444444444444';
+  const projectsDir = path.join(configDir, 'projects', 'foreign');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  const foreignPath = path.join(projectsDir, `${foreignSessionId}.jsonl`);
+  fs.copyFileSync(SAMPLE_TRANSCRIPT, foreignPath);
+  const past = new Date(Date.now() - 60 * 60_000);
+  fs.utimesSync(foreignPath, past, past);
+  const usagePath = path.join(fakeHome, 'usage.jsonl');
+  runBatch({ okfHome: home, env: {
+    FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome,
+    CLAUDE_CONFIG_DIR: configDir, OKF_BENCH_USAGE_FILE: usagePath, OKF_BENCH_SKIP_SWEEP: '1',
+  } });
+  ok('isolated live benchmark never sweeps the user Claude history',
+    !listRemoveCandidate(home).some((f) => f.includes(foreignSessionId))
+      && listRemoveCandidate(home).length === 1);
+}
+{
+  // A batch-created Claude session is intentionally not captured by SessionEnd, but Claude Code
+  // still writes it under projects/. The next orphan sweep must not re-ingest that transcript.
+  const home = setupBatchSandbox('batch-session-registry');
+  const fakeHome = sandbox('fake-home-for-batch-session-registry');
+  const configDir = path.join(fakeHome, '.claude');
+  const batchSessionId = 'b4b4b4b4-1111-2222-3333-444444444444';
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_SESSION_ID: batchSessionId, HOME: fakeHome, USERPROFILE: fakeHome, CLAUDE_CONFIG_DIR: configDir } });
+  const registryPath = okfPaths(home).batchSessions;
+  const registryText = registryPath && fs.existsSync(registryPath) ? fs.readFileSync(registryPath, 'utf8') : '';
+  ok('batch records its own Claude session id in a privacy-safe registry', registryText.includes(batchSessionId) && !registryText.includes('[OKF-BATCH]'));
+  const projectsDir = path.join(configDir, 'projects', 'batch-home');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  const transcript = path.join(projectsDir, `${batchSessionId}.jsonl`);
+  fs.writeFileSync(transcript, `${JSON.stringify({ type: 'user', cwd: home, sessionId: batchSessionId, message: { role: 'user', content: '[OKF-BATCH] synthetic' } })}\n`);
+  const past = new Date(Date.now() - 60 * 60_000);
+  fs.utimesSync(transcript, past, past);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'noop', HOME: fakeHome, USERPROFILE: fakeHome, CLAUDE_CONFIG_DIR: configDir } });
+  ok('sweep never re-ingests a registered batch Claude session', !listRemoveCandidate(home).some((f) => f.includes(batchSessionId)) && !listRaw(home).some((f) => f.includes(batchSessionId)));
+}
+{
+  // Registry writes can be interrupted. Transcript cwd metadata provides a content-independent
+  // backstop: a Claude session whose cwd is this OKF bundle is a batch/repair session, not user work.
+  const fakeHome = sandbox('fake-home-for-batch-cwd');
+  const configDir = path.join(fakeHome, '.claude');
+  const home = path.join(fakeHome, 'isolated-okf-home');
+  ensureBootstrap(home);
+  writeConfig(home, { claude_bin: FAKE_CLAUDE });
+  const sessionId = 'c5c5c5c5-1111-2222-3333-444444444444';
+  const projectsDir = path.join(configDir, 'projects', 'isolated-okf-home');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  const transcript = path.join(projectsDir, `${sessionId}.jsonl`);
+  fs.writeFileSync(transcript, `${JSON.stringify({ type: 'user', cwd: home, sessionId, message: { role: 'user', content: 'synthetic batch prompt' } })}\n`);
+  const past = new Date(Date.now() - 60 * 60_000);
+  fs.utimesSync(transcript, past, past);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'noop', HOME: fakeHome, USERPROFILE: fakeHome, CLAUDE_CONFIG_DIR: configDir } });
+  ok('sweep excludes transcripts whose cwd is the OKF home', !listRemoveCandidate(home).some((f) => f.includes(sessionId)) && !listRaw(home).some((f) => f.includes(sessionId)));
+}
+{
   // project directory names containing '$' must not corrupt the ingest prompt via
   // String.replace's special $-pattern interpretation of the replacement argument.
   const home = bootstrapped('dollar-sign');
   writeConfig(home, { claude_bin: FAKE_CLAUDE });
   const promptDumpPath = path.join(sandbox('dollar-dump'), 'prompt.txt');
+  const argvDumpPath = path.join(sandbox('dollar-argv-dump'), 'argv.json');
   // Use captureSession() directly rather than the session-end.mjs hook — the hook's own
   // maybeSpawnBatch would race a second, unrelated auto-spawned batch.mjs against the
   // explicit runBatch() call below (both targeting the same home), which is a real
@@ -493,10 +703,12 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
     sessionId: 'd4d4d4d4-1111-2222-3333-444444444444',
     transcriptPath: SAMPLE_TRANSCRIPT,
   });
-  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_DUMP_PROMPT_TO: promptDumpPath } });
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_DUMP_PROMPT_TO: promptDumpPath, FAKE_CLAUDE_DUMP_ARGV_TO: argvDumpPath } });
   const dumped = fs.existsSync(promptDumpPath) ? fs.readFileSync(promptDumpPath, 'utf8') : '';
+  const dumpedArgv = fs.existsSync(argvDumpPath) ? JSON.parse(fs.readFileSync(argvDumpPath, 'utf8')) : [];
   ok('$-containing project name does not leave an unresolved placeholder in the prompt', dumped.length > 0 && !dumped.includes('{{SOURCE_PATHS}}') && !dumped.includes('{{DIGEST_PATHS}}'));
   ok('$-containing project name does not splice/duplicate the prompt template', (dumped.match(/처리 대상 digest:/g) || []).length <= 1);
+  ok('untrusted ingest prompt is sent over stdin, never a Windows shell argument', dumped.length > 0 && !dumpedArgv.includes(dumped));
 }
 {
   // batch-gate's pre-spawn check must respect the same hard lock-ceiling as batch.mjs's own
@@ -540,6 +752,7 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   const argv = fs.existsSync(argvDumpPath) ? JSON.parse(fs.readFileSync(argvDumpPath, 'utf8')) : [];
   ok('config.batch_model reaches the claude invocation as --model', argv.includes('--model') && argv[argv.indexOf('--model') + 1] === 'claude-sonnet-5');
   ok('config.batch_effort reaches the claude invocation as --effort', argv.includes('--effort') && argv[argv.indexOf('--effort') + 1] === 'medium');
+  ok('batch Claude session is never persisted for a later orphan sweep', argv.includes('--no-session-persistence'));
 }
 {
   // empty batch_model/batch_effort (still the config.md seed convention for "use CLI default")
@@ -640,6 +853,99 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   fs.writeFileSync(path.join(home2, '.okf', 'config.md'), '---\nseed_language: "xx-NOPE"\n---\n');
   ensureBootstrap(home2);
   ok('unknown seed_language falls back to English rather than seeding nothing', fs.readFileSync(path.join(home2, 'references', 'okf-format.md'), 'utf8').includes('What OKF'));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n=== plugin contract and docs ===');
+{
+  const batchCommand = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-batch.md'), 'utf8');
+  const configCommand = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-config.md'), 'utf8');
+  const statusCommand = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-status.md'), 'utf8');
+  const visualizeCommand = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-visualize.md'), 'utf8');
+  const analysisPath = path.join(PLUGIN_ROOT, 'commands', 'okf-analysis.md');
+  const analysisCommand = fs.existsSync(analysisPath) ? fs.readFileSync(analysisPath, 'utf8') : '';
+  const pluginManifest = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
+  ok('command docs never suggest bare /okf-status', !/\/okf-status\b/.test(batchCommand + configCommand));
+  ok('status command reports capture observability state', statusCommand.includes('capture-status.json'));
+  ok('behavior changes advance the distributable plugin version', pluginManifest.version === '0.1.5');
+
+  const readmes = fs.readdirSync(PLUGIN_ROOT).filter((name) => /^README(?:\.[^.]+)?\.md$/.test(name));
+  ok('all localized READMEs document the safe 9000-byte gate default', readmes.length === 8 && readmes.every((name) => {
+    const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
+    return /inject_max_lines[^\n]*inject_max_bytes[^\n]*`120` \/ `9000`/.test(text);
+  }));
+  ok('all localized READMEs keep commands and benchmark conditions in sync', readmes.length === 8 && readmes.every((name) => {
+    const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
+    return text.includes('/okf:okf-visualize')
+      && /\/okf:okf-analysis\s+\[[^\]]+\]/.test(text)
+      && !text.includes('/okf:okf-visualize [path]')
+      && /\bA\s+—\s+/.test(text)
+      && /\bB\s+—\s+/.test(text)
+      && /\bC\s+—\s+/.test(text)
+      && /\bD\s+—\s+/.test(text)
+      && text.includes('OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs')
+      && /<!-- okf-live-benchmark: [^>]+ -->/.test(text);
+  }));
+  ok('all localized READMEs publish the same pinned OSS validation counts', readmes.length === 8 && readmes.every((name) => {
+    const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
+    return text.includes('80900fb') && text.includes('125') && text.includes('127') && text.includes('305')
+      && text.includes('f76dff7') && text.includes('784') && text.includes('5,796') && text.includes('990')
+      && text.includes('a79df45') && text.includes('46') && text.includes('283') && text.includes('121')
+      && text.includes('903c53c') && text.includes('98') && text.includes('2,052') && text.includes('215');
+  }));
+  ok('all localized READMEs publish the same valid live benchmark result', readmes.length === 8 && readmes.every((name) => {
+    const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
+    return text.includes('<!-- okf-live-benchmark: valid-2026-07-15T15-03-01Z -->')
+      && text.includes('27,320 / 27,574') && text.includes('9,070 / 9,093')
+      && text.includes('22,857 / 22,883') && text.includes('21,507 / 22,261')
+      && text.includes('111,381') && text.includes('$0.164360')
+      && text.includes('okf-live-2026-07-15T15-03-01-343Z.md')
+      && !text.includes('okf-live-benchmark: pending');
+  }));
+
+  const workflow = path.join(PLUGIN_ROOT, '.github', 'workflows', 'test.yml');
+  ok('CI verifies Linux, macOS, and Windows without external dependencies', fs.existsSync(workflow) && ['ubuntu-latest', 'macos-latest', 'windows-latest'].every((osName) => fs.readFileSync(workflow, 'utf8').includes(osName)));
+  ok('visualize command is bundle-only and accepts no repository argument', !/argument-hint|analyzeProject|\$ARGUMENTS/.test(visualizeCommand) && /null/.test(visualizeCommand));
+  ok('analysis command validates and analyzes an explicit or current path', /argument-hint/.test(analysisCommand) && /isDirectory/.test(analysisCommand) && /generateViz\(okfHome, target/.test(analysisCommand));
+  ok('statusline is optional and never auto-installed by hooks', fs.existsSync(path.join(PLUGIN_ROOT, 'bin', 'statusline.mjs')) && !fs.readFileSync(path.join(PLUGIN_ROOT, 'hooks', 'hooks.json'), 'utf8').includes('statusline'));
+
+  const liveBench = path.join(PLUGIN_ROOT, 'test', 'bench-okf.mjs');
+  const liveBenchText = fs.existsSync(liveBench) ? fs.readFileSync(liveBench, 'utf8') : '';
+  const localBenchText = fs.readFileSync(path.join(PLUGIN_ROOT, 'test', 'bench.mjs'), 'utf8');
+  const benchFixture = path.join(PLUGIN_ROOT, 'test', 'fixtures', 'bench', 'session-one.jsonl');
+  ok('live OKF benchmark harness exists and is opt-in', fs.existsSync(liveBench));
+  ok('live benchmark records resolved models and official pricing provenance', liveBenchText.includes('resolvedModels') && liveBenchText.includes('officialPricing'));
+  ok('live benchmark cost break-even includes measured irrelevant-gate overhead', liveBenchText.includes('gateCostOverhead') && liveBenchText.includes('initialCostUsd'));
+  ok('live benchmark explicitly disables orphan sweep for synthetic isolation', liveBenchText.includes("OKF_BENCH_SKIP_SWEEP: '1'"));
+  ok('live benchmark sanitizes user-home paths from raw events', liveBenchText.includes("'<USER_HOME>'") && liveBenchText.includes("'<PLUGIN_ROOT>'"));
+  if (fs.existsSync(liveBench)) {
+    const refused = spawnSync(process.execPath, [liveBench], { cwd: PLUGIN_ROOT, encoding: 'utf8' });
+    ok('live benchmark refuses accidental paid execution', refused.status !== 0 && `${refused.stdout}${refused.stderr}`.includes('OKF_RUN_LIVE_BENCH=1'));
+  } else {
+    ok('live benchmark refuses accidental paid execution', false);
+  }
+  const fixtureText = fs.existsSync(benchFixture) ? fs.readFileSync(benchFixture, 'utf8') : '';
+  ok('live benchmark fixture is deterministic and contains no credential-shaped values', fixtureText.includes('SQLite') && fixtureText.includes('deploy:canary') && !/(sk-ant-|api[_-]?key|password|credential)/i.test(fixtureText));
+  const auditHome = bootstrapped('bench-bundle-audit');
+  fs.mkdirSync(path.join(auditHome, 'decisions'), { recursive: true });
+  fs.writeFileSync(path.join(auditHome, 'decisions', 'bench-target.md'), `---
+type: decision
+title: Synthetic benchmark target
+description: Routes every synthetic benchmark fact
+---
+SQLite; repository pattern; default exports are prohibited; busy_timeout=5000; Korean; concise;
+src/config.mjs; npm run deploy:canary
+`);
+  const audit = auditBenchmarkBundle(auditHome, '- [target](/decisions/bench-target.md)');
+  ok('live benchmark preflight proves all target facts exist and are gate-routed', audit.ready && audit.presentFacts === 8 && audit.routedFacts === 8);
+  ok('live benchmark grading accepts semantically identical constrained answers',
+    matchesBenchmarkAnswer('export_style', 'named export only (default export 금지)', 'named export only')
+      && matchesBenchmarkAnswer('export_style', 'named export만 사용 (default export 금지)', 'named export only')
+      && matchesBenchmarkAnswer('failure_solution', 'SQLITE_BUSY 문제는 busy_timeout=5000 설정으로 해결', 'busy_timeout=5000')
+      && matchesBenchmarkAnswer('response_language', '한국어', 'Korean')
+      && matchesBenchmarkAnswer('response_style', '간결하게', 'concise'));
+  ok('local SessionEnd benchmark does not short-circuit capture', !/OKF_BATCH:\s*['"]1['"]/.test(localBenchText));
+  ok('smoke hook runner isolates Claude history and suppresses paid auto-batches', /CLAUDE_CONFIG_DIR/.test(runHook.toString()) && /isolatedHome/.test(runHook.toString()) && /startedEpochMs/.test(runHook.toString()));
 }
 
 // ---------------------------------------------------------------------------
@@ -768,6 +1074,104 @@ console.log('\n=== analyze.mjs ===');
   ok('analyze: C# using of a namespace the repo does not declare stays external', !cg.nodes.some((n) => n.id === 'module:System.Threading'));
   ok('analyze: C# declarations are extracted', cg.nodes.some((n) => n.type === 'class' && n.name === 'Pipeline'));
 
+  // PHP relationships are namespace/symbol based, not arbitrary filename matches. Grouped
+  // imports and aliases must resolve only to declarations that actually exist in this repo.
+  const php = sandbox('analyze-php');
+  const phw = (rel, body) => {
+    const p = path.join(php, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+  };
+  phw('composer.json', JSON.stringify({ autoload: { 'psr-4': { 'Acme\\\\': 'src/' } } }));
+  phw('src/Domain/User.php', '<?php\nnamespace Acme\\Domain;\nclass User {}\ninterface Identified {}\ntrait Auditable {}\nenum State { case Active; }\nfunction normalize() {}\n');
+  phw('src/Domain/Order.php', '<?php\nnamespace Acme\\Domain;\nclass Order {}\n');
+  phw('src/App/Service.php', "<?php\nnamespace Acme\\App;\nuse Acme\\Domain\\{User as Account, Order};\nuse Vendor\\Package\\User;\nrequire_once '../Support/helpers.php';\nclass Service {}\n");
+  phw('src/Support/helpers.php', '<?php\nfunction helper() {}\n');
+  const phg = analyzeProject(php);
+  const phImports = phg.edges.filter((e) => e.type === 'imports' && e.source === 'file:src/App/Service.php');
+  ok('analyze: PHP grouped use resolves repo-declared symbols', phImports.some((e) => e.target === 'file:src/Domain/User.php') && phImports.some((e) => e.target === 'file:src/Domain/Order.php'));
+  ok('analyze: PHP external namespace does not cross-link to a same-named local symbol', phImports.filter((e) => e.target === 'file:src/Domain/User.php').length === 1);
+  ok('analyze: PHP require/include relative path resolves', phImports.some((e) => e.target === 'file:src/Support/helpers.php'));
+  for (const name of ['User', 'Identified', 'Auditable', 'State', 'normalize']) {
+    ok(`analyze: PHP declaration extracted: ${name}`, phg.nodes.some((n) => n.name === name && n.filePath === 'src/Domain/User.php'));
+  }
+
+  // C/C++ declarations and include resolution must remain conservative: quoted includes are
+  // local, while angle-bracket includes are internal only when a unique local header exists.
+  const native = sandbox('analyze-native');
+  const nw = (rel, body) => {
+    const p = path.join(native, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+  };
+  nw('include/acme/model.h', '#pragma once\nstruct Model {};\nenum State { Ready };\ntypedef unsigned long Id;\n');
+  nw('include/acme/widget.hpp', '#pragma once\nnamespace acme {\nclass Widget {};\nunion Value { int i; };\n}\n');
+  nw('compat/stdint.h', '#pragma once\n');
+  nw('src/main.cpp', '#include "acme/model.h"\n#include <acme/widget.hpp>\n#include <vector>\n#include <stdint.h>\nint run(int value) { return value; }\nint declared_only(int value);\n');
+  const ng = analyzeProject(native);
+  const nImports = ng.edges.filter((e) => e.type === 'imports' && e.source === 'file:src/main.cpp');
+  ok('analyze: C/C++ nested quoted include resolves from include root', nImports.some((e) => e.target === 'file:include/acme/model.h'));
+  ok('analyze: C/C++ unique local angle include resolves', nImports.some((e) => e.target === 'file:include/acme/widget.hpp'));
+  ok('analyze: C/C++ system header does not cross-link', !nImports.some((e) => /vector|stdint/.test(e.target)));
+  for (const name of ['Model', 'State', 'Id', 'Widget', 'Value', 'acme', 'run']) {
+    ok(`analyze: C/C++ declaration extracted: ${name}`, ng.nodes.some((n) => n.name === name));
+  }
+  ok('analyze: C/C++ prototype is not reported as a function definition', !ng.nodes.some((n) => n.name === 'declared_only'));
+
+  // Swift file imports name modules, so file edges come only from explicit type relationships.
+  const swift = sandbox('analyze-swift');
+  const sw = (rel, body) => {
+    const p = path.join(swift, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+  };
+  sw('Sources/App/Types.swift', 'protocol Runnable {}\nclass Base {}\nstruct Config {}\nenum Mode { case fast }\nactor Worker {}\ntypealias Identifier = String\nclass Container {\n    enum Error {}\n}\n');
+  sw('Sources/App/Feature.swift', 'import Foundation\nclass Feature: Base, Runnable {}\nclass NetworkFailure: Error {}\nextension Config: Runnable {}\nfunc launch() {}\n');
+  sw('scripts/helper.py', 'class Unrelated:\n    pass\n');
+  sw('web/vendor.js', 'class Vendored {}\n');
+  const swg = analyzeProject(swift);
+  for (const name of ['Runnable', 'Base', 'Config', 'Mode', 'Worker', 'Identifier', 'Feature', 'launch']) {
+    ok(`analyze: Swift declaration extracted: ${name}`, swg.nodes.some((n) => n.name === name));
+  }
+  ok('analyze: Swift inheritance and conformance create explicit relations', swg.edges.some((e) => e.type === 'extends' && /Feature/.test(e.source) && /Base/.test(e.target)) && swg.edges.some((e) => e.type === 'conforms' && /Feature/.test(e.source) && /Runnable/.test(e.target)));
+  ok('analyze: Swift extension creates an explicit relation', swg.edges.some((e) => e.type === 'extends' && /extension/.test(e.source) && /Config/.test(e.target)));
+  ok('analyze: Swift external protocol does not link to a nested same-named type', !swg.edges.some((e) => /NetworkFailure/.test(e.source) && /Error/.test(e.target)));
+  ok('analyze: Swift project reports Swift as its primary structure', swg.project.primaryLanguages?.[0] === 'swift');
+
+  // Multi-line block comments must not manufacture imports or declarations. The raw regex
+  // extractor previously skipped only lines beginning with /* or *, not arbitrary interior text.
+  const comments = sandbox('analyze-comments');
+  fs.writeFileSync(path.join(comments, 'fake.cpp'), '/*\n#include "ghost.h"\nclass Phantom {};\n*/\nconst char *s = "class StringGhost {};";\nstruct Real {};\n');
+  fs.writeFileSync(path.join(comments, 'ghost.h'), 'struct Ghost {};\n');
+  const commentGraph = analyzeProject(comments);
+  ok('analyze: block-comment import is ignored', !commentGraph.edges.some((e) => e.type === 'imports'));
+  ok('analyze: block-comment and string declarations are ignored', !commentGraph.nodes.some((n) => n.name === 'Phantom' || n.name === 'StringGhost'));
+  ok('analyze: real declaration after comment is retained', commentGraph.nodes.some((n) => n.name === 'Real'));
+
+  // Path semantics and machine-readable language coverage prevent false "empty repo" success.
+  let missingError = '';
+  try { analyzeProject(path.join(root, 'does-not-exist')); } catch (err) { missingError = err.message; }
+  ok('analyze: missing path throws a clear error', /경로가 없습니다/.test(missingError));
+  const notDir = path.join(root, 'src', 'dep.js');
+  let fileError = '';
+  try { analyzeProject(notDir); } catch (err) { fileError = err.message; }
+  ok('analyze: file path is distinguished from a directory', /디렉터리가 아닙니다/.test(fileError));
+  const empty = sandbox('analyze-empty');
+  const emptyGraph = analyzeProject(empty);
+  ok('analyze: empty directory returns a complete empty graph', emptyGraph.nodes.length === 0 && emptyGraph.edges.length === 0 && emptyGraph.truncated === false);
+  const cyclic = sandbox('analyze-symlink-cycle');
+  fs.writeFileSync(path.join(cyclic, 'main.js'), 'export function main() {}\n');
+  let symlinkSupported = true;
+  try {
+    fs.symlinkSync(cyclic, path.join(cyclic, 'loop'), process.platform === 'win32' ? 'junction' : 'dir');
+  } catch {
+    symlinkSupported = false;
+  }
+  const cyclicGraph = analyzeProject(cyclic);
+  ok('analyze: directory symlink cycles terminate without duplicate traversal', !symlinkSupported
+    || cyclicGraph.nodes.filter((node) => node.type === 'file').length === 1);
+  ok('analyze: per-language statistics match PHP nodes and edges', phg.languageStats?.php?.files === 4 && phg.languageStats.php.declarations >= 7 && phg.languageStats.php.internalEdges === phg.edges.filter((e) => e.type === 'imports' && e.source.includes('.php')).length);
+
   // a skipped file must not claim "0 lines, 0 imports" — that's fabricated, not measured
   const big = sandbox('analyze-big');
   fs.writeFileSync(path.join(big, 'huge.js'), "import x from './y.js';\n" + '// pad\n'.repeat(90000));
@@ -861,6 +1265,7 @@ console.log('\n=== viz.mjs ===');
   sw('src/service/UserService.js', "import { logger } from '../util/logger.js';\nexport class UserService {}\n");
   sw('src/util/logger.js', 'export const logger = console;\n');
   const sg = buildGraph(bootstrapped('viz-spring-bundle'), spring);
+  ok('viz: analysis exposes language coverage instead of implying every file was analyzed', sg.meta.languageStats?.javascript?.files === 3 && sg.meta.primaryLanguages?.[0] === 'javascript');
   const deps = sg.edges.filter((e) => e.type === 'imports');
   const outOf = (f) => deps.filter((e) => e.source === `file:${f}`).length;
   const inTo = (f) => deps.filter((e) => e.target === `file:${f}`).length;

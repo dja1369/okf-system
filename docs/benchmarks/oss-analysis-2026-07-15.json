@@ -1,0 +1,80 @@
+{
+  "generatedAt": "2026-07-15T14:06:46.655Z",
+  "analyzerState": "dirty-worktree",
+  "measurementPurpose": "operational safety only; not an OKF token or response-speed benchmark",
+  "repositories": [
+    {
+      "name": "Slim",
+      "repository": "https://github.com/slimphp/Slim",
+      "commit": "80900fb39cafce3ae53b18a2c4f642a122f03095",
+      "totalTrackedFiles": 145,
+      "language": "php",
+      "languageStats": { "files": 125, "analyzedFiles": 125, "declarations": 127, "internalEdges": 305 },
+      "truncated": false,
+      "analyzeMsSingleRun": 41.38,
+      "renderMsSingleRun": 25.4,
+      "htmlBytes": 169496,
+      "representativeEdges": [
+        ["Slim/App.php", "Slim/Factory/ServerRequestCreatorFactory.php"],
+        ["Slim/App.php", "Slim/Interfaces/CallableResolverInterface.php"],
+        ["Slim/App.php", "Slim/Middleware/RoutingMiddleware.php"]
+      ]
+    },
+    {
+      "name": "Redis",
+      "repository": "https://github.com/redis/redis",
+      "commit": "f76dff71ec60a203f55b00224bee2391f9445223",
+      "totalTrackedFiles": 1838,
+      "language": "c",
+      "languageStats": { "files": 784, "analyzedFiles": 783, "declarations": 5796, "internalEdges": 990 },
+      "truncated": false,
+      "analyzeMsSingleRun": 571.33,
+      "renderMsSingleRun": 431.56,
+      "htmlBytes": 2968091,
+      "representativeEdges": [
+        ["deps/fpconv/fpconv_dtoa.c", "deps/fpconv/fpconv_dtoa.h"],
+        ["deps/fpconv/fpconv_dtoa.c", "deps/fpconv/fpconv_powers.h"],
+        ["deps/hdr_histogram/hdr_histogram.c", "deps/hdr_histogram/hdr_histogram.h"]
+      ]
+    },
+    {
+      "name": "fmt",
+      "repository": "https://github.com/fmtlib/fmt",
+      "commit": "a79df4504cd4e42ed004b1113fb82171e62ed822",
+      "totalTrackedFiles": 142,
+      "language": "cpp",
+      "languageStats": { "files": 46, "analyzedFiles": 45, "declarations": 283, "internalEdges": 121 },
+      "truncated": false,
+      "analyzeMsSingleRun": 95.21,
+      "renderMsSingleRun": 60.76,
+      "htmlBytes": 400713,
+      "representativeEdges": [
+        ["src/fmt-c.cc", "include/fmt/fmt-c.h"],
+        ["src/fmt-c.cc", "include/fmt/base.h"],
+        ["src/fmt.cc", "include/fmt/args.h"]
+      ]
+    },
+    {
+      "name": "Alamofire",
+      "repository": "https://github.com/Alamofire/Alamofire",
+      "commit": "903c53c710d1cbbac0b4b9c2527aefb791e1fee3",
+      "totalTrackedFiles": 568,
+      "language": "swift",
+      "languageStats": { "files": 98, "analyzedFiles": 98, "declarations": 2052, "internalEdges": 215 },
+      "truncated": false,
+      "analyzeMsSingleRun": 118.07,
+      "renderMsSingleRun": 83.14,
+      "htmlBytes": 1257017,
+      "representativeEdges": [
+        ["Source/Core/DataRequest.swift:DataRequest", "Source/Core/Request.swift:Request"],
+        ["Source/Core/DataStreamRequest.swift:DataStreamRequest", "Source/Core/Request.swift:Request"],
+        ["Source/Core/DataStreamRequest.swift:PassthroughStreamSerializer", "Source/Core/DataStreamRequest.swift:DataStreamSerializer"]
+      ]
+    }
+  ],
+  "rssBytesAfterAllRepositories": 233619456,
+  "knownFalsePositivesFoundAndFixed": [
+    "Swift standard Error linked to an unrelated nested Error declaration",
+    "C standard headers such as stdint.h linked to vendored compatibility headers"
+  ]
+}

@@ -10,7 +10,7 @@ capture_exclude_cwd: []         # glob. 해당 경로 세션은 캡처 skip (캡
 batch_digest_cap_kb: 150        # 배치 digest(LLM 입력용 임시 축약본) 파일당 상한 — raw 원본에는 미적용
 remove_candidate_ttl_days: 30
 inject_max_lines: 120           # 게이트 주입 줄 캡
-inject_max_bytes: 16384         # 게이트 주입 바이트 캡 (줄 캡과 이중)
+inject_max_bytes: 9000          # 훅 10,000자 한도 안에 inline 유지하는 안전 바이트 캡
 claude_bin: ""                  # 비면 PATH의 'claude'. GUI 런치 PATH 문제 시 절대경로
 node_bin: ""
 ---
