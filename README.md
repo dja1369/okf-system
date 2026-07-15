@@ -97,13 +97,17 @@ Five conditions, five crossed-order runs each. C's bundle is built by a **real**
 
 Live run 2026-07-15: Claude Code `2.1.210`, `sonnet`/medium (resolved Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, 5 runs per condition. C preflight: 8/8 facts present, 8/8 gate-routed. D: 0/8.
 
-| Condition | Continuity | Token activity p50 | Wall p50 | Cost p50 | Reads | Turns |
-|---|---:|---:|---:|---:|---:|---:|
-| A — no memory | **0/5** | 27,246 | 13.82 s | $0.022218 | 2 | 4 |
-| B_oracle (answer key) | 5/5 | 9,069 | 4.86 s | $0.008410 | 0 | 1 |
-| B_realistic | 5/5 | 9,069 | 5.96 s | $0.008410 | 0 | 1 |
-| **C — OKF enabled** | **5/5** | **10,395** | 6.46 s | $0.011329 | **0** | **1** |
-| D — irrelevant OKF | 0/5 | 20,602 | 14.50 s | $0.025879 | 1 | 2 |
+| Condition | Continuity | Compliance p50 | Token activity p50/p95 | Wall p50/p95 | Cost p50 |
+|---|---:|---:|---:|---:|---:|
+| A — no memory | **0/5** | 12% | 27,246/27,518 | 13.82/18.17 s | $0.022218 |
+| B_oracle (answer key) | 5/5 | 100% | 9,069/9,069 | 4.86/6.46 s | $0.008410 |
+| B_realistic | 5/5 | 100% | 9,069/9,069 | 5.96/6.27 s | $0.008410 |
+| **C — OKF enabled** | **5/5** | 100% | **10,395**/10,459 | 6.46/7.15 s | $0.011329 |
+| D — irrelevant OKF | 0/5 | 0% | 20,602/21,662 | 14.50/21.15 s | $0.025879 |
+
+Tool calls behind those rows, because they explain the numbers: A reads 2 files over 4 turns and still fails; B answers in 1 turn with 0 reads because the answers are already in its prompt; **C answers in 1 turn with 0 reads** — the gate index alone was sufficient; D reads 1 file over 2 turns hunting for something its gate never contained.
+
+Read `p95` with care: at n=5, `ceil(0.95×5)−1` is the last index, so p95 **is** the max — a single cold-cache run, not a tail statistic. It is reported because the comparison format asks for it, not because it is one.
 
 **Read the A row first.** Without memory the session burns 27,246 tokens, reads two files hunting for an answer, takes four turns — and still gets **0/8**. That is the condition OKF actually replaces, and C beats it: 2.6× fewer tokens, 0/8→8/8, in a single turn with no file reads.
 
@@ -115,12 +119,15 @@ What changed since the previous run is the gate itself. C used to cost **22,857*
 
 **"OKF gets cheaper as knowledge accumulates" is false.** It gets more expensive, and faster than the alternative. Same benchmark, same bundle, with 20 unrelated concepts added — everything still fits the index (21 lines, 5,548 of 9,000 bytes, nothing truncated):
 
-| Condition | 0 filler | 20 filler | Growth |
-|---|---:|---:|---:|
-| B_realistic | 9,069 | 10,406 | **+1,337** |
-| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+| Condition | Continuity | Compliance p50 | Token activity p50/p95 | Wall p50/p95 | Cost p50 |
+|---|---:|---:|---:|---:|---:|
+| A — no memory | 0/5 | 0% | 27,316/27,717 | 13.79/18.05 s | $0.022838 |
+| B_oracle (answer key) | 5/5 | 100% | 9,070/9,085 | 5.33/6.78 s | $0.008410 |
+| B_realistic | 5/5 | 100% | 10,406/10,406 | 5.72/9.62 s | $0.010134 |
+| **C — OKF enabled** | **5/5** | 100% | **25,384**/25,773 | 11.75/13.15 s | $0.030721 |
+| D — irrelevant OKF | 0/5 | 0% | 22,265/22,334 | 14.91/19.59 s | $0.037354 |
 
-**C degrades ~11× faster than B** — 749 tokens per added concept versus 67. Both still answer 5/5.
+Against the 0-filler run: B_realistic grew **+1,337** (9,069 → 10,406) while C grew **+14,989** (10,395 → 25,384). **C degrades ~11× faster** — 749 tokens per added concept versus 67. Both still answer 5/5, so this is a pure cost regression, not an accuracy one.
 
 The cause is not truncation. It is trust:
 
@@ -143,6 +150,8 @@ Truncation is the second wall, further out. The gate's index is hard-capped unde
 Past ~43 concepts the index truncates and the survivors are chosen by filename — not relevance, not recency. A run with 50 filler concepts **fails preflight** for exactly this reason (`presentFacts: 8, routedFacts: 6, ready: false`): `decisions/tech-stack.md` sorted behind the filler and was cut, taking two facts with it. Categories are dealt round-robin so no category starves, and each truncated category points at its own `index.md` so the rest stays reachable — but descending is a tool round-trip, the same cost again.
 
 Neither wall is a tuning knob. Fixing the first one needs the index to signal *which lines are complete answers* so the model can trust them without opening the file; that work is not done, and until it is, OKF's economics worsen with every concept added.
+
+Accumulation run: [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-30-11-404Z.json). The 50-filler preflight failure is preserved at [preflight audit](docs/benchmarks/raw/okf-live-preflight-failed-2026-07-15T16-11-37-402Z.json) — a negative result kept on purpose.
 
 The harness also records decision compliance, wrong assumptions, extra questions, tool calls, first valid response, API/wall time, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and CLI-reported cost. Token categories remain separate in the raw JSON. Note that `tokenActivity` sums cache reads 1:1 with output tokens even though cache reads bill ~50× cheaper — **cost is the defensible column**, and at n=5 the harness's `p95` is arithmetically always the max (the cold run), so it is omitted here. Values the CLI does not expose separately — user-only or gate-only tokens — remain `null` and are never estimated.
 
