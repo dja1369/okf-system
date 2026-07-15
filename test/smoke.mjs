@@ -674,6 +674,22 @@ console.log('\n=== analyze.mjs ===');
   ok('analyze: Go module-internal import resolves to a package node', pdeps.some((e) => e.source === 'file:main.go' && e.target === 'module:internal/util'));
   ok('analyze: a Go package node contains its files', pg.edges.some((e) => e.type === 'contains' && e.source === 'module:internal/util' && e.target === 'file:internal/util/util.go'));
 
+  // TypeScript NodeNext writes `import './x.js'` while the file on disk is `x.ts`. Missing this
+  // silently flattened a modern TS repo: zod measured 559 files with 3 edges (1% connected).
+  const ts = sandbox('analyze-ts');
+  const tw = (rel, body) => {
+    const p = path.join(ts, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+  };
+  tw('src/index.ts', "import * as core from './core/index.js';\nimport { thing } from './schemas.js';\n");
+  tw('src/schemas.ts', 'export const thing = 1;\n');
+  tw('src/core/index.ts', 'export const core = 1;\n');
+  const tg = analyzeProject(ts);
+  const tdeps = tg.edges.filter((e) => e.type === 'imports');
+  ok('analyze: TS NodeNext .js specifier resolves to the .ts source', tdeps.some((e) => e.target === 'file:src/schemas.ts'));
+  ok('analyze: TS NodeNext .js directory index resolves', tdeps.some((e) => e.target === 'file:src/core/index.ts'));
+
   // a bare python import naming a real local package directory must still resolve —
   // blocking it wholesale cost flask's own `from flask import x` (31% -> 21% connected)
   const pkg = sandbox('analyze-pypkg');
@@ -742,6 +758,22 @@ console.log('\n=== viz.mjs ===');
   // a bundle with nothing about this repo should show code only — not the whole bundle
   const none = buildGraph(rel, sandbox('viz-empty-repo'));
   ok('viz: bundle irrelevant to the repo yields zero concept nodes', none.nodes.every((n) => n.kind !== 'okf'));
+
+  // Basename matching collapses on names every project has. Found on a real repo: a concept
+  // explaining OKF's own index.md linked to zod's unrelated rfcs/index.md, making an unrelated
+  // codebase look related. Such names must match on full path only.
+  const amb = bootstrapped('viz-ambiguous');
+  fs.mkdirSync(path.join(amb, 'references'), { recursive: true });
+  fs.writeFileSync(
+    path.join(amb, 'references', 'talks-about-index.md'),
+    '---\ntype: reference\ntitle: mentions index.md generically\ndescription: the bundle regenerates index.md\ntimestamp: 2026-07-15\n---\nThe generator rewrites `index.md` and `README.md` wholesale.\n'
+  );
+  const ambRepo = sandbox('viz-ambiguous-repo');
+  fs.mkdirSync(path.join(ambRepo, 'rfcs'), { recursive: true });
+  fs.writeFileSync(path.join(ambRepo, 'rfcs', 'index.md'), '# unrelated project rfc index\n');
+  fs.writeFileSync(path.join(ambRepo, 'README.md'), '# unrelated\n');
+  const ambG = buildGraph(amb, ambRepo);
+  ok('viz: a generic filename does not falsely link a concept to an unrelated repo', ambG.meta.crossCount === 0 && ambG.meta.okfCount === 0);
 
   // bundle-only view (no repo) must still show everything, including the concepts filtered above
   const all = buildGraph(rel, null);
