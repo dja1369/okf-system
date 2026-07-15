@@ -1,13 +1,13 @@
 {
-  "startedAt": "2026-07-15T15:00:53.611Z",
+  "startedAt": "2026-07-15T16:11:37.402Z",
   "model": "sonnet",
   "effort": "medium",
   "claudeVersion": "2.1.210 (Claude Code)",
   "bundleAudit": {
     "relevant": {
       "checkedFacts": 8,
-      "presentFacts": 7,
-      "routedFacts": 7,
+      "presentFacts": 8,
+      "routedFacts": 6,
       "ready": false,
       "anyTargetFactPresent": true,
       "facts": {
@@ -15,21 +15,23 @@
           "present": true,
           "routed": true,
           "matchingFiles": [
-            "decisions/tech-stack-conventions.md",
+            "decisions/tech-stack.md",
             "troubleshooting/sqlite-busy-timeout.md"
           ]
         },
         "architecture_pattern": {
           "present": true,
-          "routed": true,
+          "routed": false,
           "matchingFiles": [
-            "decisions/tech-stack-conventions.md"
+            "decisions/tech-stack.md"
           ]
         },
         "export_style": {
-          "present": false,
+          "present": true,
           "routed": false,
-          "matchingFiles": []
+          "matchingFiles": [
+            "decisions/tech-stack.md"
+          ]
         },
         "failure_solution": {
           "present": true,
@@ -42,28 +44,28 @@
           "present": true,
           "routed": true,
           "matchingFiles": [
-            "preferences/response-language-style.md"
+            "preferences/response-style.md"
           ]
         },
         "response_style": {
           "present": true,
           "routed": true,
           "matchingFiles": [
-            "preferences/response-language-style.md"
+            "preferences/response-style.md"
           ]
         },
         "policy_file": {
           "present": true,
           "routed": true,
           "matchingFiles": [
-            "preferences/config-change-deploy-policy.md"
+            "preferences/config-deploy-policy.md"
           ]
         },
         "policy_command": {
           "present": true,
           "routed": true,
           "matchingFiles": [
-            "preferences/config-change-deploy-policy.md"
+            "preferences/config-deploy-policy.md"
           ]
         }
       }

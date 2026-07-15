@@ -997,11 +997,16 @@ console.log('\n=== plugin contract and docs ===');
   }));
   ok('all localized READMEs keep commands and benchmark conditions in sync', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
+    // B는 두 조건으로 갈렸다. B_oracle은 정답 8개를 그대로 붙이므로 그 문자열을 만들려면 이미
+    // 답을 알아야 한다 — 사용자가 점유할 수 없는 상한선이다. B_realistic이 실제 비교군이며,
+    // 손익분기도 그쪽으로 계산한다. 두 이름이 모든 번역에 함께 있어야 상한선이 baseline인 척
+    // 재등장하지 않는다.
     return text.includes('/okf:okf-visualize')
       && /\/okf:okf-analysis\s+\[[^\]]+\]/.test(text)
       && !text.includes('/okf:okf-visualize [path]')
       && /\bA\s+—\s+/.test(text)
-      && /\bB\s+—\s+/.test(text)
+      && text.includes('B_oracle')
+      && text.includes('B_realistic')
       && /\bC\s+—\s+/.test(text)
       && /\bD\s+—\s+/.test(text)
       && text.includes('OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs')
@@ -1016,11 +1021,18 @@ console.log('\n=== plugin contract and docs ===');
   }));
   ok('all localized READMEs publish the same valid live benchmark result', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
-    return text.includes('<!-- okf-live-benchmark: valid-2026-07-15T15-03-01Z -->')
-      && text.includes('27,320 / 27,574') && text.includes('9,070 / 9,093')
-      && text.includes('22,857 / 22,883') && text.includes('21,507 / 22,261')
-      && text.includes('111,381') && text.includes('$0.164360')
-      && text.includes('okf-live-2026-07-15T15-03-01-343Z.md')
+    // p95는 요청받은 비교 형식이 요구하므로 싣는다. 다만 n=5에서 ceil(0.95*5)-1 = 마지막
+    // 인덱스라 p95는 산술적으로 항상 max(= cold run 하나)이고 꼬리 통계가 아니다 — 그래서
+    // README는 표 옆에 그 한계를 함께 적는다. 열을 지워 독자 대신 판단하지 않는다.
+    return text.includes('<!-- okf-live-benchmark: valid-2026-07-15T16-06-28Z -->')
+      && text.includes('27,246') && text.includes('9,069')
+      && text.includes('10,395') && text.includes('20,602')
+      && text.includes('133,364') && text.includes('$0.176758')
+      && text.includes('okf-live-2026-07-15T16-06-28-592Z.md')
+      // 누적 측정(filler 20)도 모든 번역이 함께 실어야 한다. 이 수치가 빠지면 README는 "OKF는
+      // 토큰을 아끼지 않는다"까지만 말하고, "누적될수록 11배 빠르게 나빠진다"는 더 불리한 사실은
+      // 영어에만 남는다 — 그 방향의 드리프트가 정확히 이 테스트가 막아야 하는 것이다.
+      && text.includes('25,384') && text.includes('14,989')
       && !text.includes('okf-live-benchmark: pending');
   }));
 

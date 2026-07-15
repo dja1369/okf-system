@@ -168,4 +168,10 @@ try {
   console.error(`[okf session-start] fatal: ${err.message}`);
   process.stdout.write('{}'); // 절대 세션 시작을 막지 않는다 — 최소 출력이라도 내보낸다.
 }
-process.exit(0);
+// process.exit()를 쓰면 안 된다. 훅의 stdout은 항상 pipe이고, pipe write는 비동기다 — 게이트가
+// pipe 버퍼보다 크면 일부만 나간 채 프로세스가 죽어서 Claude Code는 잘린 JSON을 받는다. 그러면
+// 게이트가 통째로 유실되는데, 조용히 유실된다. CI(macOS)가 실제로 4,554바이트에서 잘린 출력을
+// 잡았다: `SyntaxError: Unterminated string in JSON`. concept가 쌓여 index가 커질수록 확률이
+// 오르므로, 정확히 게이트가 가장 필요한 사용자에게 먼저 터진다.
+// exitCode만 정하고 자연 종료를 기다린다 — 배치 자식은 detached+unref이라 부모를 붙잡지 않는다.
+process.exitCode = 0;
