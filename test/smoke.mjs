@@ -700,6 +700,44 @@ console.log('\n=== analyze.mjs ===');
   const pkgG = analyzeProject(pkg);
   ok('analyze: bare python import of a real local package resolves', pkgG.edges.some((e) => e.type === 'imports' && e.target === 'file:src/mylib/__init__.py'));
 
+  // Java/Kotlin/C# were never tested and every one produced a zero-edge graph. Each resolves
+  // differently and none of them the way JS does.
+  const jvm = sandbox('analyze-jvm');
+  const jw = (rel, body) => {
+    const p = path.join(jvm, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+  };
+  // Java: the package path is a suffix of the file path (src/main/java/<pkg>/Class.java)
+  jw('lib/src/main/java/com/acme/core/Engine.java', 'package com.acme.core;\n\nimport com.acme.util.Helper;\nimport java.util.List;\n\npublic class Engine {}\n');
+  jw('lib/src/main/java/com/acme/util/Helper.java', 'package com.acme.util;\n\npublic class Helper {}\n');
+  // Kotlin: no semicolons, and member imports name a symbol inside the file
+  jw('app/src/main/kotlin/com/acme/app/Main.kt', 'package com.acme.app\n\nimport com.acme.core.Engine\nimport com.acme.model.Status.ACTIVE\n\nfun main() {}\n');
+  jw('app/src/main/kotlin/com/acme/model/Status.kt', 'package com.acme.model\n\nenum class Status { ACTIVE }\n');
+  const jg = analyzeProject(jvm);
+  const jdeps = jg.edges.filter((e) => e.type === 'imports');
+  ok('analyze: Java package import resolves through the source-root prefix', jdeps.some((e) => e.source === 'file:lib/src/main/java/com/acme/core/Engine.java' && e.target === 'file:lib/src/main/java/com/acme/util/Helper.java'));
+  ok('analyze: Java stdlib import (java.util.List) creates no edge', !jdeps.some((e) => /List/.test(e.target)));
+  ok('analyze: Kotlin import resolves without a semicolon', jdeps.some((e) => e.target === 'file:lib/src/main/java/com/acme/core/Engine.java' && e.source === 'file:app/src/main/kotlin/com/acme/app/Main.kt'));
+  ok('analyze: Kotlin member import resolves to the declaring file', jdeps.some((e) => e.target === 'file:app/src/main/kotlin/com/acme/model/Status.kt'));
+  ok('analyze: Kotlin declarations are extracted', jg.nodes.some((n) => n.type === 'class' && n.name === 'Status'));
+
+  // C#: `using` names a namespace, which does not correspond to a file path at all —
+  // real repos put namespace Polly in src/Polly.RateLimiting/. Model it as a namespace node.
+  const cs = sandbox('analyze-cs');
+  const cw = (rel, body) => {
+    const p = path.join(cs, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+  };
+  cw('src/Acme.Core/Pipeline.cs', 'using System.Threading;\nusing Acme.Utils;\n\nnamespace Acme.Core;\n\npublic sealed class Pipeline {}\n');
+  cw('src/Acme.Core/Helper.cs', 'namespace Acme.Utils;\n\ninternal static class Helper {}\n');
+  const cg = analyzeProject(cs);
+  ok('analyze: C# using resolves to a namespace node declared in the repo', cg.edges.some((e) => e.type === 'imports' && e.source === 'file:src/Acme.Core/Pipeline.cs' && e.target === 'module:Acme.Utils'));
+  ok('analyze: a C# namespace node contains the files declaring it', cg.edges.some((e) => e.type === 'contains' && e.source === 'module:Acme.Utils' && e.target === 'file:src/Acme.Core/Helper.cs'));
+  ok('analyze: C# using of a namespace the repo does not declare stays external', !cg.nodes.some((n) => n.id === 'module:System.Threading'));
+  ok('analyze: C# declarations are extracted', cg.nodes.some((n) => n.type === 'class' && n.name === 'Pipeline'));
+
   // a skipped file must not claim "0 lines, 0 imports" — that's fabricated, not measured
   const big = sandbox('analyze-big');
   fs.writeFileSync(path.join(big, 'huge.js'), "import x from './y.js';\n" + '// pad\n'.repeat(90000));

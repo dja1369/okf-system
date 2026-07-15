@@ -126,21 +126,33 @@ Node, no native modules — extracting files, functions, and classes across JS/T
 Python, Go, Rust, Java/Kotlin, Ruby, PHP, C/C++, C#, and Swift.
 
 Import *edges* follow each language's own resolution rules rather than one guess applied
-everywhere: `./`-relative specifiers in JS/TS, dotted module paths in Python, quoted
-includes in C/C++, `require_relative`, and Rust's `mod`/`use crate::`. Go imports
-packages, not files, so `go.mod` is read and module-internal imports resolve to package
-nodes. Anything a language treats as a *name* — stdlib, third-party, Java's
-`com.foo.Bar` — is recorded as an external dependency and never matched against a
-same-named local file, because `import "errors"` in Go has nothing to do with your
-`errors.go`.
+everywhere — because the rules genuinely differ, and guessing invents dependencies that
+don't exist. Relative specifiers in JS/TS (including NodeNext's `./x.js` naming an `x.ts`
+source), dotted module paths in Python, quoted includes in C/C++, `require_relative`,
+Rust's `mod`/`use crate::`, and package paths in Java/Kotlin. Go and C# import a
+*package* and a *namespace* rather than a file, so those become package nodes read from
+`go.mod` and from the namespaces the repo actually declares. Anything a language treats
+as an outside name — stdlib, third-party — never matches a same-named local file.
 
-It's regex-based, not a real parser: that buys zero dependencies and costs accuracy on
-unusual formatting. Measured on real repos — express 67% of files connected, ripgrep
-39%, flask 31%, gin 16% — so treat it as a map of the main structure, not a complete
-call graph.
+It's regex-based, not a real parser: zero dependencies, at some cost in accuracy on
+unusual formatting. Measured on real repositories:
 
-The output is a self-contained HTML file: no CDN, no network requests, no backend. It
-opens offline, because opening your own knowledge base should not phone anywhere.
+| Repo | Language | Files | Import edges | Files connected |
+|---|---|---|---|---|
+| gson | Java | 307 | 1011 | 74% |
+| express | JavaScript | 206 | 153 | 67% |
+| okhttp | Kotlin/Java | 791 | 1747 | 60% |
+| ripgrep | Rust | 217 | 73 | 39% |
+| zod | TypeScript | 559 | 499 | 38% |
+| axios | JS/TS | 445 | 289 | 35% |
+| flask | Python | 226 | 176 | 31% |
+| Polly | C# | 1003 | 449 | 27% |
+| requests | Python | 121 | 106 | 27% |
+| gin | Go | 127 | 26 | 16% |
+
+All under 200ms. Treat it as a map of the main structure, not a complete call graph —
+Go's low number is honest: its dependencies are package-level, so file-to-file edges
+mostly don't exist to find.
 
 ## How it works
 
