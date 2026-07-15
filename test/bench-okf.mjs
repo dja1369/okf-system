@@ -31,7 +31,19 @@ const model = process.env.OKF_BENCH_MODEL || 'sonnet';
 const effort = process.env.OKF_BENCH_EFFORT || 'medium';
 const maxTurns = Number(process.env.OKF_BENCH_MAX_TURNS || 8);
 const perCallBudgetUsd = process.env.OKF_BENCH_MAX_BUDGET_USD || '0.50';
-const conditions = ['A_no_memory', 'B_manual_restatement', 'C_okf_enabled', 'D_irrelevant_okf'];
+// 번들에 쌓인, 이번 질문과 무관한 지식의 개수. 실제 프로젝트에서 3개월이면 이런 결정이 수십 개
+// 쌓인다. 이 축이 없으면 "지식이 누적될수록 OKF가 유리해진다"는 주장은 측정 자체가 불가능하다.
+const fillerCount = Number(process.env.OKF_BENCH_FILLER || 0);
+if (!Number.isInteger(fillerCount) || fillerCount < 0) {
+  console.error('OKF_BENCH_FILLER는 0 이상의 정수여야 합니다.');
+  process.exit(2);
+}
+
+// B_oracle: 기존 B. 정답 8개만 정확히 재설명한다 — 그 문자열을 쓰려면 이미 답을 알아야 하므로
+//   사용자가 실제로 점유할 수 없는 조건이다. 상한선(upper bound)으로만 의미가 있어 이름을 바꿨다.
+// B_realistic: 사용자는 다음 세션에 무엇을 물을지 모르므로 관련 있을 법한 지식을 전부 붙인다
+//   (사람들이 CLAUDE.md에 하는 그것). 이것이 실제로 점유 가능한 비교군이다.
+const conditions = ['A_no_memory', 'B_oracle', 'B_realistic', 'C_okf_enabled', 'D_irrelevant_okf'];
 const expected = {
   architecture_database: 'SQLite',
   architecture_pattern: 'repository pattern',
@@ -52,6 +64,27 @@ const manualRestatement = `이전 세션에서 확정한 사실은 다음과 같
 - 설정 변경 파일: src/config.mjs
 - 배포 명령: npm run deploy:canary
 `;
+
+// 실제 프로젝트에서 몇 달이면 쌓이는, 이번 질문과 무관한 결정들. 이것들이 축이다: 사용자는
+// 다음 세션에 무엇이 필요할지 모르므로 B_realistic에서는 전부 재설명해야 하고(선형 증가),
+// C는 index에 한 줄씩만 실린 뒤 필요한 것만 읽는다.
+const FILLER_TOPICS = [
+  ['API 응답 필드는 snake_case로 직렬화한다', '프론트 요청으로 camelCase 대신 snake_case로 확정했다'],
+  ['CI의 flaky 테스트는 재시도하지 않고 격리 큐로 보낸다', '재시도는 원인을 숨기므로 격리 후 원인을 남긴다'],
+  ['로그 레벨은 운영에서 info, 개발에서 debug로 고정한다', 'warn 이상만 알림으로 승격한다'],
+  ['PR은 리뷰어 1명 승인 + CI 통과 후 머지한다', '핫픽스도 예외 없이 같은 절차를 따른다'],
+  ['이미지 업로드는 5MB로 제한한다', '초과분은 클라이언트에서 리사이즈 후 재시도한다'],
+  ['타임존은 서버에서 항상 UTC로 저장한다', '표시 시점에만 KST로 변환한다'],
+  ['외부 API 호출은 3초 타임아웃에 2회 재시도한다', '지수 백오프를 쓰고 5xx만 재시도한다'],
+  ['마이그레이션은 롤백 스크립트가 있어야 머지된다', '롤백 불가 마이그레이션은 두 단계로 쪼갠다'],
+];
+function fillerConcept(i) {
+  const [title, desc] = FILLER_TOPICS[i % FILLER_TOPICS.length];
+  return { title: `${title} (사례 ${i + 1})`, desc: `${desc} (사례 ${i + 1})` };
+}
+const fillerList = Array.from({ length: fillerCount }, (_, i) => fillerConcept(i));
+// B_realistic이 붙이는 것: 목표 사실 + 쌓인 무관 지식 전부. 무엇이 필요할지 모르니 다 붙인다.
+const realisticRestatement = `${manualRestatement}${fillerList.map((f) => `- ${f.title}: ${f.desc}\n`).join('')}`;
 const taskPrompt = `이것은 세션 연속성 벤치마크입니다. 아래 6개 유형을 모두 답하세요.
 1. 이전 아키텍처 결정(database와 pattern)
 2. 이전 코딩 규칙(export style)
@@ -237,6 +270,20 @@ function setupOkf(benchRoot, project) {
   fs.mkdirSync(path.join(dHome, 'preferences'), { recursive: true });
   fs.writeFileSync(path.join(dHome, 'preferences', 'irrelevant.md'), `---\ntype: preference\ntitle: 무관한 테마\ndescription: 이 벤치마크 질문과 관계없는 색상 선호\ntimestamp: 2026-07-15\n---\n대시보드 색상은 ocean blue를 선호한다.\n`);
   regenerateIndex(dHome);
+  // 누적 시뮬레이션: batch가 목표 concept를 만든 뒤 무관한 지식을 번들에 쌓는다. 실제로는 여러
+  // 세션이 각각 batch를 거치며 쌓이지만, 결과 번들 상태는 동일하고 유료 batch를 N번 돌릴 이유가
+  // 없다. C가 읽어야 할 목표 concept는 batch가 만든 그대로다 — filler는 노이즈로만 존재한다.
+  if (fillerCount > 0) {
+    const fillerDir = path.join(cHome, 'decisions');
+    fs.mkdirSync(fillerDir, { recursive: true });
+    fillerList.forEach((f, i) => {
+      fs.writeFileSync(
+        path.join(fillerDir, `filler-${String(i).padStart(3, '0')}.md`),
+        `---\ntype: decision\ntitle: ${f.title}\ndescription: ${f.desc}\ntimestamp: 2026-07-15\n---\n${f.desc}\n`
+      );
+    });
+    regenerateIndex(cHome);
+  }
   const batchUsage = fs.existsSync(batchUsagePath) ? fs.readFileSync(batchUsagePath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
   const cGate = gateContext(cHome);
   const dGate = gateContext(dHome);
@@ -288,7 +335,10 @@ function summarize(records, batchUsage) {
   }
   const batchTokenActivity = batchUsage.reduce((sum, row) => sum + tokenActivity(row.usage), 0);
   const batchCostUsd = batchUsage.reduce((sum, row) => sum + (Number.isFinite(row.total_cost_usd) ? row.total_cost_usd : 0), 0);
-  const b = byCondition.B_manual_restatement;
+  // 손익분기의 비교군은 B_realistic이다. B_oracle은 정답 8개만 붙이므로 그 문자열을 만들려면
+  // 이미 답을 알아야 하고 — 즉 OKF가 없애려는 그 노동을 0원으로 계상한 조건이라, 사용자가
+  // 점유할 수 없는 상한선이다. 상한선 대비 손익분기는 의미가 없다.
+  const b = byCondition.B_realistic;
   const c = byCondition.C_okf_enabled;
   const d = byCondition.D_irrelevant_okf;
   const a = byCondition.A_no_memory;
@@ -350,9 +400,10 @@ try {
   for (let repetition = 0; repetition < runs; repetition++) {
     const order = conditions.map((_, index) => conditions[(index + repetition) % conditions.length]);
     for (const condition of order) {
-      const context = condition === 'B_manual_restatement' ? manualRestatement
-        : condition === 'C_okf_enabled' ? okf.cGate
-          : condition === 'D_irrelevant_okf' ? okf.dGate : '';
+      const context = condition === 'B_oracle' ? manualRestatement
+        : condition === 'B_realistic' ? realisticRestatement
+          : condition === 'C_okf_enabled' ? okf.cGate
+            : condition === 'D_irrelevant_okf' ? okf.dGate : '';
       const addDir = condition === 'C_okf_enabled' ? okf.cHome : condition === 'D_irrelevant_okf' ? okf.dHome : null;
       const prompt = `${context}\n${taskPrompt}`;
       const measurement = await runClaude({ prompt, cwd: project, addDir, benchRoot });
