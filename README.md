@@ -105,7 +105,7 @@ automatically. Five commands are available for manual inspection/control —
 | `/okf:okf-batch` | Forces an immediate batch run (ignores the interval gate, still respects the lock) |
 | `/okf:okf-config` | Shows and lets you edit the current configuration |
 | `/okf:okf-index` | Prints a readable overview of the bundle — every category and concept title, plus recent `log.md` changes |
-| `/okf:okf-visualize` | Renders the bundle + your codebase as one interactive graph (self-contained HTML) |
+| `/okf:okf-visualize [path]` | Renders the bundle + a codebase as one interactive graph (self-contained HTML). Defaults to the current directory; pass a path to analyze any other repo |
 
 A fresh install isn't empty: the bundle ships seeded with concepts describing OKF
 itself, this plugin's architecture, and the bundle's writing rules — so the gate has
@@ -113,7 +113,9 @@ something real to point at from the first session, and the bundle documents itse
 
 ## Visualization
 
-`/okf:okf-visualize` renders your knowledge and your code as a single graph. The interesting
+`/okf:okf-visualize` renders your knowledge and your code as a single graph. With no argument it
+analyzes the directory the session is in; pass a path (`/okf:okf-visualize ~/work/api`) to point it
+at any other repo. The bundle is always the same global one — only the code side changes. The interesting
 part isn't either half — it's the dashed links between them, connecting each concept
 to the source files it actually talks about.
 

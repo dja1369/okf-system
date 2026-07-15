@@ -108,7 +108,7 @@ automáticamente. Hay cinco comandos disponibles para inspección/control manual
 | `/okf:okf-batch` | Fuerza una ejecución por lotes inmediata (ignora la compuerta de intervalo, pero sigue respetando el lock) |
 | `/okf:okf-config` | Muestra la configuración actual y te permite editarla |
 | `/okf:okf-index` | Imprime un resumen legible del paquete: cada categoría y título de concepto, más los cambios recientes de `log.md` |
-| `/okf:okf-visualize` | Renderiza el paquete + tu base de código como un único grafo interactivo (HTML autocontenido) |
+| `/okf:okf-visualize [ruta]` | Renderiza el paquete + tu base de código como un único grafo interactivo (HTML autocontenido) |
 
 Una instalación nueva no está vacía: el paquete viene sembrado con conceptos que
 describen el propio OKF, la arquitectura de este plugin y las reglas de escritura del

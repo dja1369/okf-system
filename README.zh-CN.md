@@ -97,7 +97,7 @@ claude plugin install okf@okf-marketplace
 | `/okf:okf-batch` | 立即强制执行一次批处理（忽略间隔关卡，但仍然遵守锁） |
 | `/okf:okf-config` | 显示当前配置，并允许你编辑 |
 | `/okf:okf-index` | 打印知识包的可读概览 —— 所有分类和概念标题，外加最近的 `log.md` 变更 |
-| `/okf:okf-visualize` | 把知识包 + 你的代码库渲染成一张交互式图（自包含的 HTML） |
+| `/okf:okf-visualize [路径]` | 把知识包 + 你的代码库渲染成一张交互式图（自包含的 HTML） |
 
 全新安装并不是空的：知识包预置了一批概念，分别描述 OKF 本身、这个插件的架构，以及知识包的
 写作规则 —— 这样从第一次会话起，关卡就有真东西可以指向，而知识包本身也成了自己的文档。

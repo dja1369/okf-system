@@ -108,7 +108,7 @@ automaticamente. Cinco comandos estão disponíveis para inspeção/controle man
 | `/okf:okf-batch` | Força uma execução imediata do batch (ignora o gate de intervalo, mas ainda respeita o lock) |
 | `/okf:okf-config` | Mostra e permite editar a configuração atual |
 | `/okf:okf-index` | Imprime uma visão geral legível do bundle — todas as categorias e títulos de conceitos, além das mudanças recentes em `log.md` |
-| `/okf:okf-visualize` | Renderiza o bundle + sua base de código como um único grafo interativo (HTML autocontido) |
+| `/okf:okf-visualize [caminho]` | Renderiza o bundle + sua base de código como um único grafo interativo (HTML autocontido) |
 
 Uma instalação nova não vem vazia: o bundle já vem semeado com conceitos que descrevem
 o próprio OKF, a arquitetura deste plugin e as regras de escrita do bundle — assim o gate

@@ -111,7 +111,7 @@ manuels — **notez le préfixe `okf:`**, requis car ce sont des commandes propr
 | `/okf:okf-batch` | Force une exécution immédiate du batch (ignore le gate d'intervalle, respecte toujours le verrou) |
 | `/okf:okf-config` | Affiche la configuration actuelle et permet de la modifier |
 | `/okf:okf-index` | Affiche un aperçu lisible du bundle — chaque catégorie et titre de concept, plus les changements récents de `log.md` |
-| `/okf:okf-visualize` | Rend le bundle + votre base de code sous forme d'un seul graphe interactif (HTML autonome) |
+| `/okf:okf-visualize [chemin]` | Rend le bundle + votre base de code sous forme d'un seul graphe interactif (HTML autonome) |
 
 Une installation neuve n'est pas vide : le bundle est livré pré-alimenté avec des concepts
 décrivant OKF lui-même, l'architecture de ce plugin et les règles de rédaction du bundle —

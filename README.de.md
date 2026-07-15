@@ -111,7 +111,7 @@ automatisch. Für manuelle Einsicht und Steuerung stehen fünf Commands bereit �
 | `/okf:okf-batch` | Erzwingt einen sofortigen Batch-Lauf (ignoriert das Intervall-Gate, respektiert aber weiterhin den Lock) |
 | `/okf:okf-config` | Zeigt die aktuelle Konfiguration an und lässt dich sie bearbeiten |
 | `/okf:okf-index` | Gibt eine lesbare Übersicht des Bundles aus — jede Kategorie und jeden Konzept-Titel, dazu die jüngsten Änderungen aus `log.md` |
-| `/okf:okf-visualize` | Rendert das Bundle + deine Codebasis als einen interaktiven Graphen (eigenständiges HTML) |
+| `/okf:okf-visualize [Pfad]` | Rendert das Bundle + deine Codebasis als einen interaktiven Graphen (eigenständiges HTML) |
 
 Eine frische Installation ist nicht leer: Das Bundle wird mit Konzepten ausgeliefert,
 die OKF selbst, die Architektur dieses Plugins und die Schreibregeln des Bundles
