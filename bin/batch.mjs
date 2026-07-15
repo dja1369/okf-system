@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveOkfHome, okfPaths, pluginRoot, claudeConfigDir } from '../lib/paths.mjs';
+import { resolveOkfHome, okfPaths, pluginRoot, claudeConfigDir, isOkfTestSessionDir } from '../lib/paths.mjs';
 import { readConfig, DEFAULT_CONFIG } from '../lib/config.mjs';
 import { git, isDirty, commitAll, rollback } from '../lib/git.mjs';
 import { runLint, formatReport } from '../lib/lint.mjs';
@@ -208,6 +208,10 @@ function sweepOrphanSessions(okfHome) {
   let recovered = 0;
 
   for (const dirent of projectDirs) {
+    // OKF 자신의 테스트·벤치가 임시 디렉토리에서 남긴 세션은 사용자 지식이 아니다. 이 필터가
+    // 없어서 실제 projects/에 쌓인 241개 디렉토리(295개 transcript)가 전부 sweep 대상이었고,
+    // 유료 배치를 돌려 번들에 테스트 픽스처를 지식으로 기록했다.
+    if (isOkfTestSessionDir(dirent.name)) continue;
     const dir = path.join(projectsDir, dirent.name);
     for (const f of safeReaddir(dir)) {
       if (!f.endsWith('.jsonl')) continue;
