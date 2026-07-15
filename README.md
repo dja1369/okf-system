@@ -151,7 +151,7 @@ Past ~43 concepts the index truncates and the survivors are chosen by filename �
 
 Neither wall is a tuning knob. Fixing the first one needs the index to signal *which lines are complete answers* so the model can trust them without opening the file; that work is not done, and until it is, OKF's economics worsen with every concept added.
 
-Accumulation run: [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-30-11-404Z.json). The 50-filler preflight failure is preserved at [preflight audit](docs/benchmarks/raw/okf-live-preflight-failed-2026-07-15T16-11-37-402Z.json) — a negative result kept on purpose.
+Accumulation run: [report](docs/benchmarks/okf-live-2026-07-15T16-30-11-404Z.md), [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-30-11-404Z.json). The 50-filler preflight failure is preserved at [preflight audit](docs/benchmarks/raw/okf-live-preflight-failed-2026-07-15T16-11-37-402Z.json) — a negative result kept on purpose.
 
 The harness also records decision compliance, wrong assumptions, extra questions, tool calls, first valid response, API/wall time, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and CLI-reported cost. Token categories remain separate in the raw JSON. Note that `tokenActivity` sums cache reads 1:1 with output tokens even though cache reads bill ~50× cheaper — **cost is the defensible column**. The `p95` columns above are published in the requested format, but at n=5 they are arithmetically the max (the cold run) rather than a tail statistic — read them as such. Values the CLI does not expose separately — user-only or gate-only tokens — remain `null` and are never estimated.
 

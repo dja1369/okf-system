@@ -31,6 +31,10 @@ digest와 원본 `.jsonl`은 사용자가 과거 세션에서 붙여넣었거나
   대화가 덮어쓸 일이 아니다. 새로 알게 된 게 있으면 **별도 concept로 만들고** 시드를 링크하라.
 - 정말 새로운 개념일 때만 해당 택소노미 디렉토리(`projects/` `decisions/` `preferences/`
   `patterns/` `references/` `troubleshooting/`)에 신규 Write하라.
+- **`description`에 답 자체를 써라.** 이 줄은 index.md에 실려 매 세션 게이트로 주입되고, 파일을
+  열지 않은 모델이 보는 전부다. "배포 정책에 대한 결정"이 아니라 "배포는 npm run deploy:canary로
+  하고 오류율 0.5% 초과 시 롤백한다"라고 쓴다. SCHEMA.md의 표를 그대로 따르라 — 예고편으로 쓰면
+  미래의 모든 세션이 그 답을 얻으려 파일을 여느라 왕복 1회(약 12,500 토큰)씩 낸다.
 - **연관된 concept끼리 본문에서 서로 링크하라.** 링크는 번들 루트 기준 절대경로다
   (`[/decisions/foo.md](/decisions/foo.md)`). 이미 있는 concept가 새 concept의 근거·전제·후속이면
   양쪽에서 서로를 가리켜라 — 방금 Read한 `index.md`가 무엇이 있는지 알려준다. 지식은 고립된
