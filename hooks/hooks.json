@@ -1,0 +1,30 @@
+{
+  "description": "OKF global knowledge: capture + gate + opportunistic batch",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/session-start.mjs\"",
+            "timeout": 15,
+            "statusMessage": "OKF gate..."
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/session-end.mjs\"",
+            "timeout": 20,
+            "statusMessage": "OKF capture..."
+          }
+        ]
+      }
+    ]
+  }
+}

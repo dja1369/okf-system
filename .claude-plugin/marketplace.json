@@ -1,0 +1,13 @@
+{
+  "name": "okf-marketplace",
+  "owner": {
+    "name": "ducksu"
+  },
+  "plugins": [
+    {
+      "name": "okf",
+      "source": "./",
+      "description": "Global OKF knowledge bundle: lossless capture, opportunistic batch ingest, mandatory session-start gate."
+    }
+  ]
+}
