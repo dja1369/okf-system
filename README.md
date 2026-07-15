@@ -105,9 +105,9 @@ Live run 2026-07-15: Claude Code `2.1.210`, `sonnet`/medium (resolved Sonnet 5 +
 | **C — OKF enabled** | **5/5** | **10,395** | 6.46 s | $0.011329 | **0** | **1** |
 | D — irrelevant OKF | 0/5 | 20,602 | 14.50 s | $0.025879 | 1 | 2 |
 
-**Read the A row first.** Without memory the session burns 27,246 tokens, reads two files hunting for an answer, takes four turns — and still gets **0/8**. That is the condition OKF actually replaces, and C beats it: 2.6× fewer tokens, 5/8→8/8, in a single turn with no file reads.
+**Read the A row first.** Without memory the session burns 27,246 tokens, reads two files hunting for an answer, takes four turns — and still gets **0/8**. That is the condition OKF actually replaces, and C beats it: 2.6× fewer tokens, 0/8→8/8, in a single turn with no file reads.
 
-**C does not beat B, and it never will.** B pastes the answers straight into the prompt; nothing retrieves faster than already having it. At this bundle size B_realistic equals B_oracle (there is no unrelated knowledge yet to restate), so both sit at 9,069. C costs 1,326 more tokens and $0.0029 more per session. **There is no token or cost break-even** — `perSessionTokenSaving` is negative and the harness reports `null` rather than inventing one.
+**C does not beat B, and it never will.** B pastes the answers straight into the prompt; nothing retrieves faster than already having it. At this bundle size B_realistic equals B_oracle (there is no unrelated knowledge yet to restate), so both sit at 9,069. C costs 1,326 more tokens and $0.0029 more per session. Building the bundle cost one batch ingest of **133,364** token activity and **$0.176758**. **There is no token or cost break-even** — `perSessionTokenSaving` is negative, so the harness reports `null` rather than inventing one.
 
 What changed since the previous run is the gate itself. C used to cost **22,857** tokens over 7 turns with 5 file reads; it now costs **10,395** in 1 turn with 0 reads, at identical 5/5 recall. The old gate ordered an unconditional `Read`, and 91% of its overhead was that round-trip re-fetching facts the index had already delivered. See [the fix](https://github.com/dja1369/okf-system/pull/7).
 
@@ -137,7 +137,7 @@ OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                      # as published
 OKF_RUN_LIVE_BENCH=1 OKF_BENCH_FILLER=50 node test/bench-okf.mjs  # accumulation axis
 ```
 
-This is paid, authenticated, and intentionally excluded from smoke tests and CI. Token categories remain separate; user-only/gate-only/transcript tokens unavailable from the CLI remain `null`. See the [valid report](docs/benchmarks/okf-live-2026-07-15T15-03-01-343Z.md), [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T15-03-01-343Z.json), and [usage guide](docs/USAGE.md).
+This is paid, authenticated, and intentionally excluded from smoke tests and CI. Token categories remain separate; user-only/gate-only/transcript tokens unavailable from the CLI remain `null`. See the [report](docs/benchmarks/okf-live-2026-07-15T16-06-28-592Z.md), [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-06-28-592Z.json), and [usage guide](docs/USAGE.md). The earlier pre-fix run is kept as an audit trail.
 
 ### Local overhead (not the OKF effectiveness result)
 

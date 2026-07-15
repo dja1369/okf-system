@@ -51,26 +51,61 @@ Por ejemplo, “desplegar 10% → 50% → 100% y revertir por encima de 0,5% de 
 
 ## Benchmark del efecto OKF
 
-<!-- okf-live-benchmark: valid-2026-07-15T15-03-01Z -->
+<!-- okf-live-benchmark: valid-2026-07-15T16-06-28Z -->
 
-Ejecución live del 2026-07-15: Claude Code `2.1.210`, `sonnet`/medium (Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, commit `c00d3fc`, cinco repeticiones por condición. Antes del follow-up, C tenía 8/8 hechos en concepts y 8/8 rutas en gate; D tenía 0/8.
+**OKF no ahorra tokens. Recupera lo que una sesión nueva ya ha perdido.** Publicamos las cifras porque dicen justo eso.
 
-| Condición | Continuidad | token activity p50 / p95 | wall p50 / p95 | coste p50 |
-|---|---:|---:|---:|---:|
-| A — no memory | 0/5 | 27,320 / 27,574 | 16.40 / 18.17 s | $0.024037 |
-| B — manual restatement | 5/5 | 9,070 / 9,093 | 6.07 / 7.42 s | $0.008410 |
-| C — OKF enabled | 5/5 | 22,857 / 22,883 | 11.33 / 12.80 s | $0.033189 |
-| D — irrelevant OKF | 0/5 | 21,507 / 22,261 | 16.92 / 18.88 s | $0.030332 |
+A una sesión de follow-up se le piden ocho hechos que estableció una sesión anterior, más un control que la memoria no puede resolver: arquitectura (SQLite / repository pattern), regla de código (named export only), fix de un incidente pasado (`busy_timeout=5000`), preferencia de respuesta (coreano / conciso), política de archivo y despliegue (`src/config.mjs` / `npm run deploy:canary`) y aritmética ajena (7 × 8 = 56). El bundle de C se construye con una captura SessionEnd **real** → batch ingest aislado → gate SessionStart; nada sembrado a mano. Un preflight se niega a gastar dinero salvo que C contenga y rutee por el gate todos los hechos objetivo, y D no contenga ninguno.
 
-C recuperó todos los hechos, pero frente a B usó 13,787 token activity más y 5.26 s más de wall time en la mediana. No demuestra mejora de eficiencia. Un batch costó 111,381 token activity/$0.164360; B−C fue negativo, sin break-even.
+- **A — no memory.** El statu quo honesto: sesión nueva, nada repetido.
+- **B_oracle — la hoja de respuestas.** Pega los 8 valores esperados. Escribir ese texto exige saber ya todo lo que OKF existe para recuperar, así que **ningún usuario puede ocupar esta condición**: es una cota superior, no una línea base, y su trabajo humano se cotiza a cero.
+- **B_realistic — lo que la gente hace de verdad.** Repite todo lo que pueda ser relevante, porque no se sabe de antemano qué hará falta. Es el hábito CLAUDE.md, y la comparación real.
+- **C — OKF enabled.**
+- **D — irrelevant OKF.** Gate sin contenido relevante, para separar «el gate ayudó» de «un gate cuesta algo».
 
-Cada condición se repite al menos 5 veces. Se guardan éxito, cumplimiento, supuestos erróneos, preguntas, tool calls, primera respuesta válida, tiempo API/wall, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` y coste del CLI. Las categorías siguen separadas en JSON; batch y repair entran en el break-even. Valores no separados por el CLI, como tokens solo del usuario o gate, quedan `null`, sin estimación.
+Ejecución live del 2026-07-15: Claude Code `2.1.210`, `sonnet`/medium (Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, cinco repeticiones cruzadas por condición. Preflight de C: 8/8 hechos presentes, 8/8 ruteados por el gate; D: 0/8.
 
-```sh
-OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs
+| Condición | Continuidad | token activity p50 | wall p50 | coste p50 | Reads | Turnos |
+|---|---:|---:|---:|---:|---:|---:|
+| A — no memory | **0/5** | 27,246 | 13.82 s | $0.022218 | 2 | 4 |
+| B_oracle (hoja de respuestas) | 5/5 | 9,069 | 4.86 s | $0.008410 | 0 | 1 |
+| B_realistic | 5/5 | 9,069 | 5.96 s | $0.008410 | 0 | 1 |
+| **C — OKF enabled** | **5/5** | **10,395** | 6.46 s | $0.011329 | **0** | **1** |
+| D — irrelevant OKF | 0/5 | 20,602 | 14.50 s | $0.025879 | 1 | 2 |
+
+**Lee primero la fila A.** Sin memoria la sesión quema 27,246 tokens, lee dos archivos buscando la respuesta, gasta cuatro turnos — y aun así saca **0/8**. Esa es la condición que OKF sustituye de verdad, y C la gana: 2.6× menos tokens, 8/8, en un solo turno y sin leer archivos.
+
+**C no le gana a B, y nunca lo hará.** B pega las respuestas en el prompt; nada recupera más rápido que ya tenerlo. Con este tamaño de bundle B_realistic iguala a B_oracle (aún no hay conocimiento ajeno que repetir), así que ambos quedan en 9,069. C cuesta 1,326 tokens y $0.0029 más por sesión. Construir el bundle costó un batch ingest de **133,364** token activity y **$0.176758**. **No existe break-even de tokens ni de coste**: `perSessionTokenSaving` es negativo y el harness reporta `null` en vez de inventar uno.
+
+Lo que cambió desde la ejecución anterior es el gate. C costaba **22,857** tokens en 7 turnos con 5 lecturas; ahora cuesta **10,395** en 1 turno y 0 lecturas, con el mismo recall 5/5. El gate viejo ordenaba un `Read` incondicional, y el 91% de su overhead era ese ida y vuelta releyendo hechos que el índice ya había entregado.
+
+### El límite de acumulación — medido, no proyectado
+
+«OKF se abarata según se acumula conocimiento» no sobrevive a la medición. El mismo benchmark con 50 conceptos de relleno **falla el preflight**:
+
+```text
+checkedFacts: 8   presentFacts: 8   routedFacts: 6   ready: false
 ```
 
-Es opt-in, autenticada y de pago, fuera de CI. Véanse el [informe válido](docs/benchmarks/okf-live-2026-07-15T15-03-01-343Z.md), [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T15-03-01-343Z.json) y [docs/USAGE.md](docs/USAGE.md).
+Dos hechos viven en `decisions/tech-stack.md`, y ese archivo quedó **fuera del índice inyectado**: los conceptos de relleno lo adelantaron por orden alfabético. El índice tiene un tope duro para no pasar el límite de 10.000 caracteres del hook:
+
+| Conceptos en el bundle | Mostrados en el índice |
+|---:|---:|
+| 20 | 20 |
+| 40 | 40 |
+| **55** | **43** (truncado) |
+| 100 | 43 (truncado) |
+
+**Pasados ~43 conceptos el índice trunca**, y lo que sobrevive lo decide el nombre de archivo, no la relevancia. Cada categoría truncada apunta a su propio `index.md`, así que el resto sigue alcanzable descendiendo — pero descender es un ida y vuelta de tool, justo el coste que el fix acaba de eliminar. Más allá de ese punto la economía de OKF empeora con la escala, no mejora.
+
+Se guardan además cumplimiento de decisiones, supuestos erróneos, preguntas extra, tool calls, primera respuesta válida, tiempo API/wall, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` y coste del CLI. Las categorías siguen separadas en JSON. `tokenActivity` suma las lecturas de caché 1:1 con los tokens de salida aunque facturen ~50× más barato — **el coste es la columna defendible** —, y con n=5 el `p95` es siempre el máximo aritmético (la ejecución en frío), así que se omite. Valores no separados por el CLI, como tokens solo del usuario o del gate, quedan `null`, sin estimación.
+
+```sh
+OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                      # lo publicado arriba
+OKF_RUN_LIVE_BENCH=1 OKF_BENCH_FILLER=50 node test/bench-okf.mjs  # eje de acumulación
+```
+
+Es opt-in, autenticada y de pago, fuera de CI. Véanse el [informe](docs/benchmarks/okf-live-2026-07-15T16-06-28-592Z.md), [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-06-28-592Z.json) y [docs/USAGE.md](docs/USAGE.md). La ejecución anterior al fix se conserva como rastro de auditoría.
 
 ### Overhead local — no es el resultado de efectividad
 
@@ -88,11 +123,11 @@ Reproduce con `node test/bench.mjs [repositorio]`. Solo mide procesos locales, n
 
 ```text
 coste inicial OKF = batch ingest + repair + overhead medido del gate irrelevante
-ahorro por sesión = mediana manual-restatement - mediana OKF
+ahorro por sesión = mediana B_realistic - mediana OKF
 sesiones break-even = ceil(coste inicial / ahorro positivo por sesión)
 ```
 
-El ahorro B−C medido fue negativo; no existe break-even de tokens ni coste en este run.
+El ahorro B_realistic−C medido fue negativo; no existe break-even de tokens ni coste en este run.
 
 ## Lenguajes
 

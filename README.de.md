@@ -51,26 +51,55 @@ Eine Regel wie „10 % → 50 % → 100 % ausrollen, über 0,5 % Fehlern zurück
 
 ## Benchmark der OKF-Wirkung
 
-<!-- okf-live-benchmark: valid-2026-07-15T15-03-01Z -->
+<!-- okf-live-benchmark: valid-2026-07-15T16-06-28Z -->
 
-Live-Lauf am 2026-07-15: Claude Code `2.1.210`, `sonnet`/medium (Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, Commit `c00d3fc`, fünf Wiederholungen je Bedingung. Vor dem Follow-up enthielt C 8/8 Zielfakten und routete 8/8 über das Gate; D enthielt 0/8.
+**OKF spart keine Tokens. Es stellt wieder her, was eine frische Sitzung bereits verloren hat.**
 
-| Bedingung | Kontinuität | token activity p50 / p95 | wall p50 / p95 | Kosten p50 |
-|---|---:|---:|---:|---:|
-| A — no memory | 0/5 | 27,320 / 27,574 | 16.40 / 18.17 s | $0.024037 |
-| B — manual restatement | 5/5 | 9,070 / 9,093 | 6.07 / 7.42 s | $0.008410 |
-| C — OKF enabled | 5/5 | 22,857 / 22,883 | 11.33 / 12.80 s | $0.033189 |
-| D — irrelevant OKF | 0/5 | 21,507 / 22,261 | 16.92 / 18.88 s | $0.030332 |
+Abgefragt werden acht Fakten einer früheren Sitzung — Architektur (SQLite / repository pattern), Coding-Regel (named export only), Incident-Fix (`busy_timeout=5000`), Antwortpräferenz (Koreanisch / knapp), Datei- und Deploy-Policy (`src/config.mjs` / `npm run deploy:canary`) — plus eine Kontrollfrage ohne Gedächtnisbezug (7 × 8 = 56).
 
-C fand alle Fakten, benötigte aber median 13,787 token activity und 5.26 s mehr als B. Eine Effizienzverbesserung ist nicht belegt. Der Batch kostete 111,381 token activity/$0.164360; B−C war negativ, daher kein Break-even.
+- **A — no memory.** Status quo: frische Sitzung, nichts wiederholt.
+- **B_oracle — Lösungsschlüssel.** Fügt exakt die 8 erwarteten Werte ein; wer den String schreibt, kennt bereits jeden Fakt, den OKF wiederherstellen soll. **Kein Nutzer kann diese Bedingung einnehmen** — Obergrenze, keine Baseline, menschliche Arbeit mit null bepreist.
+- **B_realistic — was Menschen tatsächlich tun.** Wiederholt alles möglicherweise Relevante, weil man vorher nicht weiß, was die nächste Sitzung braucht (CLAUDE.md-Gewohnheit). Der reale Vergleich.
+- **C — OKF enabled.**
+- **D — irrelevant OKF.** Gate ohne relevanten Inhalt, trennt „das Gate half“ von „ein Gate kostet etwas“.
 
-Jede Bedingung wird mindestens fünfmal wiederholt. Gemessen werden Erfolg, Einhaltung, falsche Annahmen, Rückfragen, Tool Calls, erste gültige Antwort, API/Wall-Zeit, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` und CLI-Kosten. Tokenkategorien bleiben im Raw-JSON getrennt; Batch- und Repair-Kosten fließen in Break-even ein. Nicht separat gelieferte User-only/Gate-only-Tokens bleiben ohne Schätzung `null`.
+Live-Lauf am 2026-07-15: Claude Code `2.1.210`, `sonnet`/medium (Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, fünf Läufe je Bedingung in gekreuzter Reihenfolge. Cs Bundle entsteht aus echtem SessionEnd-Capture → isoliertem Batch-Ingest → SessionStart-Gate; Preflight: C 8/8 vorhanden und 8/8 gate-geroutet, D 0/8.
+
+| Bedingung | Kontinuität | token activity p50 | wall p50 | Kosten p50 | Reads | Turns |
+|---|---:|---:|---:|---:|---:|---:|
+| A — no memory | **0/5** | 27,246 | 13.82 s | $0.022218 | 2 | 4 |
+| B_oracle (Lösungsschlüssel) | 5/5 | 9,069 | 4.86 s | $0.008410 | 0 | 1 |
+| B_realistic | 5/5 | 9,069 | 5.96 s | $0.008410 | 0 | 1 |
+| **C — OKF enabled** | **5/5** | **10,395** | 6.46 s | $0.011329 | **0** | **1** |
+| D — irrelevant OKF | 0/5 | 20,602 | 14.50 s | $0.025879 | 1 | 2 |
+
+**Zuerst Zeile A lesen.** Ohne Gedächtnis verbrennt die Sitzung 27,246 Tokens, liest zwei Dateien, braucht vier Turns — und liefert trotzdem **0/8**. Genau das ersetzt OKF, und C schlägt es: 2.6× weniger Tokens, 8/8, in einem Turn ohne Reads.
+
+**C schlägt B nicht und wird es nie** — B hat die Antworten schon im Prompt. Bei dieser Bundle-Größe ist B_realistic gleich B_oracle (beide 9,069); C kostet 1,326 Tokens und $0.0029 je Sitzung mehr. Der Bundle-Aufbau kostete **133,364** token activity und **$0.176758**. **Einen Token- oder Kosten-Break-even gibt es nicht**; `perSessionTokenSaving` ist negativ, daher meldet die Harness `null`, statt einen zu erfinden.
+
+Geändert hat sich das Gate: C kostete zuvor **22,857** Tokens über 7 Turns mit 5 Reads, jetzt 10,395 in 1 Turn mit 0 Reads bei identischer 5/5-Recall. 91 % des alten Overheads war ein verordneter `Read`-Round-Trip, der Fakten erneut holte, die der Index längst geliefert hatte.
+
+### Die Akkumulationsgrenze — gemessen, nicht projiziert
+
+„OKF wird billiger, je mehr Wissen sich ansammelt“ hält der Messung nicht stand. Mit 50 unbeteiligten Filler-Concepts **scheitert der Preflight**: 8/8 Fakten vorhanden, aber nur 6/8 gate-geroutet — die Filler sortierten sich alphabetisch vor `decisions/tech-stack.md`, das damit aus dem injizierten Index fiel. Der Index ist hart gedeckelt (10,000-Zeichen-Grenze für Hooks):
+
+| Concepts im Bundle | Im Gate-Index gezeigt |
+|---:|---:|
+| 20 | 20 |
+| 40 | 40 |
+| **55** | **43** (gekürzt) |
+| 100 | 43 (gekürzt) |
+
+**Ab ca. 43 Concepts kürzt der Index**, und was überlebt, entscheidet der Dateiname — nicht Relevanz, nicht Aktualität. Gekürzte Kategorien verweisen auf ihre `index.md`, der Rest bleibt per Abstieg erreichbar; Abstieg ist aber ein Tool-Round-Trip — exakt die Kosten, die der Fix gerade entfernt hat. Mit Skalierung wird OKFs Ökonomie also *schlechter*, nicht besser.
+
+Gemessen werden Erfolg, Einhaltung, falsche Annahmen, Rückfragen, Tool Calls, erste gültige Antwort, API/Wall-Zeit, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` und CLI-Kosten; Tokenkategorien bleiben im Raw-JSON getrennt. `tokenActivity` addiert Cache-Reads 1:1 mit Output-Tokens, obwohl sie ~50× günstiger abrechnen — **belastbar ist die Kostenspalte**. p95 entfällt: bei n=5 ist er arithmetisch immer das Maximum, also der Cold Run. User-only/Gate-only-Tokens bleiben ohne Schätzung `null`.
 
 ```sh
-OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs
+OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                      # wie oben veröffentlicht
+OKF_RUN_LIVE_BENCH=1 OKF_BENCH_FILLER=50 node test/bench-okf.mjs  # Akkumulationsachse
 ```
 
-Bezahlter Opt-in-Lauf außerhalb von CI. Siehe [gültigen Bericht](docs/benchmarks/okf-live-2026-07-15T15-03-01-343Z.md), [Raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T15-03-01-343Z.json) und [docs/USAGE.md](docs/USAGE.md).
+Bezahlter Opt-in-Lauf außerhalb von CI. Siehe [gültigen Bericht](docs/benchmarks/okf-live-2026-07-15T16-06-28-592Z.md), [Raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-06-28-592Z.json) und [docs/USAGE.md](docs/USAGE.md). Der frühere Lauf vor dem Fix bleibt als Audit-Trail erhalten.
 
 ### Lokaler Overhead — nicht das Wirksamkeitsergebnis
 
@@ -88,11 +117,11 @@ Reproduzierbar mit `node test/bench.mjs [Repository]`. Dies misst lokalen Prozes
 
 ```text
 initiale OKF-Kosten = Batch-Ingest + Repair + gemessener irrelevanter Gate-Overhead
-Ersparnis je Sitzung = Median Manual-Restatement - Median OKF
+Ersparnis je Sitzung = Median B_realistic - Median OKF
 Break-even-Sitzungen = ceil(initiale Kosten / positive Ersparnis je Sitzung)
 ```
 
-Die gemessene B−C-Ersparnis ist negativ; dieser Lauf hat keinen Token- oder Kosten-Break-even.
+Verglichen wird gegen **B_realistic**, nicht gegen B_oracle: dessen String enthält die Antworten selbst und bepreist damit genau die Arbeit mit null, für die OKF existiert. Die gemessene Ersparnis ist negativ (−1,326 Tokens, −$0.0029); dieser Lauf hat keinen Token- oder Kosten-Break-even. Das ist das Ergebnis, keine Lücke der Harness.
 
 ## Sprachunterstützung
 
