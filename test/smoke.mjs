@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ensureBootstrap } from '../lib/bootstrap.mjs';
 import { okfPaths } from '../lib/paths.mjs';
+import { DEFAULT_CONFIG } from '../lib/config.mjs';
 import { runLint, formatReport } from '../lib/lint.mjs';
 import { regenerateIndex } from '../lib/index-gen.mjs';
 import { digestFile } from '../lib/digest.mjs';
@@ -204,9 +205,15 @@ console.log('\n=== session-start.mjs (subprocess) ===');
   const parsed = JSON.parse(out);
   ok('session-start emits hookSpecificOutput.additionalContext', typeof parsed.hookSpecificOutput?.additionalContext === 'string');
   ok('gate context contains mandatory gate banner', parsed.hookSpecificOutput.additionalContext.includes('OKF KNOWLEDGE GATE'));
-  // root index.md is a deterministic category *summary* (counts + links to per-dir index.md),
-  // not a full concept listing — that's what keeps the gate injection budget fixed (§5-3).
-  ok('gate context includes index.md category summary', parsed.hookSpecificOutput.additionalContext.includes('/decisions/index.md'));
+  // The gate's only job is to make the model Read the right concept before working on
+  // something related. Category counts alone ("decisions — 1개") give it nothing to judge
+  // relevance by, so the injected index must name each concept — the shape AGENDA.md:52
+  // points at (native auto-memory's MEMORY.md: one title + hook per line, line-capped).
+  const ctx = parsed.hookSpecificOutput.additionalContext;
+  ok('gate context keeps category headings', ctx.includes('decisions'));
+  ok('gate context names each concept', ctx.includes('예시 결정'));
+  ok('gate context carries the concept description (the relevance hook)', ctx.includes('게이트 주입 테스트용'));
+  ok('gate context links concepts by bundle-root path', ctx.includes('/decisions/example.md'));
   ok('suppressOutput is set', parsed.suppressOutput === true);
 
   const outBatchGuard = runHook('bin/session-start.mjs', { okfHome: home, env: { OKF_BATCH: '1' } });
@@ -216,6 +223,29 @@ console.log('\n=== session-start.mjs (subprocess) ===');
   writeConfig(disabledHome, { enabled: false });
   const outDisabled = runHook('bin/session-start.mjs', { okfHome: disabledHome });
   ok('enabled:false suppresses gate injection', outDisabled.trim() === '{}');
+}
+
+{
+  // Now that the index names every concept, it grows with the bundle — which is exactly the
+  // cost AGENDA.md:52 flagged. The cap must bite the *index* and leave the rest standing:
+  // if a 500-concept bundle silently pushes "최근 변경" out of the injection, the gate loses
+  // the one signal that tells it the bundle moved since last session.
+  const home = bootstrapped('session-start-oversized');
+  fs.mkdirSync(path.join(home, 'decisions'), { recursive: true });
+  for (let i = 0; i < 500; i++) {
+    fs.writeFileSync(
+      path.join(home, 'decisions', `d${String(i).padStart(3, '0')}.md`),
+      `---\ntype: decision\ntitle: 결정 ${i}\ndescription: 설명 ${i}\ntimestamp: 2026-07-15\n---\n본문\n`
+    );
+  }
+  fs.writeFileSync(path.join(home, 'log.md'), '## 2026-07-15\n- 번들이 이만큼 움직였다\n');
+  regenerateIndex(home);
+
+  const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  ok('oversized index still leaves the recent-changes section injected', ctx.includes('최근 변경 (log.md)'));
+  ok('oversized index still carries the latest log entry', ctx.includes('번들이 이만큼 움직였다'));
+  ok('oversized index is visibly truncated, not silently cut', ctx.includes('생략'));
+  ok('oversized injection still respects the byte cap', Buffer.byteLength(ctx, 'utf8') <= DEFAULT_CONFIG.inject_max_bytes);
 }
 
 // ---------------------------------------------------------------------------
