@@ -113,13 +113,25 @@ What changed since the previous run is the gate itself. C used to cost **22,857*
 
 ### The accumulation limit — measured, not projected
 
-The claim "OKF gets cheaper as knowledge accumulates" does not survive measurement. Running the same benchmark with 50 unrelated concepts added to the bundle **fails preflight**:
+**"OKF gets cheaper as knowledge accumulates" is false.** It gets more expensive, and faster than the alternative. Same benchmark, same bundle, with 20 unrelated concepts added — everything still fits the index (21 lines, 5,548 of 9,000 bytes, nothing truncated):
+
+| Condition | 0 filler | 20 filler | Growth |
+|---|---:|---:|---:|
+| B_realistic | 9,069 | 10,406 | **+1,337** |
+| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+
+**C degrades ~11× faster than B** — 749 tokens per added concept versus 67. Both still answer 5/5.
+
+The cause is not truncation. It is trust:
 
 ```
-checkedFacts: 8   presentFacts: 8   routedFacts: 6   ready: false
+0 filler:   C reads=0  turns=1    answers straight from the index line
+20 filler:  C reads=3  turns=4    goes back to opening files
 ```
 
-Two facts (`architecture_pattern`, `export_style`) live in `decisions/tech-stack.md`, and that file was **cut from the injected index** — the filler concepts sorted ahead of it alphabetically. The gate's index is hard-capped to stay under Claude Code's 10,000-character hook ceiling, and real Korean concept lines run ~214 bytes:
+Twenty irrelevant concepts were enough to make the model stop believing the index line and verify against the file — reviving the exact round-trip the gate fix removed. The index tells you a line exists; it does not tell you the line is the *complete* answer, so as the surrounding noise grows the rational move is to check. **This is the real ceiling, and it arrives at ~21 concepts — long before any cap binds.**
+
+Truncation is the second wall, further out. The gate's index is hard-capped under Claude Code's 10,000-character hook ceiling, and real Korean concept lines run ~214 bytes:
 
 | Concepts in bundle | Shown in gate index |
 |---:|---:|
@@ -128,7 +140,9 @@ Two facts (`architecture_pattern`, `export_style`) live in `decisions/tech-stack
 | **55** | **43** (truncated) |
 | 100 | 43 (truncated) |
 
-**Past ~43 concepts the index truncates**, and what survives is decided by filename — not relevance, not recency. Categories are dealt round-robin so no category starves, and each truncated category points at its own `index.md` so the rest stays reachable by descending. But descending is a tool round-trip, which is the exact ~12,500-token cost the gate fix just removed. So beyond that point OKF's economics get *worse*, not better. This is the honest state of the design, not a tuning knob.
+Past ~43 concepts the index truncates and the survivors are chosen by filename — not relevance, not recency. A run with 50 filler concepts **fails preflight** for exactly this reason (`presentFacts: 8, routedFacts: 6, ready: false`): `decisions/tech-stack.md` sorted behind the filler and was cut, taking two facts with it. Categories are dealt round-robin so no category starves, and each truncated category points at its own `index.md` so the rest stays reachable — but descending is a tool round-trip, the same cost again.
+
+Neither wall is a tuning knob. Fixing the first one needs the index to signal *which lines are complete answers* so the model can trust them without opening the file; that work is not done, and until it is, OKF's economics worsen with every concept added.
 
 The harness also records decision compliance, wrong assumptions, extra questions, tool calls, first valid response, API/wall time, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and CLI-reported cost. Token categories remain separate in the raw JSON. Note that `tokenActivity` sums cache reads 1:1 with output tokens even though cache reads bill ~50× cheaper — **cost is the defensible column**, and at n=5 the harness's `p95` is arithmetically always the max (the cold run), so it is omitted here. Values the CLI does not expose separately — user-only or gate-only tokens — remain `null` and are never estimated.
 

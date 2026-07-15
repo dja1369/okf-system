@@ -75,7 +75,25 @@ O que mudou desde o run anterior foi o gate. C custava **22,857** tokens em 7 tu
 
 ### O limite de acumulação — medido, não projetado
 
-A tese "o OKF fica mais barato conforme o conhecimento acumula" não sobrevive à medição. O mesmo benchmark com 50 concepts de enchimento **falha no preflight**: 8/8 fatos presentes, mas só 6/8 roteados pelo gate — `decisions/tech-stack.md` foi cortado do índice porque o enchimento ficou antes dele na ordem alfabética.
+**A tese "o OKF fica mais barato conforme o conhecimento acumula" é falsa.** Ele fica mais caro — e mais rápido que a alternativa. Mesmo benchmark, mesmo bundle, com 20 concepts sem relação adicionados; tudo ainda cabe no índice (21 linhas, 5,548 de 9,000 bytes, nada truncado):
+
+| Condição | 0 enchimento | 20 enchimento | Crescimento |
+|---|---:|---:|---:|
+| B_realistic | 9,069 | 10,406 | **+1,337** |
+| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+
+**C degrada ~11× mais rápido que B** — 749 tokens por concept adicionado contra 67. Os dois ainda respondem 5/5.
+
+A causa não é truncamento. É confiança:
+
+```text
+0 enchimento:   C reads=0  turns=1    responde direto pela linha do índice
+20 enchimento:  C reads=3  turns=4    volta a abrir arquivos
+```
+
+Vinte concepts irrelevantes bastaram para o modelo parar de confiar na linha do índice e ir conferir no arquivo — ressuscitando exatamente o round-trip que a correção do gate tinha removido. O índice diz que a linha existe; não diz que a linha é a resposta *completa*, então conforme o ruído em volta cresce, conferir vira a jogada racional. **Esse é o teto real, e ele chega em ~21 concepts — muito antes de qualquer cap apertar.**
+
+Truncamento é a segunda parede, mais adiante:
 
 | Concepts no bundle | Mostrados no índice |
 |---:|---:|
@@ -84,7 +102,9 @@ A tese "o OKF fica mais barato conforme o conhecimento acumula" não sobrevive �
 | **55** | **43** (truncado) |
 | 100 | 43 (truncado) |
 
-**Acima de ~43 concepts o índice trunca** e quem sobrevive é escolhido por nome de arquivo — não por relevância nem recência. Descer pelo `index.md` de cada categoria ainda alcança o resto, mas custa um round-trip de tool: exatamente o custo que a correção acabou de remover. Ou seja, a economia do OKF **piora** com escala, não melhora.
+Acima de ~43 concepts o índice trunca e quem sobrevive é escolhido por nome de arquivo — não por relevância nem recência. Um run com 50 concepts de enchimento **falha no preflight** exatamente por isso (`presentFacts: 8, routedFacts: 6`): `decisions/tech-stack.md` ficou atrás do enchimento na ordenação e foi cortado. As categorias são distribuídas em round-robin para nenhuma passar fome, e cada categoria truncada aponta para o próprio `index.md` — mas descer é um round-trip de tool, o mesmo custo de novo.
+
+Nenhuma das duas paredes é um botão de ajuste. Corrigir a primeira exige que o índice sinalize *quais linhas são respostas completas*, para o modelo poder confiar nelas sem abrir o arquivo; esse trabalho não está feito, e até estar, a economia do OKF piora a cada concept adicionado.
 
 Medimos também aderência, suposições erradas, perguntas extras, tool calls, primeira resposta válida, tempo API/wall, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` e custo do CLI; as categorias permanecem separadas no JSON. `tokenActivity` soma cache reads 1:1 com output tokens embora cache read seja ~50× mais barato — **custo é a coluna defensável**. Com n=5 o `p95` do harness é sempre o máximo (o run frio), por isso foi omitido. Tokens user-only/gate-only que o CLI não separa ficam `null`, sem estimativa.
 

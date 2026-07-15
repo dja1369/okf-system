@@ -96,13 +96,25 @@ Session 1 の決定 -> SessionEnd の無損失コピー -> batch で OKF Markdow
 
 ### 蓄積の限界 — 推定ではなく実測
 
-「知識が貯まるほど OKF は安くなる」は測定に耐えません。無関係な concept を 50 個足して同じ benchmark を回すと **preflight が落ちます**：
+**「知識が貯まるほど OKF は安くなる」は偽です。** 逆に高くつき、しかも代替手段より速く悪化します。同じ benchmark・同じ bundle に無関係な concept を 20 個足した実測 — index には全て収まっています（21 行・9,000 byte 中 5,548 byte、truncate なし）：
+
+| 条件 | filler 0 | filler 20 | 増加 |
+|---|---:|---:|---:|
+| B_realistic | 9,069 | 10,406 | **+1,337** |
+| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+
+**C の劣化は B の約 11 倍速い** — concept 1 個あたり 749 token 対 67 token。継続成功はどちらも 5/5 のままです。
+
+原因は truncate ではありません。信頼です：
 
 ```
-checkedFacts: 8   presentFacts: 8   routedFacts: 6   ready: false
+filler 0:   C read=0  turn=1    index 行からそのまま答える
+filler 20:  C read=3  turn=4    file を開き直す
 ```
 
-2 つの事実（`architecture_pattern`、`export_style`）は `decisions/tech-stack.md` にありますが、この file が **注入 index から切られました** — filler concept が alphabet 順で前に並んだためです。gate の index は Claude Code の 10,000 文字 hook 上限に収めるため hard cap があり、実際の韓国語 concept 行は約 214 byte です：
+無関係な concept 20 個で、model は index 行を信じるのをやめ file で裏を取り始めました — gate 修正が取り除いたはずの round-trip の復活です。index は「その行がある」ことは伝えますが「その行が**完全な**答えだ」とは伝えないので、周囲の noise が増えれば確認する方が合理的になります。**これが本当の天井で、concept 約 21 個で来ます — どの cap が効くよりずっと手前です。**
+
+truncate はその先にある 2 枚目の壁です。gate の index は Claude Code の 10,000 文字 hook 上限に収めるため hard cap があり、実際の韓国語 concept 行は約 214 byte です：
 
 | bundle の concept 数 | gate index 表示数 |
 |---:|---:|
@@ -111,7 +123,9 @@ checkedFacts: 8   presentFacts: 8   routedFacts: 6   ready: false
 | **55** | **43**（truncate） |
 | 100 | 43（truncate） |
 
-**concept が約 43 を超えると index は truncate され**、生き残るものは file 名で決まります — 関連性でも新しさでもありません。category は round-robin で配られどの category も枯れず、truncate された category は自分の `index.md` を指すので降りて行けば残りに届きます。しかしその降下は tool round-trip であり、gate 修正が取り除いたばかりのコストそのものです。つまりその先では OKF の経済性は良く**なりません**。これは設計の正直な現状であり、調整 knob ではありません。
+concept が約 43 を超えると index は truncate され、生き残るものは file 名で決まります — 関連性でも新しさでもありません。filler 50 個の run が **preflight で落ちる**のはこれが理由です（`presentFacts: 8, routedFacts: 6, ready: false`）：`decisions/tech-stack.md` が filler の後ろに並んで切られ、事実を 2 つ道連れにしました。category は round-robin で配られどの category も枯れず、truncate された category は自分の `index.md` を指しますが、降りて行くのは tool round-trip — 同じコストがまた乗ります。
+
+どちらの壁も調整 knob ではありません。1 枚目を直すには、index が**どの行が完全な答えか**を示し、model が file を開かずに信頼できる必要があります。その作業は済んでおらず、済むまでは concept を足すたびに OKF の経済性は悪化します。
 
 harness は決定準拠、誤った仮定、追加質問、tool call、最初の有効応答、API/wall time、`input_tokens`、`output_tokens`、`cache_creation_input_tokens`、`cache_read_input_tokens`、CLI cost も保存します。token category は raw JSON で分離します。`tokenActivity` は cache read を output token と 1:1 で合算しますが cache read の課金は約 50 倍安いため、**擁護できる列は cost です**。また n=5 では harness の `p95` が算術的に常に max（cold run）になるためここでは省きます。CLI が分離して提供しない user-only/gate-only token は推測せず `null` にします。
 

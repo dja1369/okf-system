@@ -81,13 +81,25 @@ Lo que cambió desde la ejecución anterior es el gate. C costaba **22,857** tok
 
 ### El límite de acumulación — medido, no proyectado
 
-«OKF se abarata según se acumula conocimiento» no sobrevive a la medición. El mismo benchmark con 50 conceptos de relleno **falla el preflight**:
+**«OKF se abarata según se acumula conocimiento» es falso.** Se encarece, y más rápido que la alternativa. Mismo benchmark, mismo bundle, con 20 conceptos ajenos añadidos — todo sigue cabiendo en el índice (21 líneas, 5.548 de 9.000 bytes, nada truncado):
 
-```text
-checkedFacts: 8   presentFacts: 8   routedFacts: 6   ready: false
+| Condición | 0 relleno | 20 relleno | Crecimiento |
+|---|---:|---:|---:|
+| B_realistic | 9,069 | 10,406 | **+1,337** |
+| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+
+**C se degrada ~11× más rápido que B** — 749 tokens por concepto añadido frente a 67. Ambos siguen respondiendo 5/5.
+
+La causa no es el truncado. Es la confianza:
+
+```
+0 relleno:   C reads=0  turns=1    responde directo desde la línea del índice
+20 relleno:  C reads=3  turns=4    vuelve a abrir archivos
 ```
 
-Dos hechos viven en `decisions/tech-stack.md`, y ese archivo quedó **fuera del índice inyectado**: los conceptos de relleno lo adelantaron por orden alfabético. El índice tiene un tope duro para no pasar el límite de 10.000 caracteres del hook:
+Veinte conceptos irrelevantes bastaron para que el modelo dejara de creerle a la línea del índice y fuera a verificar contra el archivo — reviviendo justo el ida y vuelta que el fix del gate había eliminado. El índice dice que una línea existe; no dice que esa línea sea la respuesta *completa*, así que cuanto más ruido la rodea, más racional es ir a comprobar. **Este es el techo real, y llega a los ~21 conceptos — mucho antes de que ningún tope apriete.**
+
+El truncado es el segundo muro, más lejos. El índice tiene un tope duro para no pasar el límite de 10.000 caracteres del hook, y una línea de concepto real en coreano ocupa ~214 bytes:
 
 | Conceptos en el bundle | Mostrados en el índice |
 |---:|---:|
@@ -96,7 +108,9 @@ Dos hechos viven en `decisions/tech-stack.md`, y ese archivo quedó **fuera del 
 | **55** | **43** (truncado) |
 | 100 | 43 (truncado) |
 
-**Pasados ~43 conceptos el índice trunca**, y lo que sobrevive lo decide el nombre de archivo, no la relevancia. Cada categoría truncada apunta a su propio `index.md`, así que el resto sigue alcanzable descendiendo — pero descender es un ida y vuelta de tool, justo el coste que el fix acaba de eliminar. Más allá de ese punto la economía de OKF empeora con la escala, no mejora.
+**Pasados ~43 conceptos el índice trunca**, y lo que sobrevive lo decide el nombre de archivo, no la relevancia ni la recencia. Una ejecución con 50 conceptos de relleno **falla el preflight** justo por esto (`presentFacts: 8, routedFacts: 6, ready: false`): `decisions/tech-stack.md` quedó por detrás del relleno y fue cortado, llevándose dos hechos. Las categorías se reparten round-robin para que ninguna se quede sin nada, y cada categoría truncada apunta a su propio `index.md`, así que el resto sigue alcanzable — pero descender es un ida y vuelta de tool, el mismo coste otra vez.
+
+Ninguno de los dos muros es una perilla de configuración. Arreglar el primero exige que el índice señale *qué líneas son respuestas completas* para que el modelo pueda confiar en ellas sin abrir el archivo; ese trabajo no está hecho, y hasta que lo esté, la economía de OKF empeora con cada concepto añadido.
 
 Se guardan además cumplimiento de decisiones, supuestos erróneos, preguntas extra, tool calls, primera respuesta válida, tiempo API/wall, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` y coste del CLI. Las categorías siguen separadas en JSON. `tokenActivity` suma las lecturas de caché 1:1 con los tokens de salida aunque facturen ~50× más barato — **el coste es la columna defendible** —, y con n=5 el `p95` es siempre el máximo aritmético (la ejecución en frío), así que se omite. Valores no separados por el CLI, como tokens solo del usuario o del gate, quedan `null`, sin estimación.
 

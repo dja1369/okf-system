@@ -87,13 +87,25 @@ claude plugin install okf@okf-marketplace
 
 ### 累积极限——实测，不是推演
 
-「知识越积越省」这个说法经不起测量。给 bundle 加 50 个无关 concept 再跑同一基准，**preflight 直接失败**：
+**「知识越积越省」是假的。** 它只会更贵，而且比替代方案贵得更快。同一基准、同一 bundle，加 20 个无关 concept——index 仍然全部装得下（21 行，5,548 / 9,000 字节，什么都没被截断）：
+
+| 条件 | 0 filler | 20 filler | 增长 |
+|---|---:|---:|---:|
+| B_realistic | 9,069 | 10,406 | **+1,337** |
+| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+
+**C 的劣化比 B 快约 11 倍**——每多一个 concept 多花 749 token，B 只多 67。两者仍然都答对 5/5。
+
+原因不是截断，是信任：
 
 ```
-checkedFacts: 8   presentFacts: 8   routedFacts: 6   ready: false
+0 filler:   C reads=0  turns=1    直接照 index 行作答
+20 filler:  C reads=3  turns=4    退回去开文件
 ```
 
-两项事实（`architecture_pattern`、`export_style`）在 `decisions/tech-stack.md` 里，而这个文件**被挤出了注入的 index**——filler concept 按字母序排在它前面。gate 的 index 被硬性截断以守住 Claude Code 的 10,000 字符 hook 上限，而真实韩语 concept 行约 214 字节：
+二十个不相关的 concept，就足以让模型不再相信 index 行、转而回文件核对——正好把 gate 修复刚干掉的那趟往返又救了回来。index 只告诉你有这么一行，不告诉你这一行就是*完整*答案；周围噪声一大，去核对就成了理性选择。**这才是真正的天花板，而它在约 21 个 concept 处就到了——远早于任何上限生效。**
+
+截断是第二堵墙，更靠外。gate 的 index 被硬性截断以守住 Claude Code 的 10,000 字符 hook 上限，而真实韩语 concept 行约 214 字节：
 
 | bundle 内 concept 数 | gate index 显示 |
 |---:|---:|
@@ -102,7 +114,9 @@ checkedFacts: 8   presentFacts: 8   routedFacts: 6   ready: false
 | **55** | **43**（截断） |
 | 100 | 43（截断） |
 
-**超过约 43 个 concept，index 就开始截断**，留下谁由文件名决定——不看相关性，也不看新旧。各类别轮流分配，不会有类别被饿死；被截断的类别会指向自己的 `index.md`，其余内容仍可下钻拿到。但下钻就是一次 tool 往返，正是 gate 修复刚刚干掉的那笔成本。所以过了这个点，OKF 的经济性只会变*差*，不会变好。这是设计的诚实现状，不是一个可调参数。
+超过约 43 个 concept，index 开始截断，留下谁由文件名决定——不看相关性，也不看新旧。50 个 filler 的那次实验**preflight 直接失败**正是因此（`presentFacts: 8, routedFacts: 6, ready: false`）：`decisions/tech-stack.md` 排在 filler 之后被切掉，带走两项事实。各类别轮流分配，不会有类别被饿死；被截断的类别会指向自己的 `index.md`，其余仍可下钻拿到——但下钻就是一次 tool 往返，同样的成本再付一遍。
+
+两堵墙都不是可调参数。要解决第一堵，index 必须能标出*哪些行本身就是完整答案*，让模型不开文件也敢信；这件事还没做，在做完之前，每多一个 concept，OKF 的经济性就更差一分。
 
 harness 还记录决定遵循率、错误假设、额外问题、tool call、首次有效响应、API/wall time、`input_tokens`、`output_tokens`、`cache_creation_input_tokens`、`cache_read_input_tokens` 和 CLI 报告成本；raw JSON 保留独立 token 类别。注意 `tokenActivity` 把 cache read 与 output token 按 1:1 相加，而 cache read 计费便宜约 50 倍——**成本才是站得住的那一列**；且 n=5 时 harness 的 `p95` 在算术上必然等于最大值（也就是冷启动那一次），故此处不列。CLI 无法单独提供的 user-only 或 gate-only token 保持 `null`，不会估算。
 

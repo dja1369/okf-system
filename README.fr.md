@@ -75,7 +75,25 @@ Ce qui a changé depuis le run précédent, c’est le gate lui-même. C coûtai
 
 ### La limite d’accumulation — mesurée, pas projetée
 
-« OKF devient moins cher à mesure que la connaissance s’accumule » ne survit pas à la mesure. Le même benchmark avec 50 concepts de remplissage **échoue au preflight** : 8/8 faits présents mais seulement 6/8 routés par le gate, car `decisions/tech-stack.md` a été coupé de l’index injecté — le filler se trie avant lui alphabétiquement. L’index est plafonné pour rester sous le seuil de 10,000 caractères des hooks.
+**« OKF devient moins cher à mesure que la connaissance s’accumule » est faux.** Il devient plus cher, et plus vite que l’alternative. Même benchmark, même bundle, avec 20 concepts sans rapport ajoutés — tout tient encore dans l’index (21 lignes, 5,548 octets sur 9,000, rien de tronqué) :
+
+| Condition | 0 filler | 20 filler | Croissance |
+|---|---:|---:|---:|
+| B_realistic | 9,069 | 10,406 | **+1,337** |
+| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+
+**C se dégrade ~11× plus vite que B** — 749 tokens par concept ajouté contre 67. Les deux répondent toujours 5/5.
+
+La cause n’est pas la troncature, c’est la confiance :
+
+```text
+0 filler  :  C reads=0  turns=1    répond directement depuis la ligne d’index
+20 filler :  C reads=3  turns=4    retourne ouvrir les fichiers
+```
+
+Vingt concepts sans rapport ont suffi à ce que le modèle cesse de croire la ligne d’index et aille vérifier dans le fichier — ressuscitant exactement l’aller-retour que le correctif du gate avait supprimé. L’index dit qu’une ligne existe ; il ne dit pas qu’elle est la réponse *complète*, donc à mesure que le bruit environnant grandit, vérifier devient le choix rationnel. **C’est le vrai plafond, et il arrive vers ~21 concepts — bien avant que le moindre plafond technique ne morde.**
+
+La troncature est le second mur, plus loin. L’index du gate est plafonné sous le seuil de 10,000 caractères des hooks, et une ligne de concept coréenne réelle pèse ~214 octets :
 
 | Concepts dans le bundle | Affichés dans l’index |
 |---:|---:|
@@ -84,7 +102,9 @@ Ce qui a changé depuis le run précédent, c’est le gate lui-même. C coûtai
 | **55** | **43** (tronqué) |
 | 100 | 43 (tronqué) |
 
-**Au-delà d’environ 43 concepts l’index tronque**, et les survivants sont choisis par nom de fichier — ni pertinence, ni récence. Descendre via l’`index.md` d’une catégorie atteint le reste, mais coûte un aller-retour d’outil : exactement le coût que le correctif vient de supprimer. L’économie d’OKF **empire donc avec l’échelle**, au lieu de s’améliorer. C’est l’état honnête du design, pas un réglage.
+Au-delà d’environ 43 concepts l’index tronque, et les survivants sont choisis par nom de fichier — ni pertinence, ni récence. Un run avec 50 concepts de remplissage **échoue au preflight** pour exactement cette raison (`presentFacts: 8, routedFacts: 6, ready: false`) : `decisions/tech-stack.md` s’est trié derrière le filler et a été coupé, emportant deux faits. Les catégories sont distribuées à tour de rôle pour qu’aucune ne soit privée, et chaque catégorie tronquée pointe vers son propre `index.md` — mais descendre est un aller-retour d’outil, le même coût à nouveau.
+
+Aucun des deux murs n’est un réglage. Corriger le premier exige que l’index signale *quelles lignes sont des réponses complètes*, pour que le modèle s’y fie sans ouvrir le fichier ; ce travail n’est pas fait, et tant qu’il ne l’est pas, l’économie d’OKF empire avec chaque concept ajouté.
 
 Sont aussi mesurés : conformité aux décisions, hypothèses fausses, questions, tool calls, première réponse valide, temps API/wall, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` et coût CLI. Les catégories restent séparées dans le JSON. `tokenActivity` somme les cache reads 1:1 avec les tokens de sortie alors qu’ils sont facturés ~50× moins cher : **le coût est la colonne défendable**. Les tokens user-only/gate-only non exposés séparément restent `null`, sans estimation.
 

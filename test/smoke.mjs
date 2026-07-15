@@ -1028,6 +1028,10 @@ console.log('\n=== plugin contract and docs ===');
       && text.includes('10,395') && text.includes('20,602')
       && text.includes('133,364') && text.includes('$0.176758')
       && text.includes('okf-live-2026-07-15T16-06-28-592Z.md')
+      // 누적 측정(filler 20)도 모든 번역이 함께 실어야 한다. 이 수치가 빠지면 README는 "OKF는
+      // 토큰을 아끼지 않는다"까지만 말하고, "누적될수록 11배 빠르게 나빠진다"는 더 불리한 사실은
+      // 영어에만 남는다 — 그 방향의 드리프트가 정확히 이 테스트가 막아야 하는 것이다.
+      && text.includes('25,384') && text.includes('14,989')
       && !text.includes('okf-live-benchmark: pending');
   }));
 

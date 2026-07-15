@@ -81,7 +81,25 @@ Geändert hat sich das Gate: C kostete zuvor **22,857** Tokens über 7 Turns mit
 
 ### Die Akkumulationsgrenze — gemessen, nicht projiziert
 
-„OKF wird billiger, je mehr Wissen sich ansammelt“ hält der Messung nicht stand. Mit 50 unbeteiligten Filler-Concepts **scheitert der Preflight**: 8/8 Fakten vorhanden, aber nur 6/8 gate-geroutet — die Filler sortierten sich alphabetisch vor `decisions/tech-stack.md`, das damit aus dem injizierten Index fiel. Der Index ist hart gedeckelt (10,000-Zeichen-Grenze für Hooks):
+**„OKF wird billiger, je mehr Wissen sich ansammelt“ ist falsch.** Es wird teurer — und zwar schneller als die Alternative. Gleicher Benchmark, gleiches Bundle, 20 unbeteiligte Concepts ergänzt; alles passt weiterhin in den Index (21 Zeilen, 5,548 von 9,000 Bytes, nichts gekürzt):
+
+| Bedingung | 0 Filler | 20 Filler | Zuwachs |
+|---|---:|---:|---:|
+| B_realistic | 9,069 | 10,406 | **+1,337** |
+| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+
+**C verschlechtert sich ~11× schneller als B** — 749 Tokens je zusätzlichem Concept gegen 67. Beide antworten weiterhin 5/5.
+
+Die Ursache ist nicht Kürzung, sondern Vertrauen:
+
+```
+0 Filler:   C reads=0  turns=1    antwortet direkt aus der Indexzeile
+20 Filler:  C reads=3  turns=4    öffnet wieder Dateien
+```
+
+Zwanzig irrelevante Concepts genügten, damit das Modell der Indexzeile nicht mehr glaubt und gegen die Datei prüft — exakt der Round-Trip, den der Gate-Fix entfernt hatte. Der Index sagt, dass eine Zeile existiert; er sagt nicht, dass sie die *vollständige* Antwort ist — mit wachsendem Rauschen ist Nachprüfen die rationale Wahl. **Das ist die eigentliche Decke, und sie kommt bei ~21 Concepts — lange bevor irgendein Cap greift.**
+
+Kürzung ist die zweite, weiter entfernte Wand. Der Index ist hart gedeckelt (10,000-Zeichen-Grenze für Hooks), echte koreanische Concept-Zeilen laufen bei ~214 Bytes:
 
 | Concepts im Bundle | Im Gate-Index gezeigt |
 |---:|---:|
@@ -90,7 +108,9 @@ Geändert hat sich das Gate: C kostete zuvor **22,857** Tokens über 7 Turns mit
 | **55** | **43** (gekürzt) |
 | 100 | 43 (gekürzt) |
 
-**Ab ca. 43 Concepts kürzt der Index**, und was überlebt, entscheidet der Dateiname — nicht Relevanz, nicht Aktualität. Gekürzte Kategorien verweisen auf ihre `index.md`, der Rest bleibt per Abstieg erreichbar; Abstieg ist aber ein Tool-Round-Trip — exakt die Kosten, die der Fix gerade entfernt hat. Mit Skalierung wird OKFs Ökonomie also *schlechter*, nicht besser.
+**Ab ca. 43 Concepts kürzt der Index**, und was überlebt, entscheidet der Dateiname — nicht Relevanz, nicht Aktualität. Genau daran **scheitert der Preflight** mit 50 Filler-Concepts (`presentFacts: 8, routedFacts: 6`): `decisions/tech-stack.md` sortierte hinter die Filler und fiel heraus. Kategorien werden Round-Robin verteilt, damit keine verhungert, und gekürzte Kategorien verweisen auf ihre eigene `index.md` — Abstieg ist aber ein Tool-Round-Trip, dieselben Kosten noch einmal.
+
+Keine der beiden Wände ist ein Tuning-Knopf. Die erste zu beheben verlangt, dass der Index signalisiert, *welche Zeilen vollständige Antworten sind*, damit das Modell ihnen ohne Dateiöffnen vertrauen kann; diese Arbeit ist nicht getan — bis dahin wird OKFs Ökonomie mit jedem weiteren Concept schlechter.
 
 Gemessen werden Erfolg, Einhaltung, falsche Annahmen, Rückfragen, Tool Calls, erste gültige Antwort, API/Wall-Zeit, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` und CLI-Kosten; Tokenkategorien bleiben im Raw-JSON getrennt. `tokenActivity` addiert Cache-Reads 1:1 mit Output-Tokens, obwohl sie ~50× günstiger abrechnen — **belastbar ist die Kostenspalte**. p95 entfällt: bei n=5 ist er arithmetisch immer das Maximum, also der Cold Run. User-only/Gate-only-Tokens bleiben ohne Schätzung `null`.
 
