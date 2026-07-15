@@ -1,9 +1,11 @@
 ---
 enabled: true
 batch_interval_hours: 1
-batch_max_sessions: 10          # 실행당 처리 raw 상한 (비용 상한)
+batch_max_sessions: 50          # 안전 천장 — 실제 비용 조절은 batch_max_digest_kb
 batch_model: "claude-sonnet-5"  # 비우면 CLI 기본 모델
 batch_effort: "medium"          # low/medium/high/xhigh/max, 비우면 CLI 기본값
+batch_max_digest_kb: 600        # 실행당 digest 총량 예산(KB) — 실제 비용 상한. 초과분은 다음 회차로
+seed_language: "en"             # 최초 부트스트랩 시드 concept 언어 (en, ko)
 capture_exclude_cwd: []         # glob. 해당 경로 세션은 캡처 skip (캡처 자체는 항상 무손실 — 크기/내용 캡 없음)
 batch_digest_cap_kb: 150        # 배치 digest(LLM 입력용 임시 축약본) 파일당 상한 — raw 원본에는 미적용
 remove_candidate_ttl_days: 30

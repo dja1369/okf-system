@@ -575,6 +575,40 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   ok('budget processes more than one small session per run', processed >= 1);
   ok('budget defers the rest back to raw instead of dropping them', processed + deferredLeft === 5, `processed=${processed} left=${deferredLeft}`);
 }
+{
+  // A fresh install must not leave an empty bundle — the gate would point at nothing and the
+  // whole system looks inert (that misread actually happened). Seeded concepts must also be
+  // lint-clean, since a batch would otherwise roll back on its very first run.
+  const home = bootstrapped('seed');
+  const report = runLint(home);
+  ok('seeded bundle is lint-clean', report.errors.length === 0, formatReport(report));
+  ok('seed ships OKF format reference', fs.existsSync(path.join(home, 'references', 'okf-format.md')));
+  ok('seed ships architecture reference', fs.existsSync(path.join(home, 'references', 'okf-system-architecture.md')));
+  ok('seed ships bundle rules', fs.existsSync(path.join(home, 'preferences', 'okf-bundle-rules.md')));
+  ok('seed defaults to English', fs.readFileSync(path.join(home, 'references', 'okf-format.md'), 'utf8').includes('What OKF'));
+  const rootIndex = fs.readFileSync(okfPaths(home).rootIndex, 'utf8');
+  ok('seeded concepts appear in the generated root index', /references.*index\.md\) — 3개/s.test(rootIndex));
+
+  // user edits to a seed file must survive re-bootstrap (a reinstall must not revert them)
+  const seedFile = path.join(home, 'references', 'okf-format.md');
+  fs.writeFileSync(seedFile, '---\ntype: reference\ntitle: 사용자가 고친 것\n---\n내 내용\n');
+  ensureBootstrap(home);
+  ok('re-bootstrap does not overwrite user-edited seed files', fs.readFileSync(seedFile, 'utf8').includes('사용자가 고친 것'));
+}
+{
+  // seed_language must switch the seeded content, and fall back rather than leaving it empty
+  const home = sandbox('seed-ko');
+  fs.mkdirSync(path.join(home, '.okf'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.okf', 'config.md'), '---\nseed_language: "ko"\n---\n');
+  ensureBootstrap(home);
+  ok('seed_language: ko seeds the Korean concepts', fs.readFileSync(path.join(home, 'references', 'okf-format.md'), 'utf8').includes('란 무엇인가'));
+
+  const home2 = sandbox('seed-bogus');
+  fs.mkdirSync(path.join(home2, '.okf'), { recursive: true });
+  fs.writeFileSync(path.join(home2, '.okf', 'config.md'), '---\nseed_language: "xx-NOPE"\n---\n');
+  ensureBootstrap(home2);
+  ok('unknown seed_language falls back to English rather than seeding nothing', fs.readFileSync(path.join(home2, 'references', 'okf-format.md'), 'utf8').includes('What OKF'));
+}
 
 // ---------------------------------------------------------------------------
 console.log(`\n${pass} passed, ${fail} failed`);
