@@ -650,6 +650,40 @@ console.log('\n=== analyze.mjs ===');
   ok('analyze: python dotted module resolves', edge('py/pkg/a.py', 'py/pkg/b.py'));
   ok('analyze: graph reports it was not truncated', g.truncated === false);
 
+  // Found by running against real OSS repos, not fixtures: resolving any specifier as a path
+  // made Go's `import "errors"` (stdlib) link to gin's own errors.go — inventing a dependency
+  // that does not exist. A language's import is only a file when its syntax says so.
+  const phantom = sandbox('analyze-phantom');
+  const pw = (rel, body) => {
+    const p = path.join(phantom, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+  };
+  pw('go.mod', 'module example.com/app\n\ngo 1.21\n');
+  pw('errors.go', 'package app\n\ntype Err struct{}\n');           // same name as a stdlib package
+  pw('path.go', 'package app\n\nfunc P() {}\n');
+  pw('main.go', 'package main\n\nimport (\n\t"errors"\n\t"path"\n\t"example.com/app/internal/util"\n)\n\nfunc main() {}\n');
+  pw('internal/util/util.go', 'package util\n\nfunc U() {}\n');
+  pw('os.py', 'X = 1\n');                                          // same name as a stdlib module
+  pw('app.py', 'import os\nimport json\n');
+  const pg = analyzeProject(phantom);
+  const pdeps = pg.edges.filter((e) => e.type === 'imports');
+  ok('analyze: Go stdlib import does not link to a same-named local file', !pdeps.some((e) => e.target === 'file:errors.go' || e.target === 'file:path.go'));
+  ok('analyze: Python stdlib import does not link to a same-named local file', !pdeps.some((e) => e.target === 'file:os.py'));
+  // ...but a real module-internal Go package must still resolve, as a package node
+  ok('analyze: Go module-internal import resolves to a package node', pdeps.some((e) => e.source === 'file:main.go' && e.target === 'module:internal/util'));
+  ok('analyze: a Go package node contains its files', pg.edges.some((e) => e.type === 'contains' && e.source === 'module:internal/util' && e.target === 'file:internal/util/util.go'));
+
+  // a bare python import naming a real local package directory must still resolve —
+  // blocking it wholesale cost flask's own `from flask import x` (31% -> 21% connected)
+  const pkg = sandbox('analyze-pypkg');
+  fs.mkdirSync(path.join(pkg, 'src', 'mylib'), { recursive: true });
+  fs.writeFileSync(path.join(pkg, 'src', 'mylib', '__init__.py'), 'VERSION = 1\n');
+  fs.mkdirSync(path.join(pkg, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(pkg, 'tests', 'test_it.py'), 'import mylib\n');
+  const pkgG = analyzeProject(pkg);
+  ok('analyze: bare python import of a real local package resolves', pkgG.edges.some((e) => e.type === 'imports' && e.target === 'file:src/mylib/__init__.py'));
+
   // a skipped file must not claim "0 lines, 0 imports" — that's fabricated, not measured
   const big = sandbox('analyze-big');
   fs.writeFileSync(path.join(big, 'huge.js'), "import x from './y.js';\n" + '// pad\n'.repeat(90000));

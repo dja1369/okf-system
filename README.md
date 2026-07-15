@@ -125,13 +125,19 @@ LLM-summarized graph is used. Otherwise this plugin's own analyzer builds one �
 Node, no native modules — extracting files, functions, and classes across JS/TS,
 Python, Go, Rust, Java/Kotlin, Ruby, PHP, C/C++, C#, and Swift.
 
-Import *edges* are drawn wherever a specifier names a file: JS/TS, Python (including
-dotted module paths), C/C++ quoted includes, `require_relative`, and Rust `mod`. Where
-a language imports a *package* rather than a file — Go's `myapp/pkg/db`, Java's
-`com.foo.Bar` — the reference is recorded as an external dependency instead of being
-guessed at, since a package is a directory and picking a file inside it would just
-invent a fact. It's regex-based, not a real parser: that buys zero dependencies and
-costs some accuracy on unusual formatting.
+Import *edges* follow each language's own resolution rules rather than one guess applied
+everywhere: `./`-relative specifiers in JS/TS, dotted module paths in Python, quoted
+includes in C/C++, `require_relative`, and Rust's `mod`/`use crate::`. Go imports
+packages, not files, so `go.mod` is read and module-internal imports resolve to package
+nodes. Anything a language treats as a *name* — stdlib, third-party, Java's
+`com.foo.Bar` — is recorded as an external dependency and never matched against a
+same-named local file, because `import "errors"` in Go has nothing to do with your
+`errors.go`.
+
+It's regex-based, not a real parser: that buys zero dependencies and costs accuracy on
+unusual formatting. Measured on real repos — express 67% of files connected, ripgrep
+39%, flask 31%, gin 16% — so treat it as a map of the main structure, not a complete
+call graph.
 
 The output is a self-contained HTML file: no CDN, no network requests, no backend. It
 opens offline, because opening your own knowledge base should not phone anywhere.
