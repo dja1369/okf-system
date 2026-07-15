@@ -5,11 +5,11 @@ memory it builds is a folder of markdown you own, not a database you're locked i
 
 ![MIT license](https://img.shields.io/badge/license-MIT-blue) ![OKF v0.1](https://img.shields.io/badge/OKF-v0.1%20Draft-4ecdc4) ![Node only](https://img.shields.io/badge/runtime-Node%20only-5c6bc0) ![no npm install](https://img.shields.io/badge/dependencies-vendored-66bb6a)
 
-**[한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português](README.pt-BR.md)**
+**English** · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português](README.pt-BR.md)
 
 ![OKF knowledge graph — concepts linked to the code they describe](docs/okf-graph.png)
 
-<sub>`/okf:okf-viz` — your knowledge (outlined nodes) and your codebase in one graph.
+<sub>`/okf:okf-visualize` — your knowledge (outlined nodes) and your codebase in one graph.
 The dashed yellow edges are the point: each concept linked to the source files it's
 actually about.</sub>
 
@@ -60,7 +60,7 @@ translation step. This plugin never asks you to trust it with the only copy.
    mandatory gate, so Claude actually reads relevant past knowledge before working
    on something related, instead of starting from zero every time.
 4. **Visualizes** the bundle and your codebase as one graph, linking each concept to
-   the files it's actually about (`/okf:okf-viz`).
+   the files it's actually about (`/okf:okf-visualize`).
 
 Everything lives in a local git repository under `~/.claude/okf` (or
 `$CLAUDE_CONFIG_DIR/okf`). Nothing is pushed anywhere. The only network calls are
@@ -105,7 +105,7 @@ automatically. Five commands are available for manual inspection/control —
 | `/okf:okf-batch` | Forces an immediate batch run (ignores the interval gate, still respects the lock) |
 | `/okf:okf-config` | Shows and lets you edit the current configuration |
 | `/okf:okf-index` | Prints a readable overview of the bundle — every category and concept title, plus recent `log.md` changes |
-| `/okf:okf-viz` | Renders the bundle + your codebase as one interactive graph (self-contained HTML) |
+| `/okf:okf-visualize` | Renders the bundle + your codebase as one interactive graph (self-contained HTML) |
 
 A fresh install isn't empty: the bundle ships seeded with concepts describing OKF
 itself, this plugin's architecture, and the bundle's writing rules — so the gate has
@@ -113,7 +113,7 @@ something real to point at from the first session, and the bundle documents itse
 
 ## Visualization
 
-`/okf:okf-viz` renders your knowledge and your code as a single graph. The interesting
+`/okf:okf-visualize` renders your knowledge and your code as a single graph. The interesting
 part isn't either half — it's the dashed links between them, connecting each concept
 to the source files it actually talks about.
 
