@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 440" width="900" height="440" role="img" aria-label="OKF plugin architecture: each session's transcript is captured losslessly into raw, a background batch distills it into an OKF bundle of markdown, and the bundle's index is injected back into the next session as a gate.">
+  <style>
+    .bg { fill: #0f1419; }
+    .lane { fill: #141b23; stroke: #26303d; }
+    .box { fill: #1c2530; stroke: #2d3846; rx: 6; }
+    .t { font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; fill: #e6e6e6; }
+    .lbl { font: 600 12px -apple-system, system-ui, sans-serif; fill: #8892b0; letter-spacing: .8px; }
+    .sm { font: 11px -apple-system, system-ui, sans-serif; fill: #8892b0; }
+    .flow { stroke: #4f9dff; stroke-width: 1.6; fill: none; marker-end: url(#a); }
+    .gate { stroke: #ffd93d; stroke-width: 1.6; fill: none; marker-end: url(#ay); stroke-dasharray: 5 3; }
+    .gt { font: 600 11px -apple-system, system-ui, sans-serif; fill: #ffd93d; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4f9dff"/>
+    </marker>
+    <marker id="ay" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ffd93d"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="900" height="440"/>
+
+  <!-- gate return path gets its own channel across the top so it never crosses a box -->
+  <path class="gate" d="M760,40 L760,26 L150,26 L150,104"/>
+  <text class="gt" x="330" y="20">the bundle index is injected back into the next session</text>
+
+  <rect class="lane" x="16" y="84" width="266" height="330" rx="8"/>
+  <rect class="lane" x="310" y="84" width="300" height="330" rx="8"/>
+  <rect class="lane" x="638" y="84" width="246" height="330" rx="8"/>
+
+  <text class="lbl" x="30" y="70">YOUR SESSION</text>
+  <text class="lbl" x="324" y="70">BACKGROUND BATCH</text>
+  <text class="lbl" x="652" y="70">YOUR BUNDLE (local git)</text>
+
+  <!-- session lane -->
+  <rect class="box" x="36" y="112" width="226" height="48"/>
+  <text class="t" x="52" y="132">SessionStart</text>
+  <text class="sm" x="52" y="149">gate: index injected into context</text>
+
+  <rect class="box" x="36" y="190" width="226" height="48"/>
+  <text class="t" x="52" y="210">you work</text>
+  <text class="sm" x="52" y="227">model reads relevant concepts first</text>
+
+  <rect class="box" x="36" y="268" width="226" height="60"/>
+  <text class="t" x="52" y="288">SessionEnd</text>
+  <text class="sm" x="52" y="305">full transcript copied to raw/</text>
+  <text class="sm" x="52" y="320">no parse, no filter, no cap</text>
+
+  <!-- batch lane -->
+  <rect class="box" x="330" y="112" width="260" height="46"/>
+  <text class="t" x="346" y="132">digest (deterministic)</text>
+  <text class="sm" x="346" y="148">strips harness noise; raw untouched</text>
+
+  <rect class="box" x="330" y="174" width="260" height="46"/>
+  <text class="t" x="346" y="194">claude -p — the only LLM step</text>
+  <text class="sm" x="346" y="210">judges what is worth keeping</text>
+
+  <rect class="box" x="330" y="236" width="260" height="46"/>
+  <text class="t" x="346" y="256">lint (fail-closed)</text>
+  <text class="sm" x="346" y="272">malformed output is rolled back</text>
+
+  <rect class="box" x="330" y="298" width="260" height="46"/>
+  <text class="t" x="346" y="318">git commit — per session</text>
+  <text class="sm" x="346" y="334">one failure never loses the rest</text>
+
+  <text class="sm" x="330" y="372">runs when: interval elapsed + no other batch</text>
+  <text class="sm" x="330" y="390">byte budget caps cost; excess rolls over</text>
+
+  <!-- bundle lane -->
+  <rect class="box" x="658" y="112" width="206" height="118"/>
+  <text class="t" x="674" y="134">~/.claude/okf</text>
+  <text class="sm" x="674" y="154">decisions/  preferences/</text>
+  <text class="sm" x="674" y="171">patterns/   references/</text>
+  <text class="sm" x="674" y="188">projects/   troubleshooting/</text>
+  <text class="sm" x="674" y="211">index.md · log.md · SCHEMA.md</text>
+
+  <rect class="box" x="658" y="246" width="206" height="66"/>
+  <text class="t" x="674" y="268">just markdown</text>
+  <text class="sm" x="674" y="286">opens in any editor, diffs in git,</text>
+  <text class="sm" x="674" y="302">never pushed anywhere</text>
+
+  <text class="sm" x="658" y="344">raw/ is gitignored —</text>
+  <text class="sm" x="658" y="360">only distilled knowledge is committed</text>
+
+  <!-- flows -->
+  <path class="flow" d="M149,160 L149,190"/>
+  <path class="flow" d="M149,238 L149,268"/>
+  <path class="flow" d="M262,298 C296,298 296,135 330,135"/>
+  <path class="flow" d="M460,158 L460,174"/>
+  <path class="flow" d="M460,220 L460,236"/>
+  <path class="flow" d="M460,282 L460,298"/>
+  <path class="flow" d="M590,321 C624,321 624,190 658,190"/>
+</svg>

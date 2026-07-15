@@ -1,20 +1,66 @@
 # OKF for Claude Code
 
-A Claude Code plugin that gives every session a persistent, cross-project knowledge
-base — automatically. No manual note-taking, no separate tool to run.
+**Your agent forgets everything you told it yesterday. This fixes that — and the
+memory it builds is a folder of markdown you own, not a database you're locked into.**
 
-**[한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)**
+![MIT license](https://img.shields.io/badge/license-MIT-blue) ![OKF v0.1](https://img.shields.io/badge/OKF-v0.1%20Draft-4ecdc4) ![Node only](https://img.shields.io/badge/runtime-Node%20only-5c6bc0) ![no npm install](https://img.shields.io/badge/dependencies-vendored-66bb6a)
+
+**[한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português](README.pt-BR.md)**
+
+![OKF knowledge graph — concepts linked to the code they describe](docs/okf-graph.png)
+
+<sub>`/okf:okf-viz` — your knowledge (outlined nodes) and your codebase in one graph.
+The dashed yellow edges are the point: each concept linked to the source files it's
+actually about.</sub>
+
+Every session starts from zero. You re-explain the same architecture decision, the
+same deploy policy, the same "we tried that and it broke" — and the moment the
+session ends, it's gone again. Meanwhile the knowledge that *would* have answered
+the question is scattered across wikis, code comments, and, as Google's OKF
+announcement puts it, "the heads of a few senior engineers."
+
+This plugin closes that loop automatically: it captures what you actually discussed,
+distills the reusable parts into a structured knowledge bundle, and puts that
+knowledge back in front of the model at the start of every session.
+
+## The format
+
+Knowledge is stored in **[OKF (Open Knowledge Format)](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)** —
+an open specification Google Cloud [published in June 2026](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr)
+(v0.1 Draft, Apache-2.0). It's deliberately unremarkable, and that's the point:
+
+> "The format is intentionally minimal: a directory of markdown files with YAML
+> frontmatter. There is no schema registry, no central authority, and no required
+> tooling. **If you can `cat` a file, you can read OKF; if you can `git clone` a
+> repo, you can ship it.**"
+
+OKF formalizes the "LLM wiki" pattern that [Andrej Karpathy sketched](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+ten weeks earlier — Google's announcement says so explicitly. Since publication a
+[small ecosystem](https://github.com/search?q=%22open+knowledge+format%22&type=repositories)
+of generators, linters, viewers, and MCP servers has formed around it, and the format
+turns up outside Google too (AWS has a [sample](https://github.com/aws-samples/sample-okf-llm-wiki)
+serving Glue databases as OKF bundles). It's early — most of that ecosystem is weeks
+old — but the format is doing what it claims: being readable without its author's tools.
+
+**Why a format and not a memory product.** Tools like mem0, Letta, Zep, and Cognee
+are memory *runtimes* — you attach a library or host a service, and your memory lives
+in its vector or graph store. They're a different layer, not a competitor; some of
+them could store OKF. The practical difference is **exit cost**: knowledge embedded in
+a graph DB is legible only to that system, while an OKF bundle opens in your editor,
+renders on GitHub, diffs in a pull request, and is read by any other agent without a
+translation step. This plugin never asks you to trust it with the only copy.
 
 ## What it does
 
 1. **Captures** every session's full conversation, losslessly, when it ends.
 2. **Compresses** captured sessions in the background (an opportunistic batch job,
    not a cron/scheduled task) using `claude -p` to extract reusable knowledge —
-   decisions, project facts, preferences, patterns, references, troubleshooting —
-   into a structured [OKF (Open Knowledge Format)](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr) bundle.
+   decisions, project facts, preferences, patterns, references, troubleshooting.
 3. **Injects** an index of that bundle into every new session's context as a
    mandatory gate, so Claude actually reads relevant past knowledge before working
    on something related, instead of starting from zero every time.
+4. **Visualizes** the bundle and your codebase as one graph, linking each concept to
+   the files it's actually about (`/okf:okf-viz`).
 
 Everything lives in a local git repository under `~/.claude/okf` (or
 `$CLAUDE_CONFIG_DIR/okf`). Nothing is pushed anywhere. The only network calls are
@@ -50,7 +96,7 @@ with `rm -rf ~/.claude/okf`.
 ## Usage
 
 Normal usage requires nothing from you. Capture and batch compression happen
-automatically. Three commands are available for manual inspection/control —
+automatically. Five commands are available for manual inspection/control —
 **note the `okf:` prefix**, required because these are plugin-scoped commands:
 
 | Command | What it does |
@@ -59,19 +105,30 @@ automatically. Three commands are available for manual inspection/control —
 | `/okf:okf-batch` | Forces an immediate batch run (ignores the interval gate, still respects the lock) |
 | `/okf:okf-config` | Shows and lets you edit the current configuration |
 | `/okf:okf-index` | Prints a readable overview of the bundle — every category and concept title, plus recent `log.md` changes |
+| `/okf:okf-viz` | Renders the bundle + your codebase as one interactive graph (self-contained HTML) |
+
+A fresh install isn't empty: the bundle ships seeded with concepts describing OKF
+itself, this plugin's architecture, and the bundle's writing rules — so the gate has
+something real to point at from the first session, and the bundle documents itself.
+
+## Visualization
+
+`/okf:okf-viz` renders your knowledge and your code as a single graph. The interesting
+part isn't either half — it's the dashed links between them, connecting each concept
+to the source files it actually talks about.
+
+If [Understand-Anything](https://github.com/Egonex-AI/Understand-Anything) has already
+analyzed the repo (`.understand-anything/` or `.ua/knowledge-graph.json`), that richer
+LLM-summarized graph is used. Otherwise this plugin's own analyzer builds one — pure
+Node, no native modules, extracting files, functions, classes, and the import graph
+across JS/TS, Python, Go, Rust, Java/Kotlin, Ruby, PHP, C/C++, C#, and Swift.
+
+The output is a self-contained HTML file: no CDN, no network requests, no backend. It
+opens offline, because opening your own knowledge base should not phone anywhere.
 
 ## How it works
 
-```
-[your session]                    [background batch (opportunistic, not scheduled)]
-SessionStart → gate injection      Runs when: interval elapsed + no other batch running
-      │                            Triggered by: SessionEnd (primary) or SessionStart (catch-up)
-SessionEnd → lossless capture           │
-   to raw/                         For each pending session: extract reusable
-      │                            knowledge via `claude -p`, validate structure,
-      └─▶ gate check ──▶ spawn     commit to git. One failed session never loses
-          batch if due             already-committed ones (each is its own commit).
-```
+![Architecture: sessions capture into raw, a background batch distills to an OKF bundle, the bundle index is injected back into the next session](docs/architecture.svg)
 
 - **Capture** is a pure file copy — no parsing, no filtering, no size cap. The full
   transcript goes to `raw/` on every `SessionEnd`. This is by design: a knowledge
@@ -100,7 +157,9 @@ Edit `~/.claude/okf/.okf/config.md` directly (frontmatter), or use
 |---|---|---|
 | `enabled` | `true` | Master on/off switch (capture, gate, and batch all follow it) |
 | `batch_interval_hours` | `1` | Minimum time between batch runs |
-| `batch_max_sessions` | `10` | Sessions processed per batch run (cost cap) |
+| `batch_max_digest_kb` | `600` | Per-run budget on total digest bytes — the real cost cap. Sessions over budget roll to the next run |
+| `batch_max_sessions` | `50` | Safety ceiling only; `batch_max_digest_kb` is the actual dial |
+| `seed_language` | `en` | Language of the concepts seeded at first bootstrap (`en`, `ko`; unknown values fall back to `en`) |
 | `batch_model` | `claude-sonnet-5` | Model used for batch ingestion; empty = CLI default |
 | `batch_effort` | `medium` | Reasoning effort for batch ingestion (`low`/`medium`/`high`/`xhigh`/`max`); empty = CLI default |
 | `capture_exclude_cwd` | `[]` | Glob patterns for directories to skip capturing (opt-out only — capture itself is never partial) |
