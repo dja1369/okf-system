@@ -68,25 +68,73 @@ Claude Code permits one `statusLine`. OKF does not install or overwrite it. Poin
 
 ## OKF effectiveness benchmark
 
-<!-- okf-live-benchmark: valid-2026-07-15T15-03-01Z -->
+<!-- okf-live-benchmark: valid-2026-07-15T16-06-28Z -->
 
-Live run on 2026-07-15: Claude Code `2.1.210`, requested `sonnet`/medium (resolved Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, commit `c00d3fc`, five crossed-order runs per condition. Before follow-up calls, C had all 8/8 target facts in concepts and all 8/8 were gate-routed; D had 0/8.
+**OKF does not save tokens. It recovers what a fresh session has already lost.** The numbers below are published because they say that plainly.
 
-The opt-in harness compares at least five repeated runs of:
+### What is measured
 
-| Condition | Continuity | Token activity p50 / p95 | Wall p50 / p95 | Cost p50 |
-|---|---:|---:|---:|---:|
-| A — no memory | 0/5 | 27,320 / 27,574 | 16.40 / 18.17 s | $0.024037 |
-| B — manual restatement | 5/5 | 9,070 / 9,093 | 6.07 / 7.42 s | $0.008410 |
-| C — OKF enabled | 5/5 | 22,857 / 22,883 | 11.33 / 12.80 s | $0.033189 |
-| D — irrelevant OKF | 0/5 | 21,507 / 22,261 | 16.92 / 18.88 s | $0.030332 |
+A follow-up session is asked for eight facts a previous session established, plus one control question that memory cannot help with:
 
-C recovered every target fact, but it did **not** reduce tokens, response time, tools, or cost versus equally correct B. Median C used 13,787 more token activity and 5.26 s more wall time. Batch ingest added 111,381 token activity and $0.164360; because B−C saving was negative, token and cost break-even are not measurable.
+| Type | Expected |
+|---|---|
+| Architecture | SQLite / repository pattern |
+| Coding rule | named export only |
+| Past incident fix | `busy_timeout=5000` (SQLITE_BUSY) |
+| Response preference | Korean / concise |
+| File & deploy policy | `src/config.mjs` / `npm run deploy:canary` |
+| Unrelated arithmetic (control) | 7 × 8 = 56 |
 
-It measures success, decision compliance, wrong assumptions, extra questions, tool calls, first valid response, API/wall time, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and CLI-reported cost. Token categories remain separate in raw JSON. Batch ingest and repair usage are included in break-even calculations. Values the Claude CLI does not expose separately—such as user-only or gate-only tokens—remain `null`; they are not estimated.
+Five conditions, five crossed-order runs each. C's bundle is built by a **real** SessionEnd capture → isolated batch ingest → SessionStart gate — no hand-seeded concepts. A preflight refuses to spend money unless C actually contains and gate-routes every target fact and D contains none.
+
+- **A — no memory.** The honest status quo: a fresh session, nothing restated.
+- **B_oracle — the answer key.** Pastes exactly the 8 expected values. Producing that string requires already knowing every fact OKF exists to recover, so **no user can occupy this condition**; it is an upper bound, not a baseline. Its human labour is priced at zero.
+- **B_realistic — what people actually do.** Restates everything that might be relevant, because you cannot know in advance which fact the next session needs. This is the CLAUDE.md habit.
+- **C — OKF enabled.**
+- **D — irrelevant OKF.** A gate with no relevant content, to separate "the gate helped" from "a gate costs something".
+
+### Results
+
+Live run 2026-07-15: Claude Code `2.1.210`, `sonnet`/medium (resolved Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, 5 runs per condition. C preflight: 8/8 facts present, 8/8 gate-routed. D: 0/8.
+
+| Condition | Continuity | Token activity p50 | Wall p50 | Cost p50 | Reads | Turns |
+|---|---:|---:|---:|---:|---:|---:|
+| A — no memory | **0/5** | 27,246 | 13.82 s | $0.022218 | 2 | 4 |
+| B_oracle (answer key) | 5/5 | 9,069 | 4.86 s | $0.008410 | 0 | 1 |
+| B_realistic | 5/5 | 9,069 | 5.96 s | $0.008410 | 0 | 1 |
+| **C — OKF enabled** | **5/5** | **10,395** | 6.46 s | $0.011329 | **0** | **1** |
+| D — irrelevant OKF | 0/5 | 20,602 | 14.50 s | $0.025879 | 1 | 2 |
+
+**Read the A row first.** Without memory the session burns 27,246 tokens, reads two files hunting for an answer, takes four turns — and still gets **0/8**. That is the condition OKF actually replaces, and C beats it: 2.6× fewer tokens, 5/8→8/8, in a single turn with no file reads.
+
+**C does not beat B, and it never will.** B pastes the answers straight into the prompt; nothing retrieves faster than already having it. At this bundle size B_realistic equals B_oracle (there is no unrelated knowledge yet to restate), so both sit at 9,069. C costs 1,326 more tokens and $0.0029 more per session. **There is no token or cost break-even** — `perSessionTokenSaving` is negative and the harness reports `null` rather than inventing one.
+
+What changed since the previous run is the gate itself. C used to cost **22,857** tokens over 7 turns with 5 file reads; it now costs **10,395** in 1 turn with 0 reads, at identical 5/5 recall. The old gate ordered an unconditional `Read`, and 91% of its overhead was that round-trip re-fetching facts the index had already delivered. See [the fix](https://github.com/dja1369/okf-system/pull/7).
+
+### The accumulation limit — measured, not projected
+
+The claim "OKF gets cheaper as knowledge accumulates" does not survive measurement. Running the same benchmark with 50 unrelated concepts added to the bundle **fails preflight**:
+
+```
+checkedFacts: 8   presentFacts: 8   routedFacts: 6   ready: false
+```
+
+Two facts (`architecture_pattern`, `export_style`) live in `decisions/tech-stack.md`, and that file was **cut from the injected index** — the filler concepts sorted ahead of it alphabetically. The gate's index is hard-capped to stay under Claude Code's 10,000-character hook ceiling, and real Korean concept lines run ~214 bytes:
+
+| Concepts in bundle | Shown in gate index |
+|---:|---:|
+| 20 | 20 |
+| 40 | 40 |
+| **55** | **43** (truncated) |
+| 100 | 43 (truncated) |
+
+**Past ~43 concepts the index truncates**, and what survives is decided by filename — not relevance, not recency. Categories are dealt round-robin so no category starves, and each truncated category points at its own `index.md` so the rest stays reachable by descending. But descending is a tool round-trip, which is the exact ~12,500-token cost the gate fix just removed. So beyond that point OKF's economics get *worse*, not better. This is the honest state of the design, not a tuning knob.
+
+The harness also records decision compliance, wrong assumptions, extra questions, tool calls, first valid response, API/wall time, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and CLI-reported cost. Token categories remain separate in the raw JSON. Note that `tokenActivity` sums cache reads 1:1 with output tokens even though cache reads bill ~50× cheaper — **cost is the defensible column**, and at n=5 the harness's `p95` is arithmetically always the max (the cold run), so it is omitted here. Values the CLI does not expose separately — user-only or gate-only tokens — remain `null` and are never estimated.
 
 ```sh
-OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs
+OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                      # as published above
+OKF_RUN_LIVE_BENCH=1 OKF_BENCH_FILLER=50 node test/bench-okf.mjs  # accumulation axis
 ```
 
 This is paid, authenticated, and intentionally excluded from smoke tests and CI. Token categories remain separate; user-only/gate-only/transcript tokens unavailable from the CLI remain `null`. See the [valid report](docs/benchmarks/okf-live-2026-07-15T15-03-01-343Z.md), [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T15-03-01-343Z.json), and [usage guide](docs/USAGE.md).
@@ -109,9 +157,11 @@ The live harness records batch ingest and repair usage through an explicit priva
 
 ```text
 initial OKF cost = batch ingest + repair + measured irrelevant-gate overhead
-per-session net saving = manual-restatement median - OKF median
+per-session net saving = B_realistic median - OKF median
 break-even sessions = ceil(initial OKF cost / positive per-session net saving)
 ```
+
+The comparison is against **B_realistic**, not B_oracle. B_oracle's restatement string contains the answers themselves, so it prices at zero exactly the work OKF exists to do — a break-even against it would be meaningless. On the measured run the saving is negative either way (−1,326 tokens, −$0.0029), so both break-even fields report `null`. That is the result, not a gap in the harness.
 
 Measured B-C savings were negative, so token and cost break-even do not exist in this run.
 
