@@ -80,13 +80,17 @@ Session 1 の決定 -> SessionEnd の無損失コピー -> batch で OKF Markdow
 
 2026-07-15、Claude Code `2.1.210`、`sonnet`/medium（Sonnet 5 + Haiku 4.5）、macOS arm64、Node `v26.4.0`、各条件 5 回。C preflight: 事実 8/8 存在・8/8 gate routing。D: 0/8。
 
-| 条件 | 継続成功 | token activity p50 | wall p50 | cost p50 | read | turn |
-|---|---:|---:|---:|---:|---:|---:|
-| A — no memory | **0/5** | 27,246 | 13.82 s | $0.022218 | 2 | 4 |
-| B_oracle（答案） | 5/5 | 9,069 | 4.86 s | $0.008410 | 0 | 1 |
-| B_realistic | 5/5 | 9,069 | 5.96 s | $0.008410 | 0 | 1 |
-| **C — OKF enabled** | **5/5** | **10,395** | 6.46 s | $0.011329 | **0** | **1** |
-| D — irrelevant OKF | 0/5 | 20,602 | 14.50 s | $0.025879 | 1 | 2 |
+| 条件 | 継続成功 | 準拠率 p50 | token activity p50/p95 | wall p50/p95 | cost p50 |
+|---|---:|---:|---:|---:|---:|
+| A — no memory | **0/5** | 12% | 27,246/27,518 | 13.82/18.17 s | $0.022218 |
+| B_oracle（答案） | 5/5 | 100% | 9,069/9,069 | 4.86/6.46 s | $0.008410 |
+| B_realistic | 5/5 | 100% | 9,069/9,069 | 5.96/6.27 s | $0.008410 |
+| **C — OKF enabled** | **5/5** | 100% | **10,395**/10,459 | 6.46/7.15 s | $0.011329 |
+| D — irrelevant OKF | 0/5 | 0% | 20,602/21,662 | 14.50/21.15 s | $0.025879 |
+
+行の裏にある tool call が数値を説明します。A は file 2 つ・4 turn を使ってなお失敗。B は答えが既に prompt にあるので read 0・1 turn。**C も read 0・1 turn** — gate 索引だけで足りました。D は gate が一度も持たなかったものを探して file 1 つ・2 turn。
+
+`p95` は注意して読んでください。n=5 では `ceil(0.95×5)−1` が最後の index なので、p95 は **max そのもの** — cold cache の 1 run であり、tail 統計ではありません。要求された形式が求めるから載せているだけで、tail 統計だからではありません。
 
 **まず A 行を読んでください。** memory がないと session は 27,246 token を燃やし、答えを探して file を 2 つ読み、4 turn かけて、それでも **0/8** です。OKF が実際に置き換えるのはこの条件で、C はこれを上回ります — token は 2.6 分の 1、8/8、file read なしの 1 turn。
 
@@ -98,12 +102,15 @@ Session 1 の決定 -> SessionEnd の無損失コピー -> batch で OKF Markdow
 
 **「知識が貯まるほど OKF は安くなる」は偽です。** 逆に高くつき、しかも代替手段より速く悪化します。同じ benchmark・同じ bundle に無関係な concept を 20 個足した実測 — index には全て収まっています（21 行・9,000 byte 中 5,548 byte、truncate なし）：
 
-| 条件 | filler 0 | filler 20 | 増加 |
-|---|---:|---:|---:|
-| B_realistic | 9,069 | 10,406 | **+1,337** |
-| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+| 条件 | 継続成功 | 準拠率 p50 | token activity p50/p95 | wall p50/p95 | cost p50 |
+|---|---:|---:|---:|---:|---:|
+| A — no memory | 0/5 | 0% | 27,316/27,717 | 13.79/18.05 s | $0.022838 |
+| B_oracle（答案） | 5/5 | 100% | 9,070/9,085 | 5.33/6.78 s | $0.008410 |
+| B_realistic | 5/5 | 100% | 10,406/10,406 | 5.72/9.62 s | $0.010134 |
+| **C — OKF enabled** | **5/5** | 100% | **25,384**/25,773 | 11.75/13.15 s | $0.030721 |
+| D — irrelevant OKF | 0/5 | 0% | 22,265/22,334 | 14.91/19.59 s | $0.037354 |
 
-**C の劣化は B の約 11 倍速い** — concept 1 個あたり 749 token 対 67 token。継続成功はどちらも 5/5 のままです。
+filler 0 の run と比べると、B_realistic は **+1,337**（9,069 → 10,406）、C は **+14,989**（10,395 → 25,384） — **C の劣化は約 11 倍速い**、concept 1 個あたり 749 token 対 67 token。どちらも 5/5 で答えるので、これは accuracy ではなく純粋な cost の後退です。
 
 原因は truncate ではありません。信頼です：
 
@@ -127,7 +134,9 @@ concept が約 43 を超えると index は truncate され、生き残るもの
 
 どちらの壁も調整 knob ではありません。1 枚目を直すには、index が**どの行が完全な答えか**を示し、model が file を開かずに信頼できる必要があります。その作業は済んでおらず、済むまでは concept を足すたびに OKF の経済性は悪化します。
 
-harness は決定準拠、誤った仮定、追加質問、tool call、最初の有効応答、API/wall time、`input_tokens`、`output_tokens`、`cache_creation_input_tokens`、`cache_read_input_tokens`、CLI cost も保存します。token category は raw JSON で分離します。`tokenActivity` は cache read を output token と 1:1 で合算しますが cache read の課金は約 50 倍安いため、**擁護できる列は cost です**。また n=5 では harness の `p95` が算術的に常に max（cold run）になるためここでは省きます。CLI が分離して提供しない user-only/gate-only token は推測せず `null` にします。
+蓄積 run: [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-30-11-404Z.json)。filler 50 個の preflight 失敗は [preflight audit](docs/benchmarks/raw/okf-live-preflight-failed-2026-07-15T16-11-37-402Z.json) に保存しています — 意図的に残した negative result です。
+
+harness は決定準拠、誤った仮定、追加質問、tool call、最初の有効応答、API/wall time、`input_tokens`、`output_tokens`、`cache_creation_input_tokens`、`cache_read_input_tokens`、CLI cost も保存します。token category は raw JSON で分離します。`tokenActivity` は cache read を output token と 1:1 で合算しますが cache read の課金は約 50 倍安いため、**擁護できる列は cost です**。また n=5 では harness の `p95` は算術的に常に max（cold run）です — 上の表の p95 はその前提で読んでください。CLI が分離して提供しない user-only/gate-only token は推測せず `null` にします。
 
 ```sh
 OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                      # 上記の公開値

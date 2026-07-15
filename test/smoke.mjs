@@ -1021,8 +1021,9 @@ console.log('\n=== plugin contract and docs ===');
   }));
   ok('all localized READMEs publish the same valid live benchmark result', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
-    // p95는 싣지 않는다: n=5에서 ceil(0.95*5)-1 = 마지막 인덱스라 p95는 산술적으로 항상 max,
-    // 즉 cold run 하나다. 그걸 꼬리 통계로 게시하면 독자를 오도한다.
+    // p95는 요청받은 비교 형식이 요구하므로 싣는다. 다만 n=5에서 ceil(0.95*5)-1 = 마지막
+    // 인덱스라 p95는 산술적으로 항상 max(= cold run 하나)이고 꼬리 통계가 아니다 — 그래서
+    // README는 표 옆에 그 한계를 함께 적는다. 열을 지워 독자 대신 판단하지 않는다.
     return text.includes('<!-- okf-live-benchmark: valid-2026-07-15T16-06-28Z -->')
       && text.includes('27,246') && text.includes('9,069')
       && text.includes('10,395') && text.includes('20,602')

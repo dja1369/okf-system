@@ -59,13 +59,17 @@ Uma sessão de follow-up é questionada sobre oito fatos que a sessão anterior 
 
 Run live em 2026-07-15: Claude Code `2.1.210`, `sonnet`/medium (Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, cinco repetições por condição. Preflight de C: 8/8 fatos presentes, 8/8 roteados pelo gate. D: 0/8.
 
-| Condição | Continuidade | token activity p50 | wall p50 | custo p50 | Reads | Turnos |
-|---|---:|---:|---:|---:|---:|---:|
-| A — no memory | **0/5** | 27,246 | 13.82 s | $0.022218 | 2 | 4 |
-| B_oracle (gabarito) | 5/5 | 9,069 | 4.86 s | $0.008410 | 0 | 1 |
-| B_realistic | 5/5 | 9,069 | 5.96 s | $0.008410 | 0 | 1 |
-| **C — OKF enabled** | **5/5** | **10,395** | 6.46 s | $0.011329 | **0** | **1** |
-| D — irrelevant OKF | 0/5 | 20,602 | 14.50 s | $0.025879 | 1 | 2 |
+| Condição | Continuidade | aderência p50 | token activity p50/p95 | wall p50/p95 | custo p50 |
+|---|---:|---:|---:|---:|---:|
+| A — no memory | **0/5** | 12% | 27,246/27,518 | 13.82/18.17 s | $0.022218 |
+| B_oracle (gabarito) | 5/5 | 100% | 9,069/9,069 | 4.86/6.46 s | $0.008410 |
+| B_realistic | 5/5 | 100% | 9,069/9,069 | 5.96/6.27 s | $0.008410 |
+| **C — OKF enabled** | **5/5** | 100% | **10,395**/10,459 | 6.46/7.15 s | $0.011329 |
+| D — irrelevant OKF | 0/5 | 0% | 20,602/21,662 | 14.50/21.15 s | $0.025879 |
+
+Os tool calls por trás dessas linhas explicam os números: A lê 2 arquivos em 4 turnos e ainda assim falha; B responde em 1 turno com 0 reads porque as respostas já estão no prompt; **C responde em 1 turno com 0 reads** — só o índice do gate bastou; D lê 1 arquivo em 2 turnos atrás do que seu gate nunca teve.
+
+Leia o `p95` com cuidado: com n=5, `ceil(0.95×5)−1` é o último índice, então p95 **é** o máximo — um único run de cache frio, não uma estatística de cauda. Está publicado porque o formato pedido exige, não porque seja uma.
 
 **Leia a linha A primeiro.** Sem memória a sessão queima 27,246 tokens, lê dois arquivos atrás da resposta, gasta quatro turnos — e ainda entrega **0/8**. É essa a condição que o OKF de fato substitui, e C ganha dela: 2.6× menos tokens, 8/8, em um único turno e sem nenhum read.
 
@@ -77,12 +81,15 @@ O que mudou desde o run anterior foi o gate. C custava **22,857** tokens em 7 tu
 
 **A tese "o OKF fica mais barato conforme o conhecimento acumula" é falsa.** Ele fica mais caro — e mais rápido que a alternativa. Mesmo benchmark, mesmo bundle, com 20 concepts sem relação adicionados; tudo ainda cabe no índice (21 linhas, 5,548 de 9,000 bytes, nada truncado):
 
-| Condição | 0 enchimento | 20 enchimento | Crescimento |
-|---|---:|---:|---:|
-| B_realistic | 9,069 | 10,406 | **+1,337** |
-| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+| Condição | Continuidade | aderência p50 | token activity p50/p95 | wall p50/p95 | custo p50 |
+|---|---:|---:|---:|---:|---:|
+| A — no memory | 0/5 | 0% | 27,316/27,717 | 13.79/18.05 s | $0.022838 |
+| B_oracle (gabarito) | 5/5 | 100% | 9,070/9,085 | 5.33/6.78 s | $0.008410 |
+| B_realistic | 5/5 | 100% | 10,406/10,406 | 5.72/9.62 s | $0.010134 |
+| **C — OKF enabled** | **5/5** | 100% | **25,384**/25,773 | 11.75/13.15 s | $0.030721 |
+| D — irrelevant OKF | 0/5 | 0% | 22,265/22,334 | 14.91/19.59 s | $0.037354 |
 
-**C degrada ~11× mais rápido que B** — 749 tokens por concept adicionado contra 67. Os dois ainda respondem 5/5.
+Contra o run de 0 enchimento: B_realistic cresceu **+1,337** (9,069 → 10,406) enquanto C cresceu **+14,989** (10,395 → 25,384). **C degrada ~11× mais rápido** — 749 tokens por concept adicionado contra 67. Os dois ainda respondem 5/5, então isso é uma regressão pura de custo, não de acurácia.
 
 A causa não é truncamento. É confiança:
 
@@ -106,7 +113,9 @@ Acima de ~43 concepts o índice trunca e quem sobrevive é escolhido por nome de
 
 Nenhuma das duas paredes é um botão de ajuste. Corrigir a primeira exige que o índice sinalize *quais linhas são respostas completas*, para o modelo poder confiar nelas sem abrir o arquivo; esse trabalho não está feito, e até estar, a economia do OKF piora a cada concept adicionado.
 
-Medimos também aderência, suposições erradas, perguntas extras, tool calls, primeira resposta válida, tempo API/wall, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` e custo do CLI; as categorias permanecem separadas no JSON. `tokenActivity` soma cache reads 1:1 com output tokens embora cache read seja ~50× mais barato — **custo é a coluna defensável**. Com n=5 o `p95` do harness é sempre o máximo (o run frio), por isso foi omitido. Tokens user-only/gate-only que o CLI não separa ficam `null`, sem estimativa.
+Run de acumulação: [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-30-11-404Z.json). A falha de preflight com 50 de enchimento está preservada em [auditoria de preflight](docs/benchmarks/raw/okf-live-preflight-failed-2026-07-15T16-11-37-402Z.json) — um resultado negativo mantido de propósito.
+
+Medimos também aderência, suposições erradas, perguntas extras, tool calls, primeira resposta válida, tempo API/wall, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` e custo do CLI; as categorias permanecem separadas no JSON. `tokenActivity` soma cache reads 1:1 com output tokens embora cache read seja ~50× mais barato — **custo é a coluna defensável**. Com n=5 o `p95` do harness é sempre o máximo (o run frio) — leia o p95 das tabelas com essa ressalva. Tokens user-only/gate-only que o CLI não separa ficam `null`, sem estimativa.
 
 ```sh
 OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                      # publicado acima

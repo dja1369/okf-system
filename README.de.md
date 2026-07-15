@@ -65,13 +65,17 @@ Abgefragt werden acht Fakten einer früheren Sitzung — Architektur (SQLite / r
 
 Live-Lauf am 2026-07-15: Claude Code `2.1.210`, `sonnet`/medium (Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, fünf Läufe je Bedingung in gekreuzter Reihenfolge. Cs Bundle entsteht aus echtem SessionEnd-Capture → isoliertem Batch-Ingest → SessionStart-Gate; Preflight: C 8/8 vorhanden und 8/8 gate-geroutet, D 0/8.
 
-| Bedingung | Kontinuität | token activity p50 | wall p50 | Kosten p50 | Reads | Turns |
-|---|---:|---:|---:|---:|---:|---:|
-| A — no memory | **0/5** | 27,246 | 13.82 s | $0.022218 | 2 | 4 |
-| B_oracle (Lösungsschlüssel) | 5/5 | 9,069 | 4.86 s | $0.008410 | 0 | 1 |
-| B_realistic | 5/5 | 9,069 | 5.96 s | $0.008410 | 0 | 1 |
-| **C — OKF enabled** | **5/5** | **10,395** | 6.46 s | $0.011329 | **0** | **1** |
-| D — irrelevant OKF | 0/5 | 20,602 | 14.50 s | $0.025879 | 1 | 2 |
+| Bedingung | Kontinuität | Einhaltung p50 | token activity p50/p95 | wall p50/p95 | Kosten p50 |
+|---|---:|---:|---:|---:|---:|
+| A — no memory | **0/5** | 12% | 27,246/27,518 | 13.82/18.17 s | $0.022218 |
+| B_oracle (Lösungsschlüssel) | 5/5 | 100% | 9,069/9,069 | 4.86/6.46 s | $0.008410 |
+| B_realistic | 5/5 | 100% | 9,069/9,069 | 5.96/6.27 s | $0.008410 |
+| **C — OKF enabled** | **5/5** | 100% | **10,395**/10,459 | 6.46/7.15 s | $0.011329 |
+| D — irrelevant OKF | 0/5 | 0% | 20,602/21,662 | 14.50/21.15 s | $0.025879 |
+
+Die Tool-Calls dahinter erklären die Zahlen: A liest 2 Dateien über 4 Turns und scheitert trotzdem; B antwortet in 1 Turn mit 0 Reads, weil die Antworten schon im Prompt stehen; **C antwortet in 1 Turn mit 0 Reads** — der Gate-Index allein genügte; D liest 1 Datei über 2 Turns und sucht, was sein Gate nie enthielt.
+
+`p95` mit Vorsicht lesen: bei n=5 ist `ceil(0.95×5)−1` der letzte Index, p95 **ist** also das Maximum — ein einzelner Cold-Cache-Lauf, keine Tail-Statistik. Er steht hier, weil das geforderte Format ihn verlangt, nicht weil er eine ist.
 
 **Zuerst Zeile A lesen.** Ohne Gedächtnis verbrennt die Sitzung 27,246 Tokens, liest zwei Dateien, braucht vier Turns — und liefert trotzdem **0/8**. Genau das ersetzt OKF, und C schlägt es: 2.6× weniger Tokens, 8/8, in einem Turn ohne Reads.
 
@@ -83,12 +87,15 @@ Geändert hat sich das Gate: C kostete zuvor **22,857** Tokens über 7 Turns mit
 
 **„OKF wird billiger, je mehr Wissen sich ansammelt“ ist falsch.** Es wird teurer — und zwar schneller als die Alternative. Gleicher Benchmark, gleiches Bundle, 20 unbeteiligte Concepts ergänzt; alles passt weiterhin in den Index (21 Zeilen, 5,548 von 9,000 Bytes, nichts gekürzt):
 
-| Bedingung | 0 Filler | 20 Filler | Zuwachs |
-|---|---:|---:|---:|
-| B_realistic | 9,069 | 10,406 | **+1,337** |
-| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+| Bedingung | Kontinuität | Einhaltung p50 | token activity p50/p95 | wall p50/p95 | Kosten p50 |
+|---|---:|---:|---:|---:|---:|
+| A — no memory | 0/5 | 0% | 27,316/27,717 | 13.79/18.05 s | $0.022838 |
+| B_oracle (Lösungsschlüssel) | 5/5 | 100% | 9,070/9,085 | 5.33/6.78 s | $0.008410 |
+| B_realistic | 5/5 | 100% | 10,406/10,406 | 5.72/9.62 s | $0.010134 |
+| **C — OKF enabled** | **5/5** | 100% | **25,384**/25,773 | 11.75/13.15 s | $0.030721 |
+| D — irrelevant OKF | 0/5 | 0% | 22,265/22,334 | 14.91/19.59 s | $0.037354 |
 
-**C verschlechtert sich ~11× schneller als B** — 749 Tokens je zusätzlichem Concept gegen 67. Beide antworten weiterhin 5/5.
+Gegenüber dem 0-Filler-Lauf wuchs B_realistic um **+1,337** (9,069 → 10,406), C dagegen um **+14,989** (10,395 → 25,384). **C verschlechtert sich ~11× schneller** — 749 Tokens je zusätzlichem Concept gegen 67. Beide antworten weiterhin 5/5: eine reine Kostenregression, kein Genauigkeitsproblem.
 
 Die Ursache ist nicht Kürzung, sondern Vertrauen:
 
@@ -112,7 +119,9 @@ Kürzung ist die zweite, weiter entfernte Wand. Der Index ist hart gedeckelt (10
 
 Keine der beiden Wände ist ein Tuning-Knopf. Die erste zu beheben verlangt, dass der Index signalisiert, *welche Zeilen vollständige Antworten sind*, damit das Modell ihnen ohne Dateiöffnen vertrauen kann; diese Arbeit ist nicht getan — bis dahin wird OKFs Ökonomie mit jedem weiteren Concept schlechter.
 
-Gemessen werden Erfolg, Einhaltung, falsche Annahmen, Rückfragen, Tool Calls, erste gültige Antwort, API/Wall-Zeit, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` und CLI-Kosten; Tokenkategorien bleiben im Raw-JSON getrennt. `tokenActivity` addiert Cache-Reads 1:1 mit Output-Tokens, obwohl sie ~50× günstiger abrechnen — **belastbar ist die Kostenspalte**. p95 entfällt: bei n=5 ist er arithmetisch immer das Maximum, also der Cold Run. User-only/Gate-only-Tokens bleiben ohne Schätzung `null`.
+Akkumulationslauf: [Raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-30-11-404Z.json). Der 50-Filler-Preflight-Fehler bleibt als [Preflight-Audit](docs/benchmarks/raw/okf-live-preflight-failed-2026-07-15T16-11-37-402Z.json) erhalten — ein bewusst aufbewahrtes Negativergebnis.
+
+Gemessen werden Erfolg, Einhaltung, falsche Annahmen, Rückfragen, Tool Calls, erste gültige Antwort, API/Wall-Zeit, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` und CLI-Kosten; Tokenkategorien bleiben im Raw-JSON getrennt. `tokenActivity` addiert Cache-Reads 1:1 mit Output-Tokens, obwohl sie ~50× günstiger abrechnen — **belastbar ist die Kostenspalte**. User-only/Gate-only-Tokens bleiben ohne Schätzung `null`.
 
 ```sh
 OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                      # wie oben veröffentlicht

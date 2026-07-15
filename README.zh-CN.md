@@ -71,13 +71,17 @@ claude plugin install okf@okf-marketplace
 
 2026-07-15 live 实验：Claude Code `2.1.210`，`sonnet`/medium（Sonnet 5 + Haiku 4.5），macOS arm64，Node `v26.4.0`，每条件 5 次。C preflight：事实 8/8 存在、8/8 由 gate 路由；D 为 0/8。
 
-| 条件 | 连续性成功 | token activity p50 | wall p50 | cost p50 | 读文件 | 轮次 |
-|---|---:|---:|---:|---:|---:|---:|
-| A — no memory | **0/5** | 27,246 | 13.82 s | $0.022218 | 2 | 4 |
-| B_oracle（答案纸） | 5/5 | 9,069 | 4.86 s | $0.008410 | 0 | 1 |
-| B_realistic | 5/5 | 9,069 | 5.96 s | $0.008410 | 0 | 1 |
-| **C — OKF enabled** | **5/5** | **10,395** | 6.46 s | $0.011329 | **0** | **1** |
-| D — irrelevant OKF | 0/5 | 20,602 | 14.50 s | $0.025879 | 1 | 2 |
+| 条件 | 连续性成功 | 遵循率 p50 | token activity p50/p95 | wall p50/p95 | 成本 p50 |
+|---|---:|---:|---:|---:|---:|
+| A — no memory | **0/5** | 12% | 27,246/27,518 | 13.82/18.17 s | $0.022218 |
+| B_oracle（答案纸） | 5/5 | 100% | 9,069/9,069 | 4.86/6.46 s | $0.008410 |
+| B_realistic | 5/5 | 100% | 9,069/9,069 | 5.96/6.27 s | $0.008410 |
+| **C — OKF enabled** | **5/5** | 100% | **10,395**/10,459 | 6.46/7.15 s | $0.011329 |
+| D — irrelevant OKF | 0/5 | 0% | 20,602/21,662 | 14.50/21.15 s | $0.025879 |
+
+这些行背后的 tool call 解释了数字：A 读 2 个文件、4 轮，仍然答错；B 零次读文件、1 轮，因为答案本来就在 prompt 里；**C 零次读文件、1 轮**——只靠 gate index 就够了；D 读 1 个文件、2 轮，去翻它 gate 里从来就没有的东西。
+
+`p95` 要谨慎读：n=5 时 `ceil(0.95×5)−1` 就是最后一个下标，所以 p95 **就等于**最大值——那只是一次冷缓存的运行，不是尾部统计量。列出它是因为格式要求如此，不是因为它真是尾部统计量。
 
 **先看 A 这一行。** 没有记忆的会话烧掉 27,246 token，翻了两个文件找答案，用掉四轮——结果仍是 **0/8**。这才是 OKF 真正替换掉的条件，而 C 赢过它：token 少 2.6 倍，0/8→8/8，一轮之内、零次读文件。
 
@@ -89,12 +93,15 @@ claude plugin install okf@okf-marketplace
 
 **「知识越积越省」是假的。** 它只会更贵，而且比替代方案贵得更快。同一基准、同一 bundle，加 20 个无关 concept——index 仍然全部装得下（21 行，5,548 / 9,000 字节，什么都没被截断）：
 
-| 条件 | 0 filler | 20 filler | 增长 |
-|---|---:|---:|---:|
-| B_realistic | 9,069 | 10,406 | **+1,337** |
-| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+| 条件 | 连续性成功 | 遵循率 p50 | token activity p50/p95 | wall p50/p95 | 成本 p50 |
+|---|---:|---:|---:|---:|---:|
+| A — no memory | 0/5 | 0% | 27,316/27,717 | 13.79/18.05 s | $0.022838 |
+| B_oracle（答案纸） | 5/5 | 100% | 9,070/9,085 | 5.33/6.78 s | $0.008410 |
+| B_realistic | 5/5 | 100% | 10,406/10,406 | 5.72/9.62 s | $0.010134 |
+| **C — OKF enabled** | **5/5** | 100% | **25,384**/25,773 | 11.75/13.15 s | $0.030721 |
+| D — irrelevant OKF | 0/5 | 0% | 22,265/22,334 | 14.91/19.59 s | $0.037354 |
 
-**C 的劣化比 B 快约 11 倍**——每多一个 concept 多花 749 token，B 只多 67。两者仍然都答对 5/5。
+与 0 filler 那次相比：B_realistic 增长 **+1,337**（9,069 → 10,406），C 增长 **+14,989**（10,395 → 25,384）——**C 的劣化比 B 快约 11 倍**，每多一个 concept 多花 749 token，B 只多 67。两者仍然都答对 5/5，所以这是纯粹的成本回归，不是准确率回归。
 
 原因不是截断，是信任：
 
@@ -118,7 +125,9 @@ claude plugin install okf@okf-marketplace
 
 两堵墙都不是可调参数。要解决第一堵，index 必须能标出*哪些行本身就是完整答案*，让模型不开文件也敢信；这件事还没做，在做完之前，每多一个 concept，OKF 的经济性就更差一分。
 
-harness 还记录决定遵循率、错误假设、额外问题、tool call、首次有效响应、API/wall time、`input_tokens`、`output_tokens`、`cache_creation_input_tokens`、`cache_read_input_tokens` 和 CLI 报告成本；raw JSON 保留独立 token 类别。注意 `tokenActivity` 把 cache read 与 output token 按 1:1 相加，而 cache read 计费便宜约 50 倍——**成本才是站得住的那一列**；且 n=5 时 harness 的 `p95` 在算术上必然等于最大值（也就是冷启动那一次），故此处不列。CLI 无法单独提供的 user-only 或 gate-only token 保持 `null`，不会估算。
+累积实验：[raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-30-11-404Z.json)。50 filler 的 preflight 失败保留在[preflight 审计](docs/benchmarks/raw/okf-live-preflight-failed-2026-07-15T16-11-37-402Z.json)——刻意保留的负面结果。
+
+harness 还记录决定遵循率、错误假设、额外问题、tool call、首次有效响应、API/wall time、`input_tokens`、`output_tokens`、`cache_creation_input_tokens`、`cache_read_input_tokens` 和 CLI 报告成本；raw JSON 保留独立 token 类别。注意 `tokenActivity` 把 cache read 与 output token 按 1:1 相加，而 cache read 计费便宜约 50 倍——**成本才是站得住的那一列**；且 n=5 时 harness 的 `p95` 在算术上必然等于最大值（也就是冷启动那一次，见上文 p95 说明）。CLI 无法单独提供的 user-only 或 gate-only token 保持 `null`，不会估算。
 
 ```sh
 OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                      # 如上文发布

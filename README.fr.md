@@ -57,15 +57,19 @@ Ainsi, « déployer 10 % → 50 % → 100 %, rollback au-dessus de 0,5 % d’err
 
 Une session de suivi doit restituer huit faits établis par une session précédente : architecture (SQLite / repository pattern), règle de code (named export uniquement), correctif d’un incident passé (`busy_timeout=5000`), préférence de réponse (coréen / concis), fichier et politique de déploiement (`src/config.mjs` / `npm run deploy:canary`) — plus un contrôle arithmétique sans rapport (7 × 8 = 56). Le bundle de C vient d’une vraie capture SessionEnd → batch isolé → gate SessionStart ; un preflight refuse de dépenser tant que C ne contient et ne route pas chaque fait, et que D n’en contient aucun.
 
-Run live du 2026-07-15 : Claude Code `2.1.210`, `sonnet`/medium (Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, cinq répétitions croisées par condition. Preflight C : 8/8 faits présents, 8/8 routés ; D : 0/8. À n=5, le p95 vaut arithmétiquement toujours le max (le run à froid) : il est omis.
+Run live du 2026-07-15 : Claude Code `2.1.210`, `sonnet`/medium (Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, cinq répétitions croisées par condition. Preflight C : 8/8 faits présents, 8/8 routés ; D : 0/8.
 
-| Condition | Continuité | token activity p50 | wall p50 | coût p50 | Reads | Tours |
-|---|---:|---:|---:|---:|---:|---:|
-| A — no memory | **0/5** | 27,246 | 13.82 s | $0.022218 | 2 | 4 |
-| B_oracle (le corrigé) | 5/5 | 9,069 | 4.86 s | $0.008410 | 0 | 1 |
-| B_realistic | 5/5 | 9,069 | 5.96 s | $0.008410 | 0 | 1 |
-| **C — OKF enabled** | **5/5** | **10,395** | 6.46 s | $0.011329 | **0** | **1** |
-| D — irrelevant OKF | 0/5 | 20,602 | 14.50 s | $0.025879 | 1 | 2 |
+| Condition | Continuité | Conformité p50 | token activity p50/p95 | wall p50/p95 | coût p50 |
+|---|---:|---:|---:|---:|---:|
+| A — no memory | **0/5** | 12% | 27,246/27,518 | 13.82/18.17 s | $0.022218 |
+| B_oracle (le corrigé) | 5/5 | 100% | 9,069/9,069 | 4.86/6.46 s | $0.008410 |
+| B_realistic | 5/5 | 100% | 9,069/9,069 | 5.96/6.27 s | $0.008410 |
+| **C — OKF enabled** | **5/5** | 100% | **10,395**/10,459 | 6.46/7.15 s | $0.011329 |
+| D — irrelevant OKF | 0/5 | 0% | 20,602/21,662 | 14.50/21.15 s | $0.025879 |
+
+Les tool calls derrière ces lignes, parce qu’ils expliquent les chiffres : A lit 2 fichiers sur 4 tours et échoue quand même ; B répond en 1 tour avec 0 lecture, les réponses étant déjà dans son prompt ; **C répond en 1 tour avec 0 lecture** — l’index du gate a suffi ; D lit 1 fichier sur 2 tours en cherchant ce que son gate n’a jamais contenu.
+
+Lisez le `p95` avec prudence : à n=5, `ceil(0.95×5)−1` est le dernier index, donc le p95 **est** le max — un unique run à cache froid, pas une statistique de queue. Il est rapporté parce que le format demandé l’exige, pas parce qu’il en est une.
 
 **Lisez d’abord la ligne A.** Sans mémoire, la session brûle 27,246 tokens, lit deux fichiers en cherchant une réponse, prend quatre tours — et répond quand même **0/8**. C’est la condition qu’OKF remplace réellement, et C la bat : 2.6× moins de tokens, 8/8 en un seul tour, sans aucune lecture.
 
@@ -77,12 +81,15 @@ Ce qui a changé depuis le run précédent, c’est le gate lui-même. C coûtai
 
 **« OKF devient moins cher à mesure que la connaissance s’accumule » est faux.** Il devient plus cher, et plus vite que l’alternative. Même benchmark, même bundle, avec 20 concepts sans rapport ajoutés — tout tient encore dans l’index (21 lignes, 5,548 octets sur 9,000, rien de tronqué) :
 
-| Condition | 0 filler | 20 filler | Croissance |
-|---|---:|---:|---:|
-| B_realistic | 9,069 | 10,406 | **+1,337** |
-| **C — OKF enabled** | 10,395 | **25,384** | **+14,989** |
+| Condition | Continuité | Conformité p50 | token activity p50/p95 | wall p50/p95 | coût p50 |
+|---|---:|---:|---:|---:|---:|
+| A — no memory | 0/5 | 0% | 27,316/27,717 | 13.79/18.05 s | $0.022838 |
+| B_oracle (le corrigé) | 5/5 | 100% | 9,070/9,085 | 5.33/6.78 s | $0.008410 |
+| B_realistic | 5/5 | 100% | 10,406/10,406 | 5.72/9.62 s | $0.010134 |
+| **C — OKF enabled** | **5/5** | 100% | **25,384**/25,773 | 11.75/13.15 s | $0.030721 |
+| D — irrelevant OKF | 0/5 | 0% | 22,265/22,334 | 14.91/19.59 s | $0.037354 |
 
-**C se dégrade ~11× plus vite que B** — 749 tokens par concept ajouté contre 67. Les deux répondent toujours 5/5.
+Face au run à 0 filler : B_realistic a grandi de **+1,337** (9,069 → 10,406) tandis que C a grandi de **+14,989** (10,395 → 25,384). **C se dégrade ~11× plus vite** — 749 tokens par concept ajouté contre 67. Les deux répondent toujours 5/5 : c’est une régression de coût pure, pas de précision.
 
 La cause n’est pas la troncature, c’est la confiance :
 
@@ -105,6 +112,8 @@ La troncature est le second mur, plus loin. L’index du gate est plafonné sous
 Au-delà d’environ 43 concepts l’index tronque, et les survivants sont choisis par nom de fichier — ni pertinence, ni récence. Un run avec 50 concepts de remplissage **échoue au preflight** pour exactement cette raison (`presentFacts: 8, routedFacts: 6, ready: false`) : `decisions/tech-stack.md` s’est trié derrière le filler et a été coupé, emportant deux faits. Les catégories sont distribuées à tour de rôle pour qu’aucune ne soit privée, et chaque catégorie tronquée pointe vers son propre `index.md` — mais descendre est un aller-retour d’outil, le même coût à nouveau.
 
 Aucun des deux murs n’est un réglage. Corriger le premier exige que l’index signale *quelles lignes sont des réponses complètes*, pour que le modèle s’y fie sans ouvrir le fichier ; ce travail n’est pas fait, et tant qu’il ne l’est pas, l’économie d’OKF empire avec chaque concept ajouté.
+
+Run d’accumulation : [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-30-11-404Z.json). L’échec au preflight à 50 filler est conservé dans l’[audit preflight](docs/benchmarks/raw/okf-live-preflight-failed-2026-07-15T16-11-37-402Z.json) — un résultat négatif gardé volontairement.
 
 Sont aussi mesurés : conformité aux décisions, hypothèses fausses, questions, tool calls, première réponse valide, temps API/wall, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` et coût CLI. Les catégories restent séparées dans le JSON. `tokenActivity` somme les cache reads 1:1 avec les tokens de sortie alors qu’ils sont facturés ~50× moins cher : **le coût est la colonne défendable**. Les tokens user-only/gate-only non exposés séparément restent `null`, sans estimation.
 
