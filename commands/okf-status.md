@@ -22,9 +22,14 @@ node -e "import('${CLAUDE_PLUGIN_ROOT}/lib/paths.mjs').then(m => console.log(m.r
 
 OKF_HOME을 `<OKF_HOME>`이라 할 때, Read/Bash로 아래를 확인하라:
 
-- `<OKF_HOME>/.okf/last-batch.json` — 있으면 Read해서 `lastRunEpochMs`(마지막 배치 성공 시각,
+- `<OKF_HOME>/.okf/last-batch.json` — 있으면 Read해서 `lastRunEpochMs`(마지막 배치 실행 시각,
   사람이 읽을 수 있는 형태로 변환), `lastResult`, `pendingAfter`(그 실행 직후 남은 raw 수)를
   확인. 파일이 없으면 "배치가 아직 한 번도 실행되지 않음"으로 보고하라.
+- `<OKF_HOME>/.okf/capture-status.json` — 있으면 Read해서 `lastAttemptEpochMs`,
+  `lastSuccessEpochMs`, `lastStatus`, `stage`, `errorCode`, `configWarnings`, `pendingRaw`를 확인하라.
+  이 파일에는 transcript 내용이나 경로가 없어야 한다. `lastStatus: error`면 실패 단계와 오류
+  코드만 보고하고 transcript 경로를 추측하거나 출력하지 마라. 파일이 없으면 "캡처 상태 기록
+  없음(아직 SessionEnd가 실행되지 않았거나 이전 버전 설치)"으로 보고하라.
 - `<OKF_HOME>/raw/` 디렉토리의 `.jsonl` 파일 개수 — 현재 대기 중인 캡처 세션 수.
 - `<OKF_HOME>/.okf/batch.lock` 존재 여부 — 있으면 Read해서 `{pid, startedEpochMs}`를 확인하고,
   그 `pid`가 살아있는지 검사하라(macOS/Linux: `kill -0 <pid>` 종료 코드로 판정, Windows:
@@ -39,6 +44,7 @@ OKF_HOME을 `<OKF_HOME>`이라 할 때, Read/Bash로 아래를 확인하라:
 
 - OKF_HOME: `~/.claude/okf`
 - 마지막 배치: 2026-07-15 09:12 (성공), 처리 후 잔여 raw 2개
+- 마지막 캡처: 2026-07-15 10:03 (성공), 대기 raw 3개
 - 대기 중인 raw: 3개
 - 락 상태: 없음 (배치 실행 중 아님)
 

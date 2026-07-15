@@ -20,7 +20,8 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/session-end.mjs\"",
-            "timeout": 20,
+            "async": true,
+            "timeout": 600,
             "statusMessage": "OKF capture..."
           }
         ]

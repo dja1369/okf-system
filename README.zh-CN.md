@@ -1,182 +1,163 @@
 # OKF for Claude Code
 
-**你的 agent 把你昨天告诉它的一切都忘光了。这个插件解决这个问题 —— 而且它建立起来的记忆，
-是一个归你所有的 markdown 目录，不是一个把你锁死的数据库。**
+**把过去 Claude Code 会话中的决定变成下一次会话真正能使用的、本地且可审查的知识库。**
 
-![MIT license](https://img.shields.io/badge/license-MIT-blue) ![OKF v0.1](https://img.shields.io/badge/OKF-v0.1%20Draft-4ecdc4) ![Node only](https://img.shields.io/badge/runtime-Node%20only-5c6bc0) ![no npm install](https://img.shields.io/badge/dependencies-vendored-66bb6a)
+[English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · **简体中文** · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português](README.pt-BR.md)
 
-**[English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · 简体中文 · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português](README.pt-BR.md)**
+OKF 在会话结束时无损捕获对话，把可复用的决定和故障处理提炼为 Markdown，并在下次会话注入紧凑索引。知识库是你可以查看、diff、备份或删除的本地 git 仓库。
 
-![OKF 知识图谱 —— 概念与它们所描述的代码相互链接](docs/okf-graph.png)
+## 一分钟快速开始
 
-<sub>`/okf:okf-visualize` —— 你的知识（带描边的节点）和你的代码库在同一张图里。
-黄色虚线才是重点：每个概念都连到它实际在谈论的源文件。</sub>
+需要支持插件的 Claude Code、Node.js 和 git；无需 `npm install`。
 
-每次会话都从零开始。你一遍遍重新解释同一个架构决策、同一条部署策略、同一句"那个我们试过，
-结果崩了" —— 而会话一结束，这些又全没了。与此同时，本来*能*回答这些问题的知识散落在
-wiki、代码注释里，以及正如 Google 的 OKF 公告所说的，"少数几位资深工程师的脑子里"。
-
-这个插件自动闭合这个循环：它捕获你实际讨论过的内容，把其中可复用的部分提炼成一个结构化的
-知识包，并在每次会话开始时把这些知识重新摆到模型面前。
-
-## 这个格式
-
-知识以 **[OKF（Open Knowledge Format）](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)** 存储 ——
-这是 Google Cloud [于 2026 年 6 月发布](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr)
-的一份开放规范（v0.1 Draft，Apache-2.0）。它刻意做得毫不起眼，而这恰恰是重点：
-
-> "The format is intentionally minimal: a directory of markdown files with YAML
-> frontmatter. There is no schema registry, no central authority, and no required
-> tooling. **If you can `cat` a file, you can read OKF; if you can `git clone` a
-> repo, you can ship it.**"
-
-（大意：该格式刻意保持极简 —— 就是一个装着带 YAML frontmatter 的 markdown 文件的目录。
-没有 schema 注册中心，没有中央权威，也不需要任何特定工具。**能 `cat` 一个文件，就能读 OKF；
-能 `git clone` 一个仓库，就能分发它。**）
-
-OKF 把 [Andrej Karpathy 在十周前勾勒出的](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-"LLM wiki"模式正式规范化了 —— Google 的公告里明确这么说。发布以来，围绕它已经形成了一个由
-生成器、linter、查看器和 MCP server 构成的[小生态](https://github.com/search?q=%22open+knowledge+format%22&type=repositories)，
-而且这个格式在 Google 之外也开始出现（AWS 有一个把 Glue 数据库以 OKF 包形式提供的[示例](https://github.com/aws-samples/sample-okf-llm-wiki)）。
-现在还很早期 —— 那个生态里大部分东西都只有几周大 —— 但这个格式确实在兑现它的主张：
-离开作者的工具也照样读得懂。
-
-**为什么是一个格式，而不是一个记忆产品。** mem0、Letta、Zep、Cognee 这类工具是记忆*运行时* ——
-你接入一个库或者自己托管一个服务，然后你的记忆就住在它的向量库或图数据库里。它们属于另一个
-层次，不是竞争对手；其中一些甚至可以用来存 OKF。实际的区别在于**退出成本**：嵌在图数据库里
-的知识只有那个系统读得懂，而一个 OKF 包可以在你的编辑器里打开、在 GitHub 上渲染、在 pull
-request 里做 diff，任何别的 agent 不需要经过转换就能读。这个插件从不要求你把唯一的一份副本
-托付给它。
-
-## 它做什么
-
-1. **捕获**每次会话结束时的完整对话，无损保存。
-2. 在后台**压缩**已捕获的会话（一个见机执行的批处理任务，不是 cron/定时任务），用
-   `claude -p` 提取可复用的知识 —— decisions、project facts、preferences、patterns、
-   references、troubleshooting。
-3. 把这个知识包的索引作为一道强制关卡**注入**到每次新会话的上下文中，让 Claude 在动手做
-   相关工作之前真的去读过去的相关知识，而不是每次都从零开始。
-4. 把知识包和你的代码库**可视化**成同一张图，把每个概念连到它实际在谈论的文件上
-   （`/okf:okf-visualize`）。
-
-所有东西都放在 `~/.claude/okf`（或 `$CLAUDE_CONFIG_DIR/okf`）下的一个本地 git 仓库里。
-什么都不会被推送到任何地方。唯一的网络请求，就是你本来就在发的那些 Anthropic API 调用 ——
-批处理这一步不过是又一次在本地执行的 `claude -p`。
-
-## 环境要求
-
-- 支持插件的 Claude Code
-- Node.js（`claude` 本身要求什么就是什么 —— 不需要额外的运行时）
-- git
-
-不需要 `npm install`。不依赖外部服务。开始使用不需要任何配置。
-
-## 安装
-
-```
+```sh
 claude plugin marketplace add dja1369/okf-system
 claude plugin install okf@okf-marketplace
 ```
 
-（如果改从本地 clone 安装：`claude plugin marketplace add /path/to/your/clone`。）
+重启 Claude Code，正常结束一次会话，然后运行：
 
-就这样 —— 重启会话，gate 和 capture 的 hook 就生效了。下次会话启动时，知识包会自动完成
-初始化（在 `~/.claude/okf` 下创建一个带基础结构的本地 git 仓库）。
+```text
+/okf:okf-status
+/okf:okf-index
+```
 
-卸载：`claude plugin uninstall okf`。你在 `~/.claude/okf` 里的数据原封不动 —— 那就是个
-普通的 git 仓库，你可以查看、备份，或者用 `rm -rf ~/.claude/okf` 手动删掉。
+首次 `SessionStart` 会创建 `~/.claude/okf`（或 `$CLAUDE_CONFIG_DIR/okf`）。此后的捕获和机会式 batch ingest 自动进行。
 
-## 用法
+## 连续性流程
 
-日常使用不需要你做任何事。捕获和批量压缩都是自动的。另有五个命令可供手动查看/控制 ——
-**注意 `okf:` 前缀**，它是必需的，因为这些是插件作用域的命令：
+```text
+会话 1 的决定 -> SessionEnd 无损 raw 副本 -> 后台 batch 生成 OKF Markdown -> 会话 2 注入索引 -> Read 相关 concept
+```
 
-| 命令 | 作用 |
+例如，会话 1 确定“按 10% → 50% → 100% 发布，错误率超过 0.5% 时回滚”。capture 和 ingest 后，新会话无需用户再次粘贴即可通过索引找到准确政策。索引只是路由层；Claude 在执行前仍需 `Read` concept 正文。
+
+## 命令
+
+| 命令 | 用途 |
 |---|---|
-| `/okf:okf-status` | 报告上次批处理运行、待处理的会话、锁的状态 |
-| `/okf:okf-batch` | 立即强制执行一次批处理（忽略间隔关卡，但仍然遵守锁） |
-| `/okf:okf-config` | 显示当前配置，并允许你编辑 |
-| `/okf:okf-index` | 打印知识包的可读概览 —— 所有分类和概念标题，外加最近的 `log.md` 变更 |
-| `/okf:okf-visualize [路径]` | 把知识包 + 你的代码库渲染成一张交互式图（自包含的 HTML） |
+| `/okf:okf-status` | 最近 capture/batch、待处理会话和锁状态 |
+| `/okf:okf-batch` | 在尊重锁的前提下立即 ingest |
+| `/okf:okf-config` | 查看或编辑经过验证的配置 |
+| `/okf:okf-index` | 查看分类、concept 标题和最近变更 |
+| `/okf:okf-visualize` | 仅显示 OKF concept 与 concept 之间的关系 |
+| `/okf:okf-analysis [路径]` | 分析代码库，并只显示相关 OKF concept |
 
-全新安装并不是空的：知识包预置了一批概念，分别描述 OKF 本身、这个插件的架构，以及知识包的
-写作规则 —— 这样从第一次会话起，关卡就有真东西可以指向，而知识包本身也成了自己的文档。
+`visualize` 不扫描代码库。`analysis` 会拒绝不存在或非目录的路径，显示 truncated、被隐藏的无关 concept，以及各语言的文件/声明/internal edge 统计。两者生成的 HTML 均自包含，不使用外部 CDN，也不在运行时联网。
 
-## 可视化
+## 可选状态栏
 
-`/okf:okf-visualize` 把你的知识和你的代码渲染成一张图。有意思的不是其中任何一半 —— 而是两者之间
-的虚线连接，它把每个概念连到它真正在谈论的源文件上。
+`bin/statusline.mjs` 不联网、不分析完整图，只输出如 `OKF 12 · +3 · 2h ago` 的一行状态。Claude Code 只允许一个 `statusLine`，因此 OKF 不自动安装或覆盖它。可在现有脚本中追加 `node /path/to/okf/bin/statusline.mjs` 的输出。
 
-如果 [Understand-Anything](https://github.com/Egonex-AI/Understand-Anything) 已经分析过这个
-仓库（`.understand-anything/` 或 `.ua/knowledge-graph.json`），就会采用它那份由 LLM 总结、
-信息更丰富的图。否则就由这个插件自带的分析器构建一份 —— 纯 Node，不用原生模块，从 JS/TS、
-Python、Go、Rust、Java/Kotlin、Ruby、PHP、C/C++、C# 和 Swift 中提取文件、函数、类以及
-import 关系图。
+## OKF 效果基准
 
-输出是一个自包含的 HTML 文件：没有 CDN，没有网络请求，没有后端。它离线就能打开，因为打开
-你自己的知识库不该往任何地方打电话。
+<!-- okf-live-benchmark: valid-2026-07-15T15-03-01Z -->
 
-## 工作原理
+2026-07-15 live 实验：Claude Code `2.1.210`，`sonnet`/medium（Sonnet 5 + Haiku 4.5），macOS arm64，Node `v26.4.0`，commit `c00d3fc`，每条件5次。调用前 C 的目标事实 8/8 已写入 concept 并由 gate 路由，D 为 0/8。
 
-![架构：会话被捕获进 raw，后台批处理把它提炼成一个 OKF 知识包，知识包的索引再被注入到下一次会话](docs/architecture.svg)
+| 条件 | 连续性成功 | token activity p50 / p95 | wall p50 / p95 | cost p50 |
+|---|---:|---:|---:|---:|
+| A — no memory | 0/5 | 27,320 / 27,574 | 16.40 / 18.17 s | $0.024037 |
+| B — manual restatement | 5/5 | 9,070 / 9,093 | 6.07 / 7.42 s | $0.008410 |
+| C — OKF enabled | 5/5 | 22,857 / 22,883 | 11.33 / 12.80 s | $0.033189 |
+| D — irrelevant OKF | 0/5 | 21,507 / 22,261 | 16.92 / 18.88 s | $0.030332 |
 
-- **捕获**就是纯粹的文件复制 —— 不解析，不过滤，不限制大小。每次 `SessionEnd` 都把完整的
-  对话记录写进 `raw/`。这是刻意的设计：基于残缺记忆建起来的知识库，比没有还糟。
-- **压缩**只在批处理时发生，而且是在一份临时副本上做 —— 捕获下来的原件从不会被碰。它运行时
-  的工具权限被限制在 `Read/Glob/Grep/Write/Edit`（没有 `Bash`），并且在那一次调用里把*你*的
-  所有其他 hook、插件和 MCP server 全部禁用（`--safe-mode`），这样它就不会反过来把自己也
-  捕获进去。
-- **关卡**注入的是一份紧凑的分类索引（不是概念全文）外加最近的变更，并要求 Claude 在动相关
-  工作之前真的去 `Read` 对应的文件 —— 光有索引，还不足以让它凭着过时的假设就动手。
-- 一个结构 linter 保证知识包始终符合规范：如果某次批处理会留下任何格式不合法的东西，它会在
-  commit 之前自动回滚。
+C 成功回收全部事实，但与同样正确的 B 相比，token activity 中位数多 13,787，wall time 多 5.26 s，未证明效率改善。batch 一次为 111,381 token activity/$0.164360；B−C 为负，因此无盈亏平衡点。
 
-格式的背景和设计理由，见 Google Cloud 的 [Open Knowledge Format 公告](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/?hl=en&utm_source=pytorchkr&ref=pytorchkr) —— 它不过是带 YAML frontmatter 的
-markdown 文件，任何工具都能读，并不是这个插件专有的东西。
+每个条件至少重复 5 次，记录成功率、决定遵循率、错误假设、额外问题、tool call、首次有效响应、API/wall time、`input_tokens`、`output_tokens`、`cache_creation_input_tokens`、`cache_read_input_tokens` 和 CLI 报告成本。raw JSON 保留独立 token 类别，batch/repair 成本计入盈亏平衡。CLI 无法单独提供的 user-only 或 gate-only token 保持 `null`，不会估算。
 
-## 配置
+```sh
+OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs
+```
 
-直接编辑 `~/.claude/okf/.okf/config.md`（frontmatter），或者用 `/okf:okf-config`。
+该命令付费且需认证，不进入 CI。参见[有效报告](docs/benchmarks/okf-live-2026-07-15T15-03-01-343Z.md)、[raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T15-03-01-343Z.json)和[解释指南](docs/USAGE.md)。
 
-| 键 | 默认值 | 含义 |
+### 本地开销（不是效果基准）
+
+2026-07-15，macOS arm64，Node `v26.4.0` 的新测量：
+
+| 操作 | 中位数 | 范围 |
+|---|---:|---:|
+| SessionStart gate 进程 | 57.4 ms | 56.7–58.2 ms |
+| SessionEnd 无损 capture 进程 | 43.4 ms | 41.8–43.9 ms |
+| statusline 进程 | 36.7 ms | 34.8–36.8 ms |
+
+用 `node test/bench.mjs [仓库]` 复现。这只测本地 hook/process，不证明 token 或模型响应改善。
+
+### Batch 成本和盈亏平衡
+
+```text
+初始 OKF 成本 = batch ingest + repair + 实测无关 gate 开销
+每会话净节省 = manual-restatement 中位数 - OKF 中位数
+盈亏平衡会话数 = ceil(初始 OKF 成本 / 正的每会话净节省)
+```
+
+实测 B−C 节省为负，因此本次没有 token 或 cost 盈亏平衡点。
+
+## 语言支持
+
+fallback analyzer 是确定性的、零依赖并采取保守连接；“发现文件”和“分析结构”会分别报告。
+
+| 语言 | 关系与声明 | 主要限制 |
 |---|---|---|
-| `enabled` | `true` | 总开关（捕获、gate 和批处理都跟着它走） |
-| `batch_interval_hours` | `1` | 两次批处理之间的最小间隔 |
-| `batch_max_digest_kb` | `600` | 单次运行的 digest 总字节预算 —— 真正的成本上限。超出预算的会话顺延到下一次运行 |
-| `batch_max_sessions` | `50` | 仅作安全上限；真正起调节作用的是 `batch_max_digest_kb` |
-| `seed_language` | `en` | 首次初始化时预置概念的语言（`en`、`ko`；未知值回退到 `en`） |
-| `batch_model` | `claude-sonnet-5` | 批量摄取所用的模型；留空 = CLI 默认值 |
-| `batch_effort` | `medium` | 批量摄取的推理强度（`low`/`medium`/`high`/`xhigh`/`max`）；留空 = CLI 默认值 |
-| `capture_exclude_cwd` | `[]` | 跳过捕获的目录 glob 模式（只能选择退出 —— 捕获本身永远不会是部分的） |
-| `batch_digest_cap_kb` | `150` | 面向 LLM 的摘要的单会话大小上限（捕获下来的原件永远不设上限） |
-| `remove_candidate_ttl_days` | `30` | 已处理的原始对话记录在删除前保留多久 |
-| `inject_max_lines` / `inject_max_bytes` | `120` / `16384` | 关卡注入的大小上限 |
-| `claude_bin` / `node_bin` | *（留空）* | 当你的环境中 `PATH` 解析失败时，用于覆盖的绝对路径 |
+| JavaScript / TypeScript | 相对 import/export/require，function/class | bare package 保持外部 |
+| Python | dotted module，function/class | 不解析动态 import |
+| Go | 基于 `go.mod` 的内部 package node，function/struct | 不伪造 file edge |
+| Rust | `mod`/`use`，function/struct/enum/trait | 省略 macro 生成结构 |
+| Java / Kotlin | package/class path，type/Kotlin function | 省略 reflection |
+| Ruby | `require_relative`，class/method | gem 保持外部 |
+| PHP | namespace/use/alias/grouped use、require/include、主要 type/function | 省略动态 autoload |
+| C / C++ | quoted include、带明确路径的唯一 local angle include、主要 type/namespace/function definition | regex 可能漏掉 macro 和复杂多行语法 |
+| C# | 仓库声明的 namespace node、主要 type | 外部 namespace 不连接 |
+| Swift | 明确 inheritance/conformance/extension、主要 type/function | 为防名称冲突省略 nested cross-file target |
 
-## 数据与隐私
+达到 2,000 个文件时标记 `truncated`；超过 512 KiB 的文件保留节点但标记为未分析。
 
-- 一切都留在本地：`~/.claude/okf` 是它自己独立的普通 git 仓库，与你恰好正在工作的任何仓库
-  完全分离。**这个插件里没有任何一条代码路径会对它执行 `git push`、`git remote add`
-  或任何与网络有关的操作** —— 整个代码里用到的 git 操作只有 `init`、`commit`、`checkout`
-  和 `clean`（可自行验证：`grep -n "push\|remote" lib/*.mjs bin/*.mjs` —— 唯一的匹配项是
-  不相关的 `Array.push()` 调用）。除非你自己刻意去 `git push`，否则你的知识包永远不会离开
-  你的机器。
-- 批处理这一步会把会话内容发送到 Anthropic API 来做总结/提取 —— 就是你平时用 Claude Code
-  本来就在通信的那个 API，只是多走一次 `claude -p` 调用。不涉及任何第三方服务。
-- `raw/`（捕获到的完整对话记录）以及已处理但待删除的记录都被 git 忽略，不会提交 —— 提交的
-  只有提取出来的知识包。
+## 真实开源验证
 
-## 可移植性
+使用固定 commit clone，并把代表性 edge 与源代码逐项核对。时间仅用于运行安全性，不是模型速度基准。
 
-没有任何路径是硬编码的 —— 一切都通过 `os.homedir()` / `process.env.CLAUDE_CONFIG_DIR` /
-`process.env.HOME` 解析，所以在另一台机器或另一个用户账号上全新安装，会得到属于它自己的、
-独立的知识包。这一点由测试套件（`test/smoke.mjs`）在隔离的
-`HOME`/`CLAUDE_CONFIG_DIR` 沙箱中验证，其中包括一个**完全没有配置 git 身份**的场景 ——
-这个插件从不依赖你的 `user.name`/`user.email`；它自己的自动提交始终使用一个固定的合成身份
-（`OKF Batch <okf-batch@localhost>`）。macOS 和 Linux 是按这种方式直接跑过的；Windows
-特有的部分（`claude.cmd` 用 `shell:true`、路径分隔符）是按设计文档的要求实现的，但还没有在
-真正的 Windows 机器上跑过 —— 在有人确认之前，请把这个组合视为未经验证。
+| 仓库 | Commit | 语言文件 | 声明 | Internal edges | Truncated |
+|---|---|---:|---:|---:|---:|
+| [Slim](https://github.com/slimphp/Slim) | `80900fb` | 125 | 127 | 305 | 否 |
+| [Redis](https://github.com/redis/redis) | `f76dff7` | 784 | 5,796 | 990 | 否 |
+| [fmt](https://github.com/fmtlib/fmt) | `a79df45` | 46 | 283 | 121 | 否 |
+| [Alamofire](https://github.com/Alamofire/Alamofire) | `903c53c` | 98 | 2,052 | 215 | 否 |
 
-## 许可证
+验证时发现并修复了 Swift 标准 `Error` 错连到同名 nested type，以及 C 标准 header 错连到 vendored compatibility header。详见[验证报告](docs/benchmarks/oss-analysis-2026-07-15.md)。
 
-MIT
+## 数据和隐私
+
+- `SessionEnd` 把完整 transcript 无损复制到 `raw/`。
+- batch 生成有上限的 digest，并通过额外的 `claude -p` 发送给 Anthropic；这是 OKF 新增的唯一模型/API 传输。
+- batch 使用 `--safe-mode`、受限工具、stdin prompt、lint/rollback，且没有 Bash。
+- raw transcript 被 git-ignore；只在本地 commit 提取出的 Markdown。插件不会 push 或添加 remote。
+- POSIX 目录权限为 `0700`，raw/state/log 为 `0600`。持久日志不含 transcript、Claude stdout/stderr、credential 或完整 raw 路径。
+- live fixture 是无个人信息和 credential 的合成数据。
+
+## 配置和删除
+
+使用 `~/.claude/okf/.okf/config.md` 或 `/okf:okf-config`。主要默认值：`enabled: true`、`batch_interval_hours: 1`、`batch_max_digest_kb: 600`、`batch_digest_cap_kb: 150`、`remove_candidate_ttl_days: 30`、`inject_max_lines` / `inject_max_bytes` 为 `120` / `9000`。未知或无效值回退到安全默认值。
+
+```sh
+claude plugin uninstall okf
+```
+
+数据仍保留在 `~/.claude/okf`，可检查、备份后手动删除。
+
+## 开发验证
+
+```sh
+node test/smoke.mjs
+node test/bench.mjs
+for file in $(rg --files -g '*.mjs'); do node --check "$file"; done
+claude plugin validate .claude-plugin/plugin.json
+claude plugin validate .claude-plugin/marketplace.json
+git diff --check
+```
+
+live：`OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs`。
+
+## 参考与许可证
+
+README 结构参考了 [uv](https://github.com/astral-sh/uv)、[Ruff](https://github.com/astral-sh/ruff)、[Playwright](https://github.com/microsoft/playwright)、[fmt](https://github.com/fmtlib/fmt)、[Slim](https://github.com/slimphp/Slim) 的简洁安装和可复现表达，但没有复制文字或 benchmark 声明。[OKF specification](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)。许可证：[MIT](LICENSE)。
