@@ -32,13 +32,11 @@
 ## 설치
 
 ```
-claude plugin marketplace add /path/to/okf-system
+claude plugin marketplace add dja1369/okf-system
 claude plugin install okf@okf-marketplace
 ```
 
-(이 저장소가 GitHub에 올라가 있다면 `claude plugin marketplace add <owner>/<repo>`
-형태도 동일하게 동작합니다 — 두 번째 명령에 쓰는 마켓플레이스 이름은
-[`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)을 참고하세요.)
+(로컬 클론에서 설치하려면: `claude plugin marketplace add /path/to/your/clone`.)
 
 이게 전부입니다 — 세션을 다시 시작하면 게이트/캡처 훅이 활성화됩니다. 다음 세션
 시작 시 번들이 자동으로 부트스트랩됩니다(`~/.claude/okf` 아래 기본 구조를 갖춘

@@ -34,15 +34,12 @@
 ## インストール
 
 ```
-claude plugin marketplace add /path/to/okf-system
+claude plugin marketplace add dja1369/okf-system
 claude plugin install okf@okf-marketplace
 ```
 
-(このリポジトリが GitHub にホストされている場合は
-`claude plugin marketplace add <owner>/<repo>` の形式でも同様に動作します —
-2番目のコマンドで使うマーケットプレイス名は
-[`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json) を
-参照してください。)
+(ローカルクローンからインストールする場合:
+`claude plugin marketplace add /path/to/your/clone`。)
 
 これだけです — セッションを再起動すればゲート/キャプチャのフックが有効に
 なります。次のセッション開始時にバンドルが自動的にブートストラップされます

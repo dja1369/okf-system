@@ -31,13 +31,11 @@ Anthropic API 调用 —— 批处理步骤只是本地又执行了一次 `claud
 ## 安装
 
 ```
-claude plugin marketplace add /path/to/okf-system
+claude plugin marketplace add dja1369/okf-system
 claude plugin install okf@okf-marketplace
 ```
 
-(如果该仓库托管在 GitHub 上,`claude plugin marketplace add <owner>/<repo>`
-的形式同样有效 —— 第二条命令中使用的 marketplace 名称请参考
-[`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)。)
+(从本地克隆安装:`claude plugin marketplace add /path/to/your/clone`。)
 
 就这么简单 —— 重启会话后,网关/捕获钩子即已启用。下次会话启动时,知识包会
 自动初始化(会在 `~/.claude/okf` 下创建一个具备基本结构的本地 git 仓库)。

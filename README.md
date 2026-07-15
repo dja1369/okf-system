@@ -33,13 +33,11 @@ started.
 ## Install
 
 ```
-claude plugin marketplace add /path/to/okf-system
+claude plugin marketplace add dja1369/okf-system
 claude plugin install okf@okf-marketplace
 ```
 
-(If this repo is hosted on GitHub, `claude plugin marketplace add <owner>/<repo>`
-works the same way — see [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)
-for the marketplace name used in the second command.)
+(Installing from a local clone instead: `claude plugin marketplace add /path/to/your/clone`.)
 
 That's it — restart your session and the gate/capture hooks are active. On the
 next session start, the bundle is bootstrapped automatically (a local git repo is
