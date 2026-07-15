@@ -52,7 +52,10 @@ function buildInjectedIndex(okfHome, budgetLines, budgetBytes) {
     const omitted = total - c.taken;
     const heading = headingFor(c, omitted > 0 ? `${c.taken}/${total}개` : `${total}개`);
     const body = c.lines.slice(0, c.taken).join('\n');
-    const marker = omitted > 0 ? `\n...(${omitted}개 생략 — 이 카테고리는 일부만 표시됨)` : '';
+    // OKF 스펙의 점진적 공개: index.md는 자기 디렉토리의 내용물을 열거하므로, 잘린 카테고리는
+    // 자기 index.md를 내려가는 길로 제시해야 한다. "159개 생략"만 알리고 위치를 안 주면 모델은
+    // 빠진 게 있다는 것만 알고 도달할 수단이 없다 — 그건 막다른 길이지 점진적 공개가 아니다.
+    const marker = omitted > 0 ? `\n...(${omitted}개 생략 — 전체 목록은 /${c.dir}/index.md 를 Read)` : '';
     return `${heading}${body ? `\n${body}` : ''}${marker}`;
   }).join('\n\n');
 }
