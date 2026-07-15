@@ -678,6 +678,66 @@ console.log('\n=== viz.mjs ===');
   ok('viz: angle brackets in concept data are escaped in the embedded JSON', html.includes('\\u003c/script>'));
   ok('viz: output has no external network references', !/src="http|href="http|cdn\.|fetch\(/i.test(html));
 
+  // The codebase is the subject; OKF knowledge is the lens on it. A concept about some other
+  // project has no business appearing as a node — that's screen noise, not information.
+  const rel = bootstrapped('viz-relevance');
+  fs.mkdirSync(path.join(rel, 'decisions'), { recursive: true });
+  const repo = sandbox('viz-relevance-repo');
+  fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'src', 'server.js'), 'export const serve = () => {};\n');
+  fs.writeFileSync(
+    path.join(rel, 'decisions', 'about-this-repo.md'),
+    '---\ntype: decision\ntitle: about this repo\ndescription: mentions src/server.js\ntimestamp: 2026-07-15\n---\n`src/server.js` handles it. See [/decisions/context.md](/decisions/context.md).\n'
+  );
+  fs.writeFileSync(
+    path.join(rel, 'decisions', 'context.md'),
+    '---\ntype: decision\ntitle: linked context\ndescription: reached via a link from a relevant concept\ntimestamp: 2026-07-15\n---\nbackground\n'
+  );
+  fs.writeFileSync(
+    path.join(rel, 'decisions', 'unrelated.md'),
+    '---\ntype: decision\ntitle: totally unrelated project\ndescription: about some other codebase entirely\ntimestamp: 2026-07-15\n---\nnothing to do with the repo under analysis\n'
+  );
+  const rg = buildGraph(rel, repo);
+  const keptIds = rg.nodes.filter((n) => n.kind === 'okf').map((n) => n.id);
+  ok('viz: concept that names a file in the repo is kept', keptIds.includes('/decisions/about-this-repo.md'));
+  ok('viz: concept linked from a relevant one is kept for context', keptIds.includes('/decisions/context.md'));
+  ok('viz: concept unrelated to the analyzed repo is dropped', !keptIds.includes('/decisions/unrelated.md'));
+  // bootstrapped() also seeds OKF's own concepts, so assert on behaviour rather than a total
+  ok('viz: the number of hidden concepts is reported, not silently swallowed', rg.meta.okfFiltered > 0 && rg.meta.okfTotal === rg.meta.okfCount + rg.meta.okfFiltered);
+
+  // a bundle with nothing about this repo should show code only — not the whole bundle
+  const none = buildGraph(rel, sandbox('viz-empty-repo'));
+  ok('viz: bundle irrelevant to the repo yields zero concept nodes', none.nodes.every((n) => n.kind !== 'okf'));
+
+  // bundle-only view (no repo) must still show everything, including the concepts filtered above
+  const all = buildGraph(rel, null);
+  const allIds = all.nodes.filter((n) => n.kind === 'okf').map((n) => n.id);
+  ok('viz: with no repo, the whole bundle is shown', allIds.includes('/decisions/unrelated.md') && allIds.length === rg.meta.okfTotal);
+
+  // "what do I read first" should be answered explicitly, not by squinting at the picture.
+  // Entry points (nothing imports them) and depended-on hubs answer different questions and
+  // must not be conflated into one degree count.
+  const spring = sandbox('viz-spring');
+  const sw = (rel, body) => {
+    const p = path.join(spring, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+  };
+  sw('src/controller/UserController.js', "import { UserService } from '../service/UserService.js';\nimport { logger } from '../util/logger.js';\nexport class UserController {}\n");
+  sw('src/service/UserService.js', "import { logger } from '../util/logger.js';\nexport class UserService {}\n");
+  sw('src/util/logger.js', 'export const logger = console;\n');
+  const sg = buildGraph(bootstrapped('viz-spring-bundle'), spring);
+  const deps = sg.edges.filter((e) => e.type === 'imports');
+  const outOf = (f) => deps.filter((e) => e.source === `file:${f}`).length;
+  const inTo = (f) => deps.filter((e) => e.target === `file:${f}`).length;
+  ok('viz: a controller is an entry point (imports others, nothing imports it)', outOf('src/controller/UserController.js') === 2 && inTo('src/controller/UserController.js') === 0);
+  ok('viz: a util is depended on rather than an entry point', inTo('src/util/logger.js') === 2 && outOf('src/util/logger.js') === 0);
+  const springHtml = renderHtml(sg);
+  ok('viz: the graph ships the entry-point list', springHtml.includes('Start here'));
+  ok('viz: the graph ships the depended-on list', springHtml.includes('Most depended on'));
+  // contains edges (file -> its classes) must not inflate out-degree into a fake entry point
+  ok('viz: contains edges are excluded from dependency degree', springHtml.includes("DEP_EDGE"));
+
   // type is user data — it must not walk the prototype chain into a color lookup
   const proto = bootstrapped('viz-proto');
   fs.mkdirSync(path.join(proto, 'decisions'), { recursive: true });
