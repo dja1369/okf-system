@@ -327,6 +327,12 @@ console.log('\n=== session-start.mjs (subprocess) ===');
   ok('gate context names each concept', ctx.includes('예시 결정'));
   ok('gate context carries the concept description (the relevance hook)', ctx.includes('게이트 주입 테스트용'));
   ok('gate context links concepts by bundle-root path', ctx.includes('/decisions/example.md'));
+  // Live-bench diagnosis (docs/benchmarks/okf-live-2026-07-15T15-03-01-343Z): of C's 13,787
+  // excess token activity over B, 91% (12,508) was the mandated Read round-trip — and those
+  // 5 Reads returned ZERO new facts, because 8/8 answers were already in the index lines.
+  // Now that the index carries titles+descriptions, "반드시 Read 하라" orders the model to
+  // re-fetch what it was already handed. The gate must let it answer from the line itself.
+  ok('gate allows answering from the index line without a redundant Read', ctx.includes('Read 없이'));
   ok('suppressOutput is set', parsed.suppressOutput === true);
 
   const outBatchGuard = runHook('bin/session-start.mjs', { okfHome: home, env: { OKF_BATCH: '1' } });
@@ -359,6 +365,35 @@ console.log('\n=== session-start.mjs (subprocess) ===');
   ok('oversized index still carries the latest log entry', ctx.includes('번들이 이만큼 움직였다'));
   ok('oversized index is visibly truncated, not silently cut', ctx.includes('생략'));
   ok('oversized injection still respects the byte cap', Buffer.byteLength(ctx, 'utf8') <= DEFAULT_CONFIG.inject_max_bytes);
+}
+
+{
+  // Accumulation regime. The index fills category-by-category in alphabetical order, so one
+  // large category eats the whole budget and the rest vanish — eviction is by FILENAME, not
+  // by relevance or recency. Real Korean concept lines run ~200 bytes, so the byte cap binds
+  // around 40 concepts, far below the 120-line cap. The 500-concept test above misses this
+  // because its fixture lines (`결정 0` / `설명 0`) are ~50 bytes, tripping the LINE cap instead
+  // — right intent, wrong regime. Here `decisions` is huge and the SQLITE_BUSY fix, the kind of
+  // fact a user actually needs, sits in `troubleshooting` after it alphabetically.
+  const home = bootstrapped('session-start-starvation');
+  fs.mkdirSync(path.join(home, 'decisions'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'troubleshooting'), { recursive: true });
+  for (let i = 0; i < 200; i++) {
+    fs.writeFileSync(
+      path.join(home, 'decisions', `concept-${String(i).padStart(3, '0')}.md`),
+      `---\ntype: decision\ntitle: 서비스 계층 분리 결정 ${i}\ndescription: 도메인 로직을 컨트롤러에서 떼어내 서비스 계층으로 옮기기로 한 근거와 적용 범위 ${i}\ntimestamp: 2026-07-15\n---\n본문\n`
+    );
+  }
+  fs.writeFileSync(
+    path.join(home, 'troubleshooting', 'sqlite-busy.md'),
+    '---\ntype: troubleshooting\ntitle: SQLITE_BUSY는 busy_timeout=5000으로 해결한다\ndescription: 동시 쓰기에서 SQLITE_BUSY가 발생하면 busy_timeout=5000을 설정해 해결한다\ntimestamp: 2026-07-15\n---\n본문\n'
+  );
+  regenerateIndex(home);
+
+  const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  ok('a large category does not evict the other categories from the index', ctx.includes('busy_timeout'));
+  ok('a truncated category shows visible/total, so the model knows the index is partial', /\d+\/\d+개/.test(ctx));
+  ok('starved index still respects the byte cap', Buffer.byteLength(ctx, 'utf8') <= DEFAULT_CONFIG.inject_max_bytes);
 }
 
 // ---------------------------------------------------------------------------
