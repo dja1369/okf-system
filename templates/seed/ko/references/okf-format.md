@@ -3,6 +3,7 @@ type: reference
 title: OKF(Open Knowledge Format)란 무엇인가
 description: Google Cloud가 발표한 v0.1 Draft 스펙 — YAML frontmatter가 붙은 마크다운 디렉토리로 지식을 표현하는 벤더 중립 포맷
 resource: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
+okf_seed: true
 tags: [okf, spec, reference]
 timestamp: {{INSTALL_DATE}}
 ---

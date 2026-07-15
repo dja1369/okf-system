@@ -203,8 +203,8 @@ Bearbeite `~/.claude/okf/.okf/config.md` direkt (Frontmatter) oder nutze
 Kein Pfad ist jemals hartkodiert — alles wird über `os.homedir()` /
 `process.env.CLAUDE_CONFIG_DIR` / `process.env.HOME` aufgelöst, sodass eine frische
 Installation auf einer anderen Maschine oder unter einem anderen Benutzerkonto ihr
-eigenes, unabhängiges Bundle erzeugt. Das wird von der Test-Suite (`test/smoke.mjs`,
-78 Szenarien) in isolierten `HOME`/`CLAUDE_CONFIG_DIR`-Sandboxes abgedeckt, darunter
+eigenes, unabhängiges Bundle erzeugt. Das wird von der Test-Suite (`test/smoke.mjs`)
+in isolierten `HOME`/`CLAUDE_CONFIG_DIR`-Sandboxes abgedeckt, darunter
 eine **ganz ohne konfigurierte git-Identität** — das Plugin hängt nie von deinem
 `user.name`/`user.email` ab; seine eigenen automatisierten Commits verwenden immer eine
 feste synthetische Identität (`OKF Batch <okf-batch@localhost>`). macOS und Linux werden

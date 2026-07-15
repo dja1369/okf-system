@@ -2,6 +2,7 @@
 type: preference
 title: 이 번들에 지식을 쓸 때 지키는 규칙
 description: 택소노미 6종, frontmatter 형식, 병합·링크 규칙 — 세션과 배치 양쪽에 적용되는 항구 규칙
+okf_seed: true
 tags: [okf, rules, preference]
 timestamp: {{INSTALL_DATE}}
 ---

@@ -181,7 +181,7 @@ git 저장소이니 직접 살펴보거나 백업하거나, `rm -rf ~/.claude/ok
 
 경로를 하드코딩한 곳이 한 군데도 없습니다 — 전부 `os.homedir()` /
 `process.env.CLAUDE_CONFIG_DIR` / `process.env.HOME`로 해석하므로, 다른 기기나 다른 사용자
-계정에 새로 설치하면 각자 독립된 번들이 생깁니다. 테스트 스위트(`test/smoke.mjs`, 78개
+계정에 새로 설치하면 각자 독립된 번들이 생깁니다. 테스트 스위트(`test/smoke.mjs`)가
 시나리오)가 격리된 `HOME`/`CLAUDE_CONFIG_DIR` 샌드박스에서 이를 검증하며, 여기엔 **git
 사용자 설정이 전혀 없는 환경**도 포함됩니다 — 이 플러그인은 사용자의 `user.name`/`user.email`에
 의존하지 않고, 자동 커밋에는 항상 고정된 자체 identity(`OKF Batch <okf-batch@localhost>`)를

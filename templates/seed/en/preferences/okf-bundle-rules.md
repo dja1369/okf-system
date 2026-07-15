@@ -2,6 +2,7 @@
 type: preference
 title: Rules for writing knowledge into this bundle
 description: The six taxonomy types, frontmatter format, and merge/link rules — standing rules that apply to both sessions and the batch
+okf_seed: true
 tags: [okf, rules, preference]
 timestamp: {{INSTALL_DATE}}
 ---

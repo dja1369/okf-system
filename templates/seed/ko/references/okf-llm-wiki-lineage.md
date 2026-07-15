@@ -3,6 +3,7 @@ type: reference
 title: OKF는 Karpathy의 LLM-wiki 패턴을 형식화한 것이다
 description: 이 시스템의 3계층(raw/wiki/schema)·3연산(ingest/query/lint) 구조가 어디서 왔는지
 resource: https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
+okf_seed: true
 tags: [okf, background, reference]
 timestamp: {{INSTALL_DATE}}
 ---

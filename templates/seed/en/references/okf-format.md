@@ -3,6 +3,7 @@ type: reference
 title: What OKF (Open Knowledge Format) is
 description: Google Cloud's v0.1 Draft spec — a vendor-neutral format representing knowledge as a directory of markdown files with YAML frontmatter
 resource: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
+okf_seed: true
 tags: [okf, spec, reference]
 timestamp: {{INSTALL_DATE}}
 ---

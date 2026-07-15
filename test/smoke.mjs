@@ -16,6 +16,8 @@ import { regenerateIndex } from '../lib/index-gen.mjs';
 import { digestFile } from '../lib/digest.mjs';
 import { captureSession, sanitizeForFilename } from '../lib/capture.mjs';
 import { git } from '../lib/git.mjs';
+import { analyzeProject } from '../lib/analyze.mjs';
+import { buildGraph, renderHtml } from '../lib/viz.mjs';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE_CLAUDE = path.join(PLUGIN_ROOT, 'test', 'fixtures', 'fake-claude.mjs');
@@ -608,6 +610,80 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   fs.writeFileSync(path.join(home2, '.okf', 'config.md'), '---\nseed_language: "xx-NOPE"\n---\n');
   ensureBootstrap(home2);
   ok('unknown seed_language falls back to English rather than seeding nothing', fs.readFileSync(path.join(home2, 'references', 'okf-format.md'), 'utf8').includes('What OKF'));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n=== analyze.mjs ===');
+{
+  // analyze.mjs shipped with zero coverage, which is exactly why an adversarial review found
+  // four real extraction bugs in it. These pin the ones that silently produced empty graphs.
+  const root = sandbox('analyze');
+  const w = (rel, body) => {
+    const p = path.join(root, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+  };
+  // Prettier splits any import list past printWidth — line-by-line matching lost these entirely
+  w('src/multi.js', 'import {\n  alpha,\n} from \'./dep.js\';\nexport {\n  gamma,\n} from \'./dep2.js\';\n');
+  w('src/dep.js', 'export const alpha = 1;\n');
+  w('src/dep2.js', 'export const gamma = 3;\n');
+  w('src/single.js', "import x from './dep.js';\n");
+  // these three are relative *by definition*, yet were all classified as external packages
+  w('c/main.c', '#include "util.h"\nint main(){return 0;}\n');
+  w('c/util.h', '#pragma once\n');
+  w('rb/app.rb', "require_relative 'helper'\n");
+  w('rb/helper.rb', 'def helper; end\n');
+  w('rs/src/main.rs', 'mod helper;\nfn main(){}\n');
+  w('rs/src/helper.rs', 'pub fn h(){}\n');
+  // python dotted module paths
+  w('py/pkg/a.py', 'from py.pkg.b import thing\n');
+  w('py/pkg/b.py', 'thing = 1\n');
+
+  const g = analyzeProject(root);
+  const edge = (from, to) => g.edges.some((e) => e.type === 'imports' && e.source === `file:${from}` && e.target === `file:${to}`);
+  ok('analyze: multi-line import resolves', edge('src/multi.js', 'src/dep.js'));
+  ok('analyze: multi-line re-export resolves', edge('src/multi.js', 'src/dep2.js'));
+  ok('analyze: single-line import still resolves', edge('src/single.js', 'src/dep.js'));
+  ok('analyze: C quoted include resolves', edge('c/main.c', 'c/util.h'));
+  ok('analyze: ruby require_relative resolves', edge('rb/app.rb', 'rb/helper.rb'));
+  ok('analyze: rust mod resolves', edge('rs/src/main.rs', 'rs/src/helper.rs'));
+  ok('analyze: python dotted module resolves', edge('py/pkg/a.py', 'py/pkg/b.py'));
+  ok('analyze: graph reports it was not truncated', g.truncated === false);
+
+  // a skipped file must not claim "0 lines, 0 imports" — that's fabricated, not measured
+  const big = sandbox('analyze-big');
+  fs.writeFileSync(path.join(big, 'huge.js'), "import x from './y.js';\n" + '// pad\n'.repeat(90000));
+  fs.writeFileSync(path.join(big, 'y.js'), 'export default 1;\n');
+  const gb = analyzeProject(big);
+  const hugeNode = gb.nodes.find((n) => n.id === 'file:huge.js');
+  ok('analyze: oversized file is marked skipped, not described as empty', /분석 생략/.test(hugeNode.summary) && !/0줄/.test(hugeNode.summary));
+
+  // external packages must stay external rather than being linked to an arbitrary file
+  const extTags = g.nodes.filter((n) => n.type === 'file').flatMap((n) => n.tags.filter((t) => t.startsWith('dep:')));
+  ok('analyze: unresolvable specs remain external deps', extTags.length === 0 || extTags.every((t) => !t.includes('./')));
+}
+
+console.log('\n=== viz.mjs ===');
+{
+  // The viz renders concept text that originally came from a user's own past conversations,
+  // so a malicious/accidental payload in a concept must never execute.
+  const home = bootstrapped('viz-xss');
+  fs.mkdirSync(path.join(home, 'decisions'), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, 'decisions', 'evil.md'),
+    '---\ntype: decision\ntitle: "</script><img src=x onerror=alert(1)>"\ndescription: "<img src=y onerror=alert(2)>"\ntimestamp: 2026-07-15\n---\n</script><script>alert(3)</script>\n'
+  );
+  const html = renderHtml(buildGraph(home, null));
+  ok('viz: payload never appears as a live closing script tag', !/<\/script><img/i.test(html));
+  ok('viz: angle brackets in concept data are escaped in the embedded JSON', html.includes('\\u003c/script>'));
+  ok('viz: output has no external network references', !/src="http|href="http|cdn\.|fetch\(/i.test(html));
+
+  // type is user data — it must not walk the prototype chain into a color lookup
+  const proto = bootstrapped('viz-proto');
+  fs.mkdirSync(path.join(proto, 'decisions'), { recursive: true });
+  fs.writeFileSync(path.join(proto, 'decisions', 'p.md'), '---\ntype: constructor\ntitle: p\ntimestamp: 2026-07-15\n---\nbody\n');
+  const protoHtml = renderHtml(buildGraph(proto, null));
+  ok('viz: prototype-chain type does not leak a function into the output', !/background:function|\[native code\]/.test(protoHtml));
 }
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ type: reference
 title: OKF formalizes Karpathy's LLM-wiki pattern
 description: Where this system's three layers (raw/wiki/schema) and three operations (ingest/query/lint) come from
 resource: https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
+okf_seed: true
 tags: [okf, background, reference]
 timestamp: {{INSTALL_DATE}}
 ---

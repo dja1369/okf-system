@@ -192,7 +192,7 @@ Edite `~/.claude/okf/.okf/config.md` diretamente (frontmatter) ou use
 Nenhum caminho é hardcoded — tudo é resolvido via `os.homedir()` /
 `process.env.CLAUDE_CONFIG_DIR` / `process.env.HOME`, de modo que uma instalação nova em
 outra máquina ou conta de usuário produz seu próprio bundle independente. Isso é
-exercitado pela suíte de testes (`test/smoke.mjs`, 78 cenários) em sandboxes isolados de
+exercitado pela suíte de testes (`test/smoke.mjs`) em sandboxes isolados de
 `HOME`/`CLAUDE_CONFIG_DIR`, incluindo um **sem nenhuma identidade git configurada** — o
 plugin nunca depende do seu `user.name`/`user.email`; seus próprios commits automatizados
 sempre usam uma identidade sintética fixa

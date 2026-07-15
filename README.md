@@ -120,8 +120,16 @@ to the source files it actually talks about.
 If [Understand-Anything](https://github.com/Egonex-AI/Understand-Anything) has already
 analyzed the repo (`.understand-anything/` or `.ua/knowledge-graph.json`), that richer
 LLM-summarized graph is used. Otherwise this plugin's own analyzer builds one — pure
-Node, no native modules, extracting files, functions, classes, and the import graph
-across JS/TS, Python, Go, Rust, Java/Kotlin, Ruby, PHP, C/C++, C#, and Swift.
+Node, no native modules — extracting files, functions, and classes across JS/TS,
+Python, Go, Rust, Java/Kotlin, Ruby, PHP, C/C++, C#, and Swift.
+
+Import *edges* are drawn wherever a specifier names a file: JS/TS, Python (including
+dotted module paths), C/C++ quoted includes, `require_relative`, and Rust `mod`. Where
+a language imports a *package* rather than a file — Go's `myapp/pkg/db`, Java's
+`com.foo.Bar` — the reference is recorded as an external dependency instead of being
+guessed at, since a package is a directory and picking a file inside it would just
+invent a fact. It's regex-based, not a real parser: that buys zero dependencies and
+costs some accuracy on unusual formatting.
 
 The output is a self-contained HTML file: no CDN, no network requests, no backend. It
 opens offline, because opening your own knowledge base should not phone anywhere.
@@ -189,7 +197,7 @@ Edit `~/.claude/okf/.okf/config.md` directly (frontmatter), or use
 No path is ever hardcoded — everything resolves through `os.homedir()` /
 `process.env.CLAUDE_CONFIG_DIR` / `process.env.HOME`, so a fresh install on a
 different machine or user account produces its own independent bundle. This is
-exercised by the test suite (`test/smoke.mjs`, 78 scenarios) under isolated
+exercised by the test suite (`test/smoke.mjs`) under isolated
 `HOME`/`CLAUDE_CONFIG_DIR` sandboxes, including one with **no git identity
 configured at all** — the plugin never depends on your `user.name`/`user.email`;
 its own automated commits always use a fixed synthetic identity

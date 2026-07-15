@@ -3,6 +3,7 @@ type: reference
 title: How this OKF plugin actually works
 description: The three stages — lossless capture, batch compression via claude -p, gate injection — and why each is designed that way
 resource: https://github.com/dja1369/okf-system
+okf_seed: true
 tags: [okf, architecture, reference]
 timestamp: {{INSTALL_DATE}}
 ---

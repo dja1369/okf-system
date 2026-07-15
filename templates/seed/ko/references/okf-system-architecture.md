@@ -3,6 +3,7 @@ type: reference
 title: 이 OKF 플러그인이 실제로 어떻게 동작하는가
 description: 캡처(무손실) → 배치 압축(claude -p) → 게이트 주입의 3단 구조와, 각 단계의 설계 근거
 resource: https://github.com/dja1369/okf-system
+okf_seed: true
 tags: [okf, architecture, reference]
 timestamp: {{INSTALL_DATE}}
 ---

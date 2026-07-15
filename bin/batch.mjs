@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { resolveOkfHome, okfPaths, pluginRoot, claudeConfigDir } from '../lib/paths.mjs';
-import { readConfig } from '../lib/config.mjs';
+import { readConfig, DEFAULT_CONFIG } from '../lib/config.mjs';
 import { git, isDirty, commitAll, rollback } from '../lib/git.mjs';
 import { runLint, formatReport } from '../lib/lint.mjs';
 import { regenerateIndex } from '../lib/index-gen.mjs';
@@ -257,6 +257,36 @@ function generateDigests(okfHome, stagingDir, files, capKb) {
     }
   }
   return digestPaths;
+}
+
+// digest가 비었다 = 그 세션에서 배울 게 없다. LLM에 빈 입력을 보내는 건 순수한 낭비이므로
+// 여기서 걸러낸다.
+//
+// 다만 이건 조용히 넘어가면 안 되는 사건이다(적대적 리뷰 지적): digest 필터가 오작동하거나
+// 하네스 transcript 스키마가 바뀌어 진짜 대화까지 boilerplate로 오인되면, 모든 세션이 빈
+// digest가 되고 → 전부 "처리 완료"로 archive되고 → 30일 뒤 삭제되어 **지식이 통째로 조용히
+// 사라진다**. 그래서 개별 건은 로그로 남기고, 한 회차가 전부 비면 필터 오작동을 의심하라고
+// 크게 경고한다. archive 자체는 유지한다 — 정말 잡담뿐인 세션도 흔하고, _remove_candidate의
+// 30일 창이 오판에 대한 복구 수단이다.
+function partitionEmptyDigests(okfHome, digestPaths) {
+  const withContent = [];
+  const empty = [];
+  for (const dp of digestPaths) {
+    let size = 0;
+    try {
+      size = fs.statSync(dp.digest).size;
+    } catch {
+      // 크기를 못 재면 내용이 있다고 보고 LLM에 맡긴다 — 여기서 버리는 것보다 안전하다
+    }
+    (size === 0 ? empty : withContent).push(dp);
+  }
+  if (empty.length > 0) {
+    log(okfHome, `digest가 빈 세션 ${empty.length}개 — LLM 호출 없이 처리 완료로 이동: ${empty.map((d) => path.basename(d.source)).join(', ')}`);
+  }
+  if (digestPaths.length >= 3 && empty.length === digestPaths.length) {
+    log(okfHome, `경고: 이번 회차 ${digestPaths.length}개 세션의 digest가 전부 비었다. 정상적인 경우(잡담뿐인 세션들)일 수도 있으나, digest 필터 오작동이나 transcript 스키마 변경일 수 있으니 lib/digest.mjs를 확인하라. 원본은 _remove_candidate/에 30일간 보관된다.`);
+  }
+  return { withContent, empty };
 }
 
 // 실행당 digest 총량 예산을 적용한다. 예산을 넘는 세션은 raw로 되돌려 다음 회차로 미룬다.
@@ -555,9 +585,29 @@ function runBatch() {
       return;
     }
 
+    // 빈 digest는 LLM에 보내지 않고 바로 처리 완료 처리한다(위 partitionEmptyDigests 참고).
+    const { withContent, empty } = partitionEmptyDigests(okfHome, digestPaths);
+    const emptyArchiveDir = path.join(okfPaths(okfHome).removeCandidate, localDateString());
+    for (const dp of empty) {
+      try {
+        fs.mkdirSync(emptyArchiveDir, { recursive: true });
+        fs.renameSync(dp.source, path.join(emptyArchiveDir, path.basename(dp.source)));
+        tryUnlink(dp.digest);
+      } catch (err) {
+        log(okfHome, `빈 digest 세션 이동 실패 ${dp.source}: ${err.message}`);
+      }
+    }
+
     // 실행당 비용 상한(크기 기반). 예산 밖 세션은 raw로 되돌려 다음 회차가 가져간다.
-    const budgetBytes = Math.max(1, config.batch_max_digest_kb) * 1024;
-    const { selected, deferred, totalBytes } = applyDigestBudget(okfHome, digestPaths, budgetBytes);
+    // 설정값 검증: 숫자가 아니면 NaN이 되어 모든 비교가 false가 되고 예산이 통째로 무력화된다
+    // (비용 상한이 사라지는 것 — 리뷰 지적). 빈 값/오타는 조용히 넘기지 말고 기본값으로 되돌린다.
+    const rawBudget = Number(config.batch_max_digest_kb);
+    const budgetKb = Number.isFinite(rawBudget) && rawBudget > 0 ? rawBudget : DEFAULT_CONFIG.batch_max_digest_kb;
+    if (budgetKb !== rawBudget) {
+      log(okfHome, `batch_max_digest_kb 값이 올바르지 않음(${JSON.stringify(config.batch_max_digest_kb)}) — 기본값 ${budgetKb}KB 사용`);
+    }
+    const budgetBytes = budgetKb * 1024;
+    const { selected, deferred, totalBytes } = applyDigestBudget(okfHome, withContent, budgetBytes);
     if (deferred.length > 0) {
       const paths = okfPaths(okfHome);
       for (const dp of deferred) {
@@ -568,7 +618,7 @@ function runBatch() {
           log(okfHome, `예산 초과분 raw 반환 실패 ${dp.source}: ${err.message}`);
         }
       }
-      log(okfHome, `digest 예산 ${config.batch_max_digest_kb}KB 초과 — ${selected.length}개 처리, ${deferred.length}개 다음 회차로 이월`);
+      log(okfHome, `digest 예산 ${budgetKb}KB 초과 — ${selected.length}개 처리, ${deferred.length}개 다음 회차로 이월`);
     }
     log(okfHome, `이번 회차 처리 대상: 세션 ${selected.length}개, digest 합계 ${(totalBytes / 1024).toFixed(1)}KB`);
 
