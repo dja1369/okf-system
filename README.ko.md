@@ -49,7 +49,7 @@ claude plugin install okf@okf-marketplace
 ## 사용법
 
 평소에는 아무것도 할 필요 없습니다. 캡처와 배치 압축은 자동으로 일어납니다.
-수동으로 상태를 보거나 제어하고 싶을 때 쓸 수 있는 커맨드가 3개 있습니다 —
+수동으로 상태를 보거나 제어하고 싶을 때 쓸 수 있는 커맨드가 4개 있습니다 —
 **`okf:` 접두사가 반드시 필요합니다**(플러그인 스코프 커맨드이기 때문입니다):
 
 | 커맨드 | 하는 일 |
@@ -57,6 +57,7 @@ claude plugin install okf@okf-marketplace
 | `/okf:okf-status` | 마지막 배치 실행, 대기 중인 세션, 락 상태를 보고 |
 | `/okf:okf-batch` | 즉시 배치 강제 실행(주기 게이트는 무시하되 락은 존중) |
 | `/okf:okf-config` | 현재 설정을 보여주고 편집 가능하게 함 |
+| `/okf:okf-index` | 번들 개요 출력 — 카테고리별 concept 제목 전체 + log.md 최근 변경 |
 
 ## 동작 원리
 
@@ -96,9 +97,10 @@ SessionEnd → raw/에                      │
 | 키 | 기본값 | 의미 |
 |---|---|---|
 | `enabled` | `true` | 전체 켬/끔 스위치(캡처·게이트·배치 전부 이 값을 따름) |
-| `batch_interval_hours` | `12` | 배치 실행 사이 최소 간격 |
+| `batch_interval_hours` | `1` | 배치 실행 사이 최소 간격 |
 | `batch_max_sessions` | `10` | 배치 1회당 처리 세션 수(비용 상한) |
-| `batch_model` | *(빈 값)* | 배치 ingest에 쓸 모델 override, 비면 CLI 기본값 |
+| `batch_model` | `claude-sonnet-5` | 배치 ingest에 쓸 모델, 비면 CLI 기본값 |
+| `batch_effort` | `medium` | 배치 ingest의 추론 강도(`low`/`medium`/`high`/`xhigh`/`max`), 비면 CLI 기본값 |
 | `capture_exclude_cwd` | `[]` | 캡처를 건너뛸 디렉토리 glob 패턴(opt-out 전용 — 캡처 자체는 절대 부분적이지 않음) |
 | `batch_digest_cap_kb` | `150` | LLM에 보여줄 세션별 요약 용량 상한(캡처된 원본에는 적용 안 됨) |
 | `remove_candidate_ttl_days` | `30` | 처리 완료된 raw transcript를 삭제 전까지 보관하는 기간 |
@@ -107,13 +109,31 @@ SessionEnd → raw/에                      │
 
 ## 데이터와 개인정보
 
-- 모든 데이터는 로컬에만 있습니다: `~/.claude/okf`는 평범한 git 저장소이고 절대
-  push되지 않습니다.
+- 모든 데이터는 로컬에만 있습니다: `~/.claude/okf`는 작업 중인 어떤 저장소와도
+  완전히 분리된, 그 자체로 독립적인 평범한 git 저장소입니다. **이 플러그인의 어떤
+  코드 경로도 `git push`·`git remote add` 등 네트워크 관련 동작을 하지 않습니다** —
+  실제로 쓰는 git 명령은 `init`, `commit`, `checkout`, `clean`뿐입니다(직접 확인 가능:
+  `grep -n "push\|remote" lib/*.mjs bin/*.mjs` — 매치되는 건 전부 무관한
+  `Array.push()` 호출입니다). 사용자가 직접 push하지 않는 한 번들은 절대 기기를
+  떠나지 않습니다.
 - 배치 단계는 요약/추출을 위해 세션 내용을 Anthropic API로 보냅니다 — 평소
   Claude Code 사용 시 이미 통신하는 그 API이고, `claude -p` 호출이 하나 더
   생기는 것뿐입니다. 제3자 서비스는 관여하지 않습니다.
 - `raw/`(캡처된 전체 transcript)와 처리 완료 후 삭제 대기 중인 transcript는
   git에 커밋되지 않습니다(gitignore 처리) — 추출된 지식 번들만 커밋됩니다.
+
+## 이식성(다른 사용자·다른 기기)
+
+경로를 하드코딩한 곳이 한 군데도 없습니다 — 전부 `os.homedir()` /
+`process.env.CLAUDE_CONFIG_DIR` / `process.env.HOME`로 해석하므로, 다른 기기나 다른
+사용자 계정에 새로 설치하면 각자 독립된 번들이 생깁니다. 테스트 스위트
+(`test/smoke.mjs`, 78개 시나리오)가 격리된 `HOME`/`CLAUDE_CONFIG_DIR` 샌드박스에서
+이를 검증하며, 여기엔 **git 사용자 설정이 전혀 없는 환경**도 포함됩니다 — 이
+플러그인은 사용자의 `user.name`/`user.email`에 의존하지 않고, 자동 커밋에는 항상
+고정된 자체 identity(`OKF Batch <okf-batch@localhost>`)를 씁니다. macOS/Linux는 이런
+방식으로 직접 검증했고, 윈도우 전용 경로(`claude.cmd`용 `shell:true`, 경로 구분자)는
+설계 요구사항대로 구현했지만 실제 윈도우 기기에서 아직 돌려보지 않았습니다 — 그
+조합은 누군가 확인해주기 전까지 미검증으로 봐주세요.
 
 ## 라이선스
 

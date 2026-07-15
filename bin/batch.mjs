@@ -283,31 +283,34 @@ function chunkBySize(digestPaths, limitBytes) {
   return chunks;
 }
 
-function runClaude(prompt, { cwd, timeoutMs, claudeBin }) {
+function runClaude(prompt, { cwd, timeoutMs, claudeBin, model, effort }) {
   const bin = claudeBin || 'claude';
+  const args = [
+    '-p', prompt,
+    // 리뷰 지적(사후 반영, 실측 확인): --allowedTools는 권한 프롬프트 생략 목록일 뿐
+    // 실제 도구 가용성을 제한하지 않는다 — 실측 결과 --allowedTools에서 Bash를 뺐는데도
+    // 모델이 Bash를 호출해 그대로 실행됐다. --tools(가용 도구 집합 자체를 제한)가 실제
+    // 차단 메커니즘이고, --disallowedTools는 보조로 병기한다(§9 item 4, 이번에 실측 완료).
+    '--tools', 'Read,Glob,Grep,Write,Edit',
+    '--disallowedTools', 'Bash',
+    '--settings', '{"hooks":{}}',
+    // 실측 발견(사후 반영, 중대): CLAUDE_CONFIG_DIR을 통째로 격리하면 keychain/OAuth 인증까지
+    // 함께 격리되어 `claude -p`가 "Not logged in"으로 즉시 실패한다 — API 키 사용자만 우연히
+    // 동작하고 (이 프로젝트 사용자 다수가 그럴) OAuth/구독 로그인 사용자는 배치가 원천적으로
+    // 작동하지 않는 심각한 결함이었다. `--safe-mode`(훅/플러그인/MCP/커스텀 전부 비활성화하되
+    // "Auth, model selection, built-in tools, and permissions work normally")로 교체 —
+    // 실측 결과 동일 세션에서 인증은 유지되면서 훅(이 플러그인 자신 포함)은 실제로 발화하지
+    // 않음을 확인(OKF_HOME이 생성되지 않음). §7-1의 1차 가드를 이걸로 교체.
+    '--safe-mode',
+    '--permission-mode', 'acceptEdits',
+    '--max-turns', '80',
+  ];
+  if (model) args.push('--model', model);
+  if (effort) args.push('--effort', effort);
   try {
     const output = execFileSync(
       bin,
-      [
-        '-p', prompt,
-        // 리뷰 지적(사후 반영, 실측 확인): --allowedTools는 권한 프롬프트 생략 목록일 뿐
-        // 실제 도구 가용성을 제한하지 않는다 — 실측 결과 --allowedTools에서 Bash를 뺐는데도
-        // 모델이 Bash를 호출해 그대로 실행됐다. --tools(가용 도구 집합 자체를 제한)가 실제
-        // 차단 메커니즘이고, --disallowedTools는 보조로 병기한다(§9 item 4, 이번에 실측 완료).
-        '--tools', 'Read,Glob,Grep,Write,Edit',
-        '--disallowedTools', 'Bash',
-        '--settings', '{"hooks":{}}',
-        // 실측 발견(사후 반영, 중대): CLAUDE_CONFIG_DIR을 통째로 격리하면 keychain/OAuth 인증까지
-        // 함께 격리되어 `claude -p`가 "Not logged in"으로 즉시 실패한다 — API 키 사용자만 우연히
-        // 동작하고 (이 프로젝트 사용자 다수가 그럴) OAuth/구독 로그인 사용자는 배치가 원천적으로
-        // 작동하지 않는 심각한 결함이었다. `--safe-mode`(훅/플러그인/MCP/커스텀 전부 비활성화하되
-        // "Auth, model selection, built-in tools, and permissions work normally")로 교체 —
-        // 실측 결과 동일 세션에서 인증은 유지되면서 훅(이 플러그인 자신 포함)은 실제로 발화하지
-        // 않음을 확인(OKF_HOME이 생성되지 않음). §7-1의 1차 가드를 이걸로 교체.
-        '--safe-mode',
-        '--permission-mode', 'acceptEdits',
-        '--max-turns', '80',
-      ],
+      args,
       {
         cwd,
         timeout: timeoutMs,
@@ -385,6 +388,8 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
     cwd: paths.home,
     timeoutMs: INGEST_TIMEOUT_MS,
     claudeBin: config.claude_bin,
+    model: config.batch_model,
+    effort: config.batch_effort,
   });
   if (!ingestResult.ok) {
     log(okfHome, `청크 ${i + 1} ingest 실패: ${describeClaudeError(ingestResult.error)} — 원복 후 배치 중단`);
@@ -400,6 +405,8 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
       cwd: paths.home,
       timeoutMs: REPAIR_TIMEOUT_MS,
       claudeBin: config.claude_bin,
+      model: config.batch_model,
+      effort: config.batch_effort,
     });
     if (repairResult.ok) {
       regenerateIndex(okfHome);

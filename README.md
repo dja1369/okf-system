@@ -58,6 +58,7 @@ automatically. Three commands are available for manual inspection/control —
 | `/okf:okf-status` | Reports last batch run, pending sessions, lock state |
 | `/okf:okf-batch` | Forces an immediate batch run (ignores the interval gate, still respects the lock) |
 | `/okf:okf-config` | Shows and lets you edit the current configuration |
+| `/okf:okf-index` | Prints a readable overview of the bundle — every category and concept title, plus recent `log.md` changes |
 
 ## How it works
 
@@ -98,9 +99,10 @@ Edit `~/.claude/okf/.okf/config.md` directly (frontmatter), or use
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | Master on/off switch (capture, gate, and batch all follow it) |
-| `batch_interval_hours` | `12` | Minimum time between batch runs |
+| `batch_interval_hours` | `1` | Minimum time between batch runs |
 | `batch_max_sessions` | `10` | Sessions processed per batch run (cost cap) |
-| `batch_model` | *(empty)* | Override the model used for batch ingestion; empty = CLI default |
+| `batch_model` | `claude-sonnet-5` | Model used for batch ingestion; empty = CLI default |
+| `batch_effort` | `medium` | Reasoning effort for batch ingestion (`low`/`medium`/`high`/`xhigh`/`max`); empty = CLI default |
 | `capture_exclude_cwd` | `[]` | Glob patterns for directories to skip capturing (opt-out only — capture itself is never partial) |
 | `batch_digest_cap_kb` | `150` | Per-session size cap for the LLM-facing summary (the captured original is never capped) |
 | `remove_candidate_ttl_days` | `30` | How long processed raw transcripts are kept before deletion |
@@ -109,13 +111,33 @@ Edit `~/.claude/okf/.okf/config.md` directly (frontmatter), or use
 
 ## Data & privacy
 
-- Everything stays local: `~/.claude/okf` is a plain git repository, never pushed.
+- Everything stays local: `~/.claude/okf` is its own plain git repository, entirely
+  separate from any repository you happen to be working in. **No code path in this
+  plugin ever runs `git push`, `git remote add`, or anything network-related on
+  it** — the only git operations used anywhere are `init`, `commit`, `checkout`,
+  and `clean` (verifiable: `grep -n "push\|remote" lib/*.mjs bin/*.mjs` — the only
+  matches are unrelated `Array.push()` calls). Your bundle never leaves your
+  machine unless you deliberately `git push` it yourself.
 - The batch step sends session content to the Anthropic API to do the
   summarization/extraction — the same API your normal Claude Code usage already
   talks to, just via one more `claude -p` call. No third-party service is
   involved.
 - `raw/` (full captured transcripts) and processed-but-pending-deletion transcripts
   are git-ignored, not committed — only the extracted knowledge bundle is.
+
+## Portability
+
+No path is ever hardcoded — everything resolves through `os.homedir()` /
+`process.env.CLAUDE_CONFIG_DIR` / `process.env.HOME`, so a fresh install on a
+different machine or user account produces its own independent bundle. This is
+exercised by the test suite (`test/smoke.mjs`, 78 scenarios) under isolated
+`HOME`/`CLAUDE_CONFIG_DIR` sandboxes, including one with **no git identity
+configured at all** — the plugin never depends on your `user.name`/`user.email`;
+its own automated commits always use a fixed synthetic identity
+(`OKF Batch <okf-batch@localhost>`). macOS and Linux are exercised this way
+directly; Windows-specific paths (`shell:true` for `claude.cmd`, path separators)
+are implemented per the design doc's requirements but not yet run on an actual
+Windows machine — treat that combination as unverified until someone confirms it.
 
 ## License
 

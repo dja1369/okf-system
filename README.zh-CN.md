@@ -46,7 +46,7 @@ claude plugin install okf@okf-marketplace
 
 ## 使用方法
 
-日常使用无需任何操作,捕获和批量压缩都会自动进行。以下三个命令用于手动
+日常使用无需任何操作,捕获和批量压缩都会自动进行。以下四个命令用于手动
 查看/控制状态 —— **注意必须带 `okf:` 前缀**(因为这些是插件作用域内的命令):
 
 | 命令 | 作用 |
@@ -54,6 +54,7 @@ claude plugin install okf@okf-marketplace
 | `/okf:okf-status` | 报告上次批处理运行情况、待处理会话数、锁状态 |
 | `/okf:okf-batch` | 立即强制运行一次批处理(忽略时间间隔限制,但仍遵守锁) |
 | `/okf:okf-config` | 显示当前配置并支持编辑 |
+| `/okf:okf-index` | 输出知识包概览 —— 各分类下的 concept 标题列表,以及 log.md 的最近变更 |
 
 ## 工作原理
 
@@ -92,9 +93,10 @@ SessionEnd → 无损捕获到                  │
 | 键 | 默认值 | 含义 |
 |---|---|---|
 | `enabled` | `true` | 总开关(捕获、网关、批处理均受此值控制) |
-| `batch_interval_hours` | `12` | 两次批处理之间的最小间隔 |
+| `batch_interval_hours` | `1` | 两次批处理之间的最小间隔 |
 | `batch_max_sessions` | `10` | 每次批处理最多处理的会话数(成本上限) |
-| `batch_model` | *(空)* | 批处理 ingest 使用的模型 override,留空则用 CLI 默认模型 |
+| `batch_model` | `claude-sonnet-5` | 批处理 ingest 使用的模型,留空则用 CLI 默认模型 |
+| `batch_effort` | `medium` | 批处理 ingest 的推理强度(`low`/`medium`/`high`/`xhigh`/`max`),留空则用 CLI 默认值 |
 | `capture_exclude_cwd` | `[]` | 跳过捕获的目录 glob 模式(仅用于主动排除 —— 捕获本身永远不会是部分捕获) |
 | `batch_digest_cap_kb` | `150` | 提供给 LLM 的单会话摘要大小上限(不影响已捕获的原始文件) |
 | `remove_candidate_ttl_days` | `30` | 已处理的 raw transcript 在删除前的保留天数 |
@@ -103,13 +105,30 @@ SessionEnd → 无损捕获到                  │
 
 ## 数据与隐私
 
-- 所有数据仅保存在本地:`~/.claude/okf` 是一个普通的 git 仓库,绝不会被
-  推送到任何地方。
+- 所有数据仅保存在本地:`~/.claude/okf` 是一个与你正在使用的任何仓库完全
+  隔离、自成一体的普通 git 仓库。**本插件的任何代码路径都不会执行
+  `git push`、`git remote add` 或任何与网络相关的操作** —— 实际用到的 git
+  命令只有 `init`、`commit`、`checkout` 和 `clean`(可自行验证:
+  `grep -n "push\|remote" lib/*.mjs bin/*.mjs` —— 命中的全部是无关的
+  `Array.push()` 调用)。除非你自己主动 push,否则知识包永远不会离开本机。
 - 批处理步骤会将会话内容发送给 Anthropic API 用于摘要/提取 —— 这与你平时
   使用 Claude Code 所调用的 API 完全相同,只是多了一次 `claude -p` 调用。
   不涉及任何第三方服务。
 - `raw/`(捕获的完整 transcript)以及已处理、等待删除的 transcript 都不会
   被提交到 git(已加入 gitignore)—— 只有提取出来的知识包会被提交。
+
+## 可移植性(其他用户 / 其他设备)
+
+代码中没有任何硬编码路径 —— 全部通过 `os.homedir()` /
+`process.env.CLAUDE_CONFIG_DIR` / `process.env.HOME` 解析,因此在另一台设备
+或另一个用户账户上全新安装时,会各自生成独立的知识包。测试套件
+(`test/smoke.mjs`,78 个场景)在隔离的 `HOME`/`CLAUDE_CONFIG_DIR` 沙箱中
+验证了这一点,其中包括**完全没有配置 git 身份**的环境 —— 本插件不依赖你的
+`user.name`/`user.email`,其自动提交始终使用固定的内置身份
+(`OKF Batch <okf-batch@localhost>`)。macOS 和 Linux 已通过上述方式直接验证;
+Windows 特有的部分(用于 `claude.cmd` 的 `shell:true`、路径分隔符)已按设计
+要求实现,但尚未在真实的 Windows 机器上运行过 —— 在有人确认之前,请将该组合
+视为未经验证。
 
 ## 许可证
 

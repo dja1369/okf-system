@@ -54,6 +54,9 @@ timestamp: 2026-07-15
 if (process.env.FAKE_CLAUDE_DUMP_PROMPT_TO) {
   fs.writeFileSync(process.env.FAKE_CLAUDE_DUMP_PROMPT_TO, prompt);
 }
+if (process.env.FAKE_CLAUDE_DUMP_ARGV_TO) {
+  fs.writeFileSync(process.env.FAKE_CLAUDE_DUMP_ARGV_TO, JSON.stringify(args));
+}
 
 if (isRepairCall) {
   if (mode !== 'badoutput-unfixable') repairBadConcept();

@@ -52,7 +52,7 @@ claude plugin install okf@okf-marketplace
 ## 使い方
 
 普段は何もする必要がありません。キャプチャとバッチ圧縮は自動的に行われます。
-手動で状態を確認・制御したい場合に使えるコマンドが3つあります —
+手動で状態を確認・制御したい場合に使えるコマンドが4つあります —
 **`okf:` プレフィックスが必須です**(プラグインスコープのコマンドのため):
 
 | コマンド | 内容 |
@@ -60,6 +60,7 @@ claude plugin install okf@okf-marketplace
 | `/okf:okf-status` | 最後のバッチ実行、保留中のセッション、ロック状態を報告 |
 | `/okf:okf-batch` | 即座にバッチを強制実行(間隔ゲートは無視するが、ロックは尊重) |
 | `/okf:okf-config` | 現在の設定を表示・編集可能にする |
+| `/okf:okf-index` | バンドルの概要を出力 — カテゴリごとの concept タイトル一覧と log.md の最近の変更 |
 
 ## 仕組み
 
@@ -103,9 +104,10 @@ SessionEnd → raw/ へ                      │
 | キー | デフォルト | 意味 |
 |---|---|---|
 | `enabled` | `true` | 全体のオン/オフスイッチ(キャプチャ・ゲート・バッチすべてがこの値に従う) |
-| `batch_interval_hours` | `12` | バッチ実行間の最小間隔 |
+| `batch_interval_hours` | `1` | バッチ実行間の最小間隔 |
 | `batch_max_sessions` | `10` | バッチ1回あたりの処理セッション数(コスト上限) |
-| `batch_model` | *(空)* | バッチ ingest で使うモデルの override、空なら CLI デフォルト |
+| `batch_model` | `claude-sonnet-5` | バッチ ingest で使うモデル、空なら CLI デフォルト |
+| `batch_effort` | `medium` | バッチ ingest の推論強度(`low`/`medium`/`high`/`xhigh`/`max`)、空なら CLI デフォルト |
 | `capture_exclude_cwd` | `[]` | キャプチャをスキップするディレクトリの glob パターン(opt-out 専用 — キャプチャ自体は決して部分的にならない) |
 | `batch_digest_cap_kb` | `150` | LLM に渡すセッションごとの要約サイズ上限(キャプチャされたオリジナルには適用されない) |
 | `remove_candidate_ttl_days` | `30` | 処理済み raw transcript を削除するまでの保持期間 |
@@ -114,14 +116,34 @@ SessionEnd → raw/ へ                      │
 
 ## データとプライバシー
 
-- すべてのデータはローカルのみ: `~/.claude/okf` はただの git リポジトリで、
-  決して push されません。
+- すべてのデータはローカルのみ: `~/.claude/okf` は作業中のどのリポジトリとも
+  完全に分離した、それ自体で独立したただの git リポジトリです。**このプラグインの
+  どのコードパスも `git push`・`git remote add` などネットワーク関連の操作を
+  一切行いません** — 実際に使う git コマンドは `init`、`commit`、`checkout`、
+  `clean` だけです(自分で確認できます:
+  `grep -n "push\|remote" lib/*.mjs bin/*.mjs` — ヒットするのはすべて無関係な
+  `Array.push()` 呼び出しです)。あなた自身が意図的に push しない限り、
+  バンドルがマシンの外に出ることはありません。
 - バッチ処理は要約・抽出のためセッション内容を Anthropic API に送信します —
   通常の Claude Code 利用時にすでに通信しているのと同じ API で、`claude -p`
   呼び出しがもう1つ増えるだけです。サードパーティサービスは関与しません。
 - `raw/`(キャプチャされた完全な transcript)と、処理済みで削除待ちの
   transcript は git にコミットされません(gitignore 対象)— 抽出された
   ナレッジバンドルのみがコミットされます。
+
+## 移植性(他のユーザー・他のマシン)
+
+パスをハードコードしている箇所は一つもありません — すべて `os.homedir()` /
+`process.env.CLAUDE_CONFIG_DIR` / `process.env.HOME` 経由で解決するため、別の
+マシンや別のユーザーアカウントに新規インストールすれば、それぞれ独立した
+バンドルが作られます。テストスイート(`test/smoke.mjs`、78シナリオ)が隔離された
+`HOME`/`CLAUDE_CONFIG_DIR` サンドボックスでこれを検証しており、その中には
+**git のユーザー設定が全くない環境**も含まれます — このプラグインはあなたの
+`user.name`/`user.email` に依存せず、自動コミットには常に固定の独自 identity
+(`OKF Batch <okf-batch@localhost>`)を使います。macOS/Linux はこの方法で直接
+検証済みですが、Windows 固有の部分(`claude.cmd` 用の `shell:true`、パス区切り
+文字)は設計要件どおり実装してあるものの、実際の Windows マシンではまだ実行して
+いません — その組み合わせは誰かが確認するまで未検証としてお考えください。
 
 ## ライセンス
 

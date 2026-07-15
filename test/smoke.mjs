@@ -498,6 +498,28 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   ok('root index.md includes a novel top-level directory', rootIndex.includes('notes'));
   ok('novel directory gets its own index.md', fs.existsSync(path.join(home, 'notes', 'index.md')) && fs.readFileSync(path.join(home, 'notes', 'index.md'), 'utf8').includes('새 아이디어'));
 }
+{
+  // batch_model/batch_effort config must actually reach the claude -p invocation —
+  // batch_model existed in DEFAULT_CONFIG but was never wired into runClaude() until now.
+  const home = setupBatchSandbox('model-effort');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, batch_model: 'claude-sonnet-5', batch_effort: 'medium' });
+  const argvDumpPath = path.join(sandbox('argv-dump'), 'argv.json');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_DUMP_ARGV_TO: argvDumpPath } });
+  const argv = fs.existsSync(argvDumpPath) ? JSON.parse(fs.readFileSync(argvDumpPath, 'utf8')) : [];
+  ok('config.batch_model reaches the claude invocation as --model', argv.includes('--model') && argv[argv.indexOf('--model') + 1] === 'claude-sonnet-5');
+  ok('config.batch_effort reaches the claude invocation as --effort', argv.includes('--effort') && argv[argv.indexOf('--effort') + 1] === 'medium');
+}
+{
+  // empty batch_model/batch_effort (still the config.md seed convention for "use CLI default")
+  // must NOT add --model/--effort with an empty-string value.
+  const home = setupBatchSandbox('model-effort-empty');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, batch_model: '', batch_effort: '' });
+  const argvDumpPath = path.join(sandbox('argv-dump-empty'), 'argv.json');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_DUMP_ARGV_TO: argvDumpPath } });
+  const argv = fs.existsSync(argvDumpPath) ? JSON.parse(fs.readFileSync(argvDumpPath, 'utf8')) : [];
+  ok('empty batch_model omits --model entirely', !argv.includes('--model'));
+  ok('empty batch_effort omits --effort entirely', !argv.includes('--effort'));
+}
 
 // ---------------------------------------------------------------------------
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -1,8 +1,9 @@
 ---
 enabled: true
-batch_interval_hours: 12
+batch_interval_hours: 1
 batch_max_sessions: 10          # 실행당 처리 raw 상한 (비용 상한)
-batch_model: ""                 # 비면 CLI 기본 모델
+batch_model: "claude-sonnet-5"  # 비우면 CLI 기본 모델
+batch_effort: "medium"          # low/medium/high/xhigh/max, 비우면 CLI 기본값
 capture_exclude_cwd: []         # glob. 해당 경로 세션은 캡처 skip (캡처 자체는 항상 무손실 — 크기/내용 캡 없음)
 batch_digest_cap_kb: 150        # 배치 digest(LLM 입력용 임시 축약본) 파일당 상한 — raw 원본에는 미적용
 remove_candidate_ttl_days: 30
