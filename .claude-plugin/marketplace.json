@@ -1,5 +1,6 @@
 {
   "name": "okf-marketplace",
+  "description": "Persistent, portable memory for Claude Code — stored as a Google Open Knowledge Format bundle you own.",
   "owner": {
     "name": "ducksu"
   },
