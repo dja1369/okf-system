@@ -10,7 +10,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { ensureBootstrap } from '../lib/bootstrap.mjs';
-import { okfPaths } from '../lib/paths.mjs';
+import { okfPaths, isOkfTestSessionDir } from '../lib/paths.mjs';
 import { DEFAULT_CONFIG, readConfig } from '../lib/config.mjs';
 import { runLint, formatReport } from '../lib/lint.mjs';
 import { regenerateIndex } from '../lib/index-gen.mjs';
@@ -52,6 +52,14 @@ function waitUntil(predicate, timeoutMs = 8000, intervalMs = 200) {
     Atomics.wait(sleeper, 0, 0, intervalMs);
   }
   return predicate();
+}
+
+function readIfExists(filePath) {
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return ''; // 없으면 빈 문자열 — 단언이 '없다'는 사실로 실패하게 둔다
+  }
 }
 
 function bootstrapped(label) {
@@ -394,6 +402,84 @@ console.log('\n=== session-start.mjs (subprocess) ===');
   ok('a large category does not evict the other categories from the index', ctx.includes('busy_timeout'));
   ok('a truncated category shows visible/total, so the model knows the index is partial', /\d+\/\d+개/.test(ctx));
   ok('starved index still respects the byte cap', Buffer.byteLength(ctx, 'utf8') <= DEFAULT_CONFIG.inject_max_bytes);
+  // Progressive disclosure (OKF spec: an index.md enumerates its directory's contents so a
+  // reader can descend on demand). Telling the model "159 were omitted" without telling it
+  // WHERE they are is a dead end — it knows something is missing and cannot reach it. The
+  // truncated category must name its own index.md as the way down.
+  ok('a truncated category points to its own index.md so the rest stays reachable', ctx.includes('/decisions/index.md'));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n=== index-gen: nested domains (OKF spec) ===');
+{
+  // OKF 스펙: "index.md 파일은 번들 루트를 포함해 어느 디렉토리에든 놓일 수 있습니다. 디렉토리의
+  // 내용물을 열거하여 점진적 공개(progressive disclosure)를 지원합니다." 즉 도메인 안에 도메인이
+  // 있을 수 있다(sales/tables/orders.md). 지금은 루트 1단계만 훑어서 decisions/sales/orders.md가
+  // index.md에 영원히 나타나지 않고, 게이트는 index 기반이므로 세션에서도 영구히 발견 불가능하다.
+  // index-gen.mjs가 이미 같은 부류의 버그를 고쳐뒀다 — 고정 6개 디렉토리만 순회하다가 동적 스캔으로
+  // 바꾼 그 주석. 그 교훈이 한 단계 아래에는 적용되지 않았다.
+  const home = bootstrapped('index-nested');
+  fs.mkdirSync(path.join(home, 'decisions', 'sales', 'tables'), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, 'decisions', 'top-level.md'),
+    '---\ntype: decision\ntitle: 최상위 결정\ndescription: 카테고리 바로 아래 concept\ntimestamp: 2026-07-15\n---\n본문\n'
+  );
+  fs.writeFileSync(
+    path.join(home, 'decisions', 'sales', 'orders.md'),
+    '---\ntype: decision\ntitle: 주문 취소는 소프트 딜리트로 처리한다\ndescription: 정산 감사를 위해 하드 딜리트를 금지한 근거\ntimestamp: 2026-07-15\n---\n본문\n'
+  );
+  fs.writeFileSync(
+    path.join(home, 'decisions', 'sales', 'tables', 'ledger.md'),
+    '---\ntype: decision\ntitle: 원장 테이블은 append-only다\ndescription: 정정은 반대 분개로만 기록한다\ntimestamp: 2026-07-15\n---\n본문\n'
+  );
+  regenerateIndex(home);
+
+  const nested = readIfExists(path.join(home, 'decisions', 'sales', 'index.md'));
+  ok('a nested domain gets its own index.md', nested.includes('주문 취소는 소프트 딜리트로 처리한다'));
+  const deep = readIfExists(path.join(home, 'decisions', 'sales', 'tables', 'index.md'));
+  ok('a domain nested two levels deep gets an index.md too', deep.includes('원장 테이블은 append-only'));
+  const parent = readIfExists(path.join(home, 'decisions', 'index.md'));
+  ok('the parent index still lists its own concepts', parent.includes('최상위 결정'));
+  ok('the parent index links down to the nested domain (progressive disclosure)', parent.includes('/decisions/sales/index.md'));
+  ok('the nested index links further down', nested.includes('/decisions/sales/tables/index.md'));
+  // 링크는 번들 루트 기준 절대경로여야 한다 — 게이트 규칙 2가 그렇게 약속한다.
+  ok('nested concept links are bundle-root absolute', nested.includes('/decisions/sales/orders.md'));
+  // 배치가 문서를 쓰면 그 문서를 품은 인덱스 사슬 전체가 역으로 갱신돼야 한다. 3단계 아래
+  // ledger.md 하나가 중간 인덱스의 하위 도메인 개수와 루트의 카테고리 개수까지 올라오지 않으면,
+  // 게이트는 "decisions 1개"라고 믿고 나머지 2개를 영영 모른다. 여기서 총 3개다:
+  // top-level.md + sales/orders.md + sales/tables/ledger.md.
+  ok('an intermediate index counts the concepts inside its nested domain', parent.includes('concept 2개'));
+  const rootIdx = readIfExists(path.join(home, 'index.md'));
+  ok('a concept three levels deep propagates its count to the root index', /\/decisions\/index\.md\) — 3개/.test(rootIdx));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n=== sweep: test-session exclusion ===');
+{
+  // sweep은 ~/.claude/projects 전체를 훑어 "유실된" 세션을 회수한다. 그런데 OKF 자신의 테스트가
+  // 임시 디렉토리에서 만든 세션도 그 안에 있고, 그것들은 사용자 지식이 아니다. 실측: 실제
+  // projects/에 이런 디렉토리가 241개, transcript가 295개 남아 있었고 sweep에는 이를 걸러낼
+  // 조건이 없었다 — 전부 유료 배치에 실려 번들을 오염시키는 경로다.
+  // 반대 방향이 더 중요하다: 진짜 작업 디렉토리는 절대 걸리면 안 된다. 특히 이 저장소 자신
+  // (side_project/okf-system)과 번들 홈(~/.claude/okf)은 이름에 'okf'가 들어가지만 사용자 작업이다.
+  const excluded = [
+    '-private-tmp-okf-gate-exp-bundle',
+    '-private-tmp-okf-index-test-bundle',
+    '-private-tmp-okf-security-test',
+    '-private-var-folders-wt-pgkft3x170g9hf7-0bz80-zw0000gn-T-okf-smoke-session-end-156czk',
+    '-private-var-folders-wt-pgkft3x170g9hf7-0bz80-zw0000gn-T-okf-smoke-session-start-umtk8O',
+    '-Users-ducksu--claude-jobs-6eed7ade-tmp-okf-e2e-testproj',
+    '-Users-ducksu--claude-jobs-6eed7ade-tmp-okf-verify2-bundle',
+  ];
+  for (const name of excluded) ok(`sweep skips the OKF test fixture session: ${name.slice(-28)}`, isOkfTestSessionDir(name));
+
+  const kept = [
+    '-Users-ducksu--claude-okf',              // 번들 홈 그 자체
+    '-Users-ducksu-side-project-okf-system',  // 이 저장소에서 한 진짜 작업
+    '-Users-ducksu-side-project-manna',       // 무관한 진짜 프로젝트
+    '-private-tmp-my-okf-experiment',         // 임시 경로지만 OKF 테스트 픽스처가 아님
+  ];
+  for (const name of kept) ok(`sweep keeps the real session: ${name.slice(-26)}`, !isOkfTestSessionDir(name));
 }
 
 // ---------------------------------------------------------------------------
