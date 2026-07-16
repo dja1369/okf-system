@@ -41,8 +41,14 @@ const perCallBudgetUsd = process.env.OKF_BENCH_MAX_BUDGET_USD || '0.60';
 const judgeModel = process.env.OKF_BENCH_JUDGE_MODEL || 'claude-sonnet-5';
 const bundleRoot = path.resolve(process.env.OKF_BENCH_BUNDLES || path.join(ROOT, '.bench-bundles'));
 const targetRoot = path.resolve(process.env.OKF_BENCH_TARGETS || '');
+// 동시성. wallMs 해석에 영향을 주므로 meta에 반드시 남긴다.
+const concurrency = Number(process.env.OKF_BENCH_CONCURRENCY || 4);
 
 const scenarios = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'bench', 'scenarios.json'), 'utf8'));
+// 범주를 나눠 돌린다. 코드에서 유도 가능한 질문과 코드에 없는 정책 지식은 서로 다른 현상이고,
+// 같은 번들·같은 레벨 축을 공유하지 않는다.
+const onlyKind = process.env.OKF_BENCH_ONLY_KIND || '';
+if (onlyKind) scenarios.scenarios = scenarios.scenarios.filter((s) => s.kind === onlyKind);
 const levelsOf = (t) => JSON.parse(fs.readFileSync(path.join(bundleRoot, `${t}-levels.json`), 'utf8'));
 
 // 모든 조건이 같은 문구를 받는다. 어떤 조건에도 "제공된 지식을 읽어라" 같은 힌트를 주지 않는다.
@@ -269,7 +275,7 @@ const snapOf = (t, level) => levelData[t].snapshots.find((s) => s.requestedLevel
 // 측정 셀을 만든다. 시나리오별로 따로 보고한다 — 시나리오를 가로질러 평균내면 시나리오 선택이
 // 헤드라인을 결정하게 된다(싼 grep 질문과 비싼 탐색 질문은 다른 현상이다).
 const REFERENCE_LEVEL = Number(process.env.OKF_BENCH_REF_LEVEL || 20);
-const LEVEL_AXIS = (process.env.OKF_BENCH_LEVELS || '1,5,10,15,20,40').split(',').map(Number);
+const LEVEL_AXIS = (process.env.OKF_BENCH_LEVELS || '1,5,10,15,20,40').split(',').filter(Boolean).map(Number);
 const cells = [];
 for (const s of scenarios.scenarios) {
   for (const condition of ['zero_base', 'answer_sheet', 'okf', 'wrong_knowledge', 'claude_md']) {
@@ -326,8 +332,17 @@ for (const cell of cells.filter((c) => c.condition === 'okf')) {
   gateAudit[key] = { answersAlone: a.answersAlone, reason: a.reason, gateBytes: Buffer.byteLength(gate) };
   process.stderr.write(`감사 ${key}: 게이트만으로 답 가능=${a.answersAlone}\n`);
 }
-for (let rep = 0; rep < runs; rep++) {
-  for (const cell of cells) {
+// 셀을 평평하게 펼쳐 워커 풀로 돌린다. 순차로 돌리면 175셀 × ~110초 = 5시간이 넘는데, 그
+// 시간은 측정 품질을 사지 못한다. 비용·토큰·도구호출은 동시성과 무관하다. 영향을 받는 건
+// 벽시계 시간뿐이고, 그건 헤드라인 지표가 아니다 — 대신 concurrency를 meta에 남겨서 wallMs를
+// 성능 주장으로 읽지 못하게 한다.
+const queue = [];
+for (let rep = 0; rep < runs; rep++) for (const cell of cells) queue.push({ rep, cell });
+let qi = 0;
+
+async function measureWorker() {
+  while (qi < queue.length) {
+    const { rep, cell } = queue[qi++];
     const nonce = crypto.randomUUID();
     const prompt = buildPrompt(cell, nonce);
     const addDir = cell.condition === 'okf' || cell.condition === 'wrong_knowledge'
@@ -337,22 +352,18 @@ for (let rep = 0; rep < runs; rep++) {
     const answerText = m.answer ? `${m.answer.answer}\n근거: ${(m.answer.evidence || []).join(' | ')}` : '(응답 없음)';
     const { verdict, costUsd } = await judge(cell.scenario, answerText);
     judgeCost += costUsd;
-    // 답이 게이트 인덱스에 이미 들어 있으면 C 는 사실상 정답지 조건이다. 숨기지 않고 기록한다.
     const gate = cell.condition === 'okf' ? gateTextOf(snapOf(cell.scenario.target, cell.level).dir) : '';
     records.push(sanitize({
       repetition: rep, condition: cell.condition, scenario: cell.scenario.key,
       target: cell.scenario.target, kind: cell.scenario.kind, level: cell.level, nonce,
       promptBytes: Buffer.byteLength(prompt),
       readTargetConcept: addDir ? m.readPaths.some((p) => p.startsWith(addDir)) : null,
-      // 게이트 인덱스만으로 답이 나오는 셀인가(채점자 판정). 그렇다면 이 런의 OKF는 concept을
-      // 읽어서가 아니라 주입된 텍스트만으로 맞힌 것이다.
       gateAnswersAlone: cell.condition === 'okf' ? gateAudit[`${cell.scenario.key}|L${cell.level}`]?.answersAlone ?? null : null,
       answerKeywordsInGate: cell.condition === 'okf' ? regexHit(cell.scenario, gate) : null,
       measurement: m,
       grade: {
         correct: verdict?.correct ?? null, admittedUnknown: verdict?.admitted_unknown ?? null,
         reason: verdict?.reason ?? null,
-        // 빠르고 자신있게 틀리는 것이 가장 나쁘다. 낡은 지식의 실패 양식이다.
         confidentlyWrong: verdict?.correct === false && verdict?.admitted_unknown === false && m.answer?.confidence === 'high',
         regex: regexHit(cell.scenario, answerText),
       },
@@ -362,6 +373,7 @@ for (let rep = 0; rep < runs; rep++) {
     process.stderr.write(`[${done}/${total}] ${cell.scenario.key}/${cell.condition}${cell.level ? `@L${cell.level}` : ''} correct=${r.grade.correct} $${(m.totalCostUsd || 0).toFixed(4)} tools=${m.toolCalls}\n`);
   }
 }
+await Promise.all(Array.from({ length: concurrency }, measureWorker));
 
 // 모델이 조건별로 갈리면 비용 비교가 모델 믹스 아티팩트가 된다. 사후에 알면 늦으므로 남긴다.
 const resolvedModels = [...new Set(records.flatMap((r) => r.measurement.models))].sort();
@@ -394,7 +406,7 @@ const summary = Object.fromEntries(Object.entries(byCell).map(([k, c]) => {
 const out = {
   meta: {
     startedAt, finishedAt: new Date().toISOString(), model, resolvedModels, effort, maxTurns, runs,
-    judgeModel, referenceLevel: REFERENCE_LEVEL, levelAxis: LEVEL_AXIS,
+    judgeModel, referenceLevel: REFERENCE_LEVEL, levelAxis: LEVEL_AXIS, concurrency,
     modelMixDetected: resolvedModels.length > 1,
     claudeVersion: spawnSync('claude', ['--version'], { encoding: 'utf8' }).stdout.trim(),
     node: process.version, platform: `${os.platform()} ${os.arch()}`,
@@ -414,6 +426,7 @@ const out = {
     costUsdCorrectOnly: '정답인 런만의 비용 분포. 효율 비교는 이것으로만 한다.',
     confidentlyWrong: 'correct=false, unknown 인정 안 함, confidence=high 인 런.',
     censored: 'max-turns 상한에 걸린 런. 오답이 아니라 측정 불가로 따로 센다.',
+    wallMs: `프로세스 시작부터 CLI 종료까지. 측정은 동시성 ${'${concurrency}'}로 돌렸으므로 응답 속도 주장으로 읽으면 안 된다 — 비용·토큰·도구호출은 동시성과 무관하다.`,
     gateAnswersAlone: '주입된 게이트 텍스트만으로 정답을 말할 수 있다고 채점자가 판정한 셀. 그런 셀에서 OKF의 이득은 "골라 읽어서"가 아니라 "이미 주입돼서" 생긴 것이다 — 둘 다 실제 OKF 동작이지만 의미가 다르므로 구분해 보고한다.',
   },
   summary, records,

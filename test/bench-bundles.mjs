@@ -34,7 +34,10 @@ const srcDir = path.join(ROOT, 'test', 'fixtures', 'bench', 'transcripts', targe
 // 심는 순서가 곧 레벨이다. 레벨 축을 재는 시나리오(buried)의 "이전 작업" 세션이 반드시 첫
 // 번째여야 한다 — 그래야 L1이 "지식 1개를 가진 번들"이라는 의미를 갖는다. 그 다음이 나머지
 // 시나리오 세션(기준 레벨에서 필요), 마지막이 볼륨용 세션이다.
-const rank = (f) => (/target-\w+_buried/.test(f) ? 0 : /^0/.test(f) ? 1 : 2);
+const policyFirst = process.env.OKF_BENCH_POLICY_FIRST === '1';
+const rank = (f) => (policyFirst
+  ? (/target-(\w+_policy|slim_domain)/.test(f) ? 0 : /^0/.test(f) ? 1 : 2)
+  : (/target-\w+_buried/.test(f) ? 0 : /^0/.test(f) ? 1 : 2));
 const transcripts = fs.readdirSync(srcDir).filter((f) => f.endsWith('.jsonl'))
   .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 if (!transcripts.length) { console.error(`transcript가 없습니다: ${srcDir}`); process.exit(2); }

@@ -59,12 +59,12 @@ for (const key of scenarioKeys) {
   const kind = rows[0].kind;
   const KIND_KO = { buried: '탐색이 비싼 질문(호출 체인 추적 필요)', cheap: '탐색이 싼 질문(grep 한 번)', stale: '지식이 낡은 질문(코드가 나중에 바뀜)' };
   lines.push(`### \`${key}\` — ${KIND_KO[kind] || kind}`, '');
-  lines.push(`| 조건 | 정답 | 비용 p50 (정답런만) | 토큰활동 p50 | cache_read 제외 | 도구호출 p50 | 턴 p50 | 벽시계 p50 |`);
-  lines.push('|---|---:|---:|---:|---:|---:|---:|---:|');
+  lines.push(`| 조건 | 정답 | 비용 p50 (정답런만) | 토큰활동 p50 | cache_read 제외 | 도구호출 p50 | 턴 p50 |`);
+  lines.push('|---|---:|---:|---:|---:|---:|---:|');
   for (const cond of ['zero_base', 'answer_sheet', 'okf', 'wrong_knowledge', 'claude_md']) {
     const c = rows.find((r) => r.condition === cond);
     if (!c) continue;
-    lines.push(`| ${CONDITION_LABEL[cond]} | ${c.correct}/${c.runs} | ${usd(cost(c))} | ${c.tokenActivity?.p50 ?? 'n/a'} | ${c.tokenActivityExCacheRead?.p50 ?? 'n/a'} | ${c.toolCalls?.p50 ?? 'n/a'} | ${c.turns?.p50 ?? 'n/a'} | ${((c.wallMs?.p50 ?? 0) / 1000).toFixed(1)}s |`);
+    lines.push(`| ${CONDITION_LABEL[cond]} | ${c.correct}/${c.runs} | ${usd(cost(c))} | ${c.tokenActivity?.p50 ?? 'n/a'} | ${c.tokenActivityExCacheRead?.p50 ?? 'n/a'} | ${c.toolCalls?.p50 ?? 'n/a'} | ${c.turns?.p50 ?? 'n/a'} |`);
   }
   const okf = rows.find((r) => r.condition === 'okf');
   const zero = rows.find((r) => r.condition === 'zero_base');
@@ -153,7 +153,7 @@ lines.push('## 알려진 한계', '');
 lines.push('- 저장소 2개, 언어 1개씩. 저장소 크기·언어 전반에 대한 일반화 주장이 아니다.');
 lines.push('- 게이트 텍스트를 프롬프트 앞에 붙여 측정했다. 텍스트는 production `SessionStart` `additionalContext`와 동일하지만 전달 경로 자체는 측정 대상이 아니다.');
 lines.push(`- 조건별 n=${meta.runs}. 작은 차이는 분해하지 못한다. 분포가 완전히 분리될 때만 "이겼다"고 썼다.`);
-lines.push('- 벽시계 시간에는 네트워크 변동이 섞인다.');
+lines.push(`- 벽시계 시간은 싣지 않는다. 측정을 동시성 ${meta.concurrency}로 돌렸기 때문이다 — 비용·토큰·도구호출은 동시성과 무관하지만 응답 속도는 아니다. 속도 주장을 하려면 순차로 다시 재야 한다.`);
 lines.push(`- 게이트 캡(9,000바이트)에 도달한 레벨: ${Object.values(meta.bundles).flat().filter((b) => b.gateTruncated).length ? '있음' : '없음 — 인덱스 잘림 구간은 이번 실행에서 측정되지 않았다'}.`);
 lines.push('');
 

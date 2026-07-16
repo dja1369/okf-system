@@ -49,7 +49,8 @@ if (process.env.OKF_RUN_LIVE_BENCH !== '1') {
 function topics() {
   if (mode === 'target') {
     const scenarios = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'bench', 'scenarios.json'), 'utf8')).scenarios;
-    return scenarios.filter((s) => s.target === target && (!only || s.key === only)).map((s) => ({
+    const want = only ? only.split(',') : null;
+    return scenarios.filter((s) => s.target === target && (!want || want.includes(s.key))).map((s) => ({
       slug: `target-${s.key}`,
       prompt: s.work_prompt_ko,
       // slim_stale의 지식은 옛 커밋에서 만든다. 인위적으로 틀린 지식을 심는 게 아니라, 코드가
