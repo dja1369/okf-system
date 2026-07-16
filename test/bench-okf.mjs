@@ -475,6 +475,9 @@ function buildPrompt(cell, nonce) {
 
 const records = [];
 const startedAt = new Date().toISOString();
+// 런마다 여기에 append 한다. 측정이 끝까지 못 돌아도(세션 타임아웃) 부분 결과를 건진다.
+const partialPath = path.join(ROOT, 'docs', 'benchmarks', 'raw', `partial-${startedAt.replace(/[:.]/g, '-')}.jsonl`);
+fs.mkdirSync(path.dirname(partialPath), { recursive: true });
 let judgeCost = 0;
 let done = 0;
 const total = cells.reduce((s, c) => s + runsFor(c.condition), 0);
@@ -536,6 +539,9 @@ async function measureWorker() {
     }));
     done++;
     const r = records.at(-1);
+    // 런마다 JSONL로 append 한다. 측정이 중간에 죽어도(세션 타임아웃 등) 여기까지의 결과를
+    // 건질 수 있다 — 유료 런을 통째로 날리지 않기 위한 안전장치다.
+    try { fs.appendFileSync(partialPath, `${JSON.stringify(r)}\n`); } catch { /* 진행 방해 안 함 */ }
     process.stderr.write(`[${done}/${total}] ${cell.scenario.key}/${cell.condition}${cell.level ? `@L${cell.level}` : ''} correct=${r.grade.correct} 원자=${atoms?.correct}/${atoms?.total} $${(m.totalCostUsd || 0).toFixed(4)} tools=${m.toolCalls}\n`);
   }
 }
