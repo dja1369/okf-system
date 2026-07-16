@@ -56,26 +56,24 @@ Session 1              ~1時間の idle           Background batch           Ses
 
 ## OKF ベンチマーク
 
-<!-- okf-benchmark: 2026-07-16 -->
-
-> **撤回のお知らせ（2026-07-16）。** この節で最初に公開した主張のうち 3 件を、この run 自身の生データを監査した結果、撤回しました。`rfcs_policy` の罠による説明（捏造 — 罠は一度も作動していませんでした）、蓄積のトレンド見出し（その標本では裏付けられません）、そしてこの節の元の題「OKF だけが機能する場所」（自らの表に反証されています）です。各撤回は、その主張があった場所に明記しています。何を撤回し、それぞれをどう検出したかは [v3 事前登録](docs/benchmarks/pre-registration-2026-07-16-v3.md) に記録しています。この節のそれ以外の知見は変わっていません。
+<!-- okf-benchmark: 2026-07-16-v3 -->
 
 **OKF は探索を肩代わりしてくれるものではありません。探索では決して見つけられないものを保存するものです。**
 
-この一文の両側を、以下、実在の open-source repository 上で測定します。そして不利な側を先に公開します。
+この一文の両側を、以下、実在の open-source repository 上で、比較 cell あたり n=15 で測定します。そして OKF に不利な側を先に公開します。
 
 ### 測定方法
 
-固定した公開 repository 2 つ。合成 fixture ではないので、探索には探索が実際に要するコストがかかり、memory なしの baseline が本当に勝ちうる状態です。
+固定した公開 repository 2 つ — 合成 fixture ではないので、探索には探索が実際に要するコストがかかり、memory なしの baseline が本当に勝ちうる状態です。
 
 | 役割 | Repository | Commit |
 |---|---|---|
 | Codebase | [slimphp/Slim](https://github.com/slimphp/Slim) | `80900fb3`（PHP file 125 個） |
 | Document pile | [rust-lang/rfcs](https://github.com/rust-lang/rfcs) | `f635361c`（Markdown file 651 個） |
 
-どの bundle のどの concept も、実際の pipeline が生成したものです — 固定 repo を探索する実際の `claude -p` session、その実際の Claude Code transcript、実際の batch ingest、実際の gate。**手で書いた concept は一つもありません**。volume を作り出す filler も含めてです。
+どの bundle のどの concept も、実際の pipeline が生成したものです — 固定 repo を探索する実際の `claude -p` session、その実際の Claude Code transcript、実際の batch ingest、実際の gate。**手で書いた concept は一つもありません。** bundle はこの repository に commit してあり（[docs/benchmarks/bundles/](docs/benchmarks/bundles/)）、以下のどの数値も依拠する正確な gate text と concept 本文を読めます。そして v2 が反証されたのと同じやり方で — 著者を信用せず、repo から — この run を反証できます。
 
-5 条件。すべてが同一の tools（`Read`、`Glob`、`Grep`、`Bash(git log/show/diff/blame/grep)`）と、条件に対して中立な同一の指示を受け取ります。gate を参照せよと告げられる条件はありません。
+5 条件。すべてが同一の tools（`Read`、`Glob`、`Grep`、`Bash(git log/show/diff/blame/grep)`）と、条件に対して中立な同一の指示を受け取ります — gate を参照せよと告げられる条件はありません。gate は prompt の先頭に付加するのではなく、**実際の `SessionStart` hook**（`additionalContext`）を通じて配送します。配送された byte 数は run ごとに検証します。
 
 - **zero-base** — 何もなし。OKF が置き換えると主張している当のもの。
 - **answer key** — 答えを貼り付けたもの。その文字列を作るには既に答えを知っている必要があるため、この条件を占有できる user は存在しません。競合相手ではなく床です。
@@ -83,59 +81,49 @@ Session 1              ~1時間の idle           Background batch           Ses
 - **wrong knowledge** — *もう一方の* repository に関する実在の concept で size を合わせた gate。「知識が助けた」と「gate が助けた」を分離します。
 - **CLAUDE.md** — 同じ蓄積知識を flat file に貼り付けたもの。実際の現職者。
 
-見出しの数値は `total_cost_usd` です。token activity はその代わりにではなく、常にその横に併記します。`cache_read` がその合計を支配し、課金は約 50 倍安いため、二つの列は方向が食い違うからです。効率は correct run のみで比較します。run ごとの nonce が prompt cache を無効化します。採点は、source から検証した ground truth に対し、条件を伏せた judge が行います。**どの数値も scenario をまたいで平均しません**。grep 一回と 5 file の call chain は別の現象であり、混ぜれば scenario の選び方で見出しを作れてしまいます。
+見出しの数値は `total_cost_usd` です。sonnet のみのコストを total cost の横に併記するので、CLI が内部処理用に解決する `claude-haiku`（支出の 2.3%）を差し引くことができ、結論を隠すことはできません。効率は correct run のみで比較します。各回答は **atom** ごとに採点します — ground truth を独立に検証可能な事実に分割し、測定前に凍結します — そして v2 式の binary score（全 atom が正しい）をその横に併記します。run ごとの nonce が prompt cache を無効化します。**どの数値も scenario をまたいで平均しません。**
 
-設計・予測・反証基準は[事前登録](docs/benchmarks/pre-registration-2026-07-16.md)し、**最初の課金 call より前に** commit しました。
+設計・予測・反証基準 R1–R5 は[事前登録](docs/benchmarks/pre-registration-2026-07-16-v3.md)し、**最初の課金 call より前に** commit しました。その文書はまた、このベンチマークの前回（v2）公開が行った 6 件の誤ったまたは裏付けのない主張と、それぞれをその生データからどう検出したかを詳細に記録しています。
 
 ### OKF が負ける場所: code が答えられること全部
 
-答えが source か git history にある scenario 5 つ。固定 checkout から検証し、それぞれ独立した反証の試みを生き延びました。
+答えが source、git history、または bundle にある scenario 5 つ。それぞれ固定 checkout から検証しました。コストは correct run の中央値で、そのばらつきを併記します。
 
 | Scenario | zero-base | OKF | 判定 |
 |---|---:|---:|---|
-| `rfcs_cheap` — grep 一回 | **$0.0256** · 4/5 | $0.0505 · 3/5 | OKF が 2.0 倍高い |
-| `slim_cheap` — grep 一回 | **$0.0198** · 4/5 | $0.0386 · 5/5 | OKF が 1.9 倍高い |
-| `slim_stale` — bundle の知識が後の commit で古くなっている | **$0.0345** · 5/5 | $0.0632 · 4/5 | OKF が 1.8 倍高い |
-| `rfcs_buried` — 651 個の doc から根拠を見つける | **$0.0326** · 4/5 | $0.0910 · 3/5 | OKF が 2.8 倍高い |
-| `slim_buried` — 5 file の call chain を追う | $0.1669 · 2/5 · **tool 10 個** | **$0.0701** · 2/5 · **tool 3 個** | **OKF が 2.4 倍安い** |
+| `rfcs_cheap` — grep 一回 | **$0.062** · 13/15 | $0.077 · 14/15 | OKF が 1.2 倍高い |
+| `slim_cheap` — grep 一回 | **$0.067** · 14/15 | $0.114 · 15/15 | OKF が 1.7 倍高い |
+| `rfcs_buried` — 651 個の doc から根拠を見つける | **$0.097** · 12/15 | $0.112 · 13/15 | OKF が 1.2 倍高い |
+| `slim_buried` — 5 file の call chain を追う | $0.277 · 13/15 · **tool 10 個** | **$0.232** · 9/15 · **tool 8 個** | OKF が安く、tool も少ない |
+| `slim_stale` — bundle の知識が後の commit で古くなっている | critical **15/15** | critical **15/15** | 引き分け — 下記参照 |
 
-**OKF は 5 つ中 4 つで負けます。** 探索が本当に高くつく場合にのみ勝ち、そこでは tool call を 10 から 3 へ削ります。grep で答えが出る質問なら、gate は純然たる overhead です。それは欠陥ではなく算術です。
+**安価な grep では OKF は純然たる overhead です** — 同じ答えに 1.2〜1.7 倍高くつきます。gate は `grep` が必要としない固定費だからです。探索が本当に高くつく場合にのみ元が取れます。`slim_buried` は 5 file の call chain を追い、そこでは OKF の方が安く、tool call も少なくて済みます。それは欠陥ではなく算術です — grep で質問に答えが出るなら、gate に金を払ってはいけません。
 
-`slim_stale` は名指しする価値があります。bundle は古くなった主張（HTML error renderer が escape しない — commit `f897118b` より前は真、固定 commit では偽）を抱えていましたが、model は **それでも code を確認して訂正しました**、4/5 です。古い知識は model を自信満々の誤りにはしませんでした。そうなるという事前登録の予測は外れました。
+`slim_stale` は atom ごとの採点が働いた場所です。bundle は後の commit で古くなった主張を抱えており、binary score は **どの条件でも 0/15** と出ます — 完全な全滅に見えます。そうではありません。*critical* な atom（質問が実際に問うていること — HTML renderer が escape すること、どの関数とどの flag で行うか）は **15/15** です。model は code を読み、核心の事実を正しく答えました。唯一取り逃した atom は、質問が一度も求めていない来歴（escape を導入した commit SHA）です。古い知識は model を自信満々の誤りには **しません** でした — そうなるという事前登録の予測は外れ、binary score だけならそれを隠していたはずです。
 
 ### 探索では届かない場所: code に含まれない知識
 
-チームの方針とドメイン語彙 — 会話で決まり、repo には一度も書かれなかったものです。各 scenario は独立した adversary の攻撃を受けました。adversary は working tree、git history の約 300 revision、commit message、docs、config、stash、dangling object を検索し（hit ゼロ）、しかも **見る前に慣習からの推測を記録しました**。その推測は 0/3、0/3、1/5 でした。
-
-どちらの repo にも罠が仕込まれています。"emitter" を grep すれば `ResponseEmitter` が見つかり、chunk size を探せば `4096` が見つかり、RFC の山から MSRV 方針を検索すれば文書は `N-2` を提案しています。
+会話で決まり、repo には一度も書かれなかったチームの方針。RFC の山には罠まで仕込まれています。MSRV 方針を検索すると文書は `N-2` を提案しますが — チームの実際の規則は違います。
 
 | Scenario | zero-base | OKF | wrong knowledge | CLAUDE.md |
 |---|---:|---:|---:|---:|
-| `slim_policy` — どの env が error 詳細を有効にするか、およびその例外 | **0/5**（$0.0509 を消費） | **5/5** · $0.0840 | 0/5 | 5/5 · $0.1314 |
-| `slim_domain` — チームが言う「에미터」とは何か | **0/5** · **自信満々の誤り 5/5** | **4/5** · $0.0624 | 0/5 | 5/5 · $0.1198 |
-| `rfcs_policy` — チームの "thaw rule" の待機期間 | **0/5** | 2/5 · $0.0749 | 0/5 | 0/5 |
+| `rfcs_policy` — チームの "thaw rule": 待機期間、MSRV の頻度、二つの例外 | **0/15** | **11/15** · $0.075 | — | 15/15 · $0.144 |
 
-**zero-base は 15 戦 0 勝でした。** 金を使って何も得られていません。答えがそこに無いからです。`slim_domain` では **5 run 中 5 run で自信満々に間違えました**。探索し、`ResponseEmitter` を見つけ、高い確信とともに答えたのです — ところがチームの言う「에미터」は `OutputBufferingMiddleware` です。彼らは FrankenPHP の worker mode で動かしており、`ResponseEmitter` は dead code だからです。ここでは探索は単に失敗するのではありません。罠から自信満々の誤答を製造します。
+**zero-base は 15 戦 0 勝でした。** 金を使って何も得られていません。答えが repository に無いからです — working tree、git history、commit message、docs、config を検索し hit ゼロを確認した adversary が検証しました。罠にも掛かりませんでした。ただ答えられなかっただけです。
 
-**wrong knowledge も 15 戦 0 勝でした。** 実在するが無関係な concept で満たされた gate は、何も回収しません。利得は知識から来るのであって、gate を持つことから来るのではありません。
+OKF は **15 問中 11 問** に答え、同じ事実を運ぶ CLAUDE.md のおよそ半分のコストで済ませました。これは探索にはできず、保存された決定にはできる唯一のことです。**CLAUDE.md もこれに答えます**（15/15） — ここで OKF は唯一の存在ではなく、同じ現職者を、より安く、注入量を制限した形にしたものです。この scenario の `wrong knowledge` control は除外します。測定汚染の bug（下記）が答えを読ませてしまったため、この run では「gate 単体では助けにならない」control として機能できないからです。
 
-OKF は 15 問中 11 問に答え、同じ事実を運ぶ CLAUDE.md の 1.6〜1.9 分の 1 のコストで済ませました。`slim_domain` では **concept file を一つも読みませんでした**（0/5） — index の行だけで足り、tool call は zero-base の 7 に対して 2 でした。
+これは clean な policy scenario 一つであって、三つではありません。他の二つ（`slim_policy`、`slim_domain`）は測定した上で **除外** しました — 下記参照。
 
-**ここでは CLAUDE.md も機能します。** 表がそう告げています。`slim_policy` で 5/5、`slim_domain` で 5/5 と、後者は OKF の 4/5 を上回ります。この表が裏付けるのは、現職者と同等の正確さを 1.6〜1.9 分の 1 のコストと制限された注入量で達成するということであって、OKF だけが唯一だということではありません。この節は当初「OKF だけが機能する場所」という題で公開しましたが、自らの表がその題に反証しています。**その題は撤回します。**
+### この run では分からないこと
 
-`rfcs_policy` は正直な失敗です。OKF は 2/5 しか取れませんでした。**ここに載せていた説明 — document pile に居座る `N-2` 提案が model を正しい index 行から引き剥がすに足る強い罠だ、という説明 — は誤りであり、撤回します。** OKF の 5 run はすべて bundle file しか読んでいません。RFC document を開いた run は一つもなく、`N-2` と答えた run も一つもありません。5 つとも「4 release」と答えました。罠は一度も作動していません。2/5 の原因は公開前に調査しておらず、ここで代わりの説明を提示することもしません。再測定が進行中です。この scenario で CLAUDE.md は 0/5 でしたから、OKF は依然として現職者に勝っています。
+- **policy scenario 二つを汚染のため除外しました。** Claude Code は directory ごとの project memory（`~/.claude/projects/<cwd>/memory/`）をすべての session に自動注入します。知識の構築中、対象 repo を探索する `claude -p` session がチームの決定をその memory に保存し、測定が同じ working directory で走ったため、memory は **zero-base** 条件にまで届きました — 本来なら知識を一切持たないはずの条件です。`slim_domain` では、zero-base はその結果、code のどこにも存在しないチームの決定に「答えて」しまい、15/15 でした。zero-base の run が project memory を読んだ scenario はすべて公開から外します（`slim_domain`、`slim_policy`）。harness は測定前にその memory を消去するようになり、report はそうした scenario を機械的に検出・除外します。上記の clean scenario では memory の読み取りはゼロでした。
+- **contrast 条件で n=15、control で n=5。** 小さいです。分布が完全に分離している場合のみ勝ちと表現します。
+- **repository 2 つ、エコシステム 2 つ（PHP + Markdown）。** サイズや言語をまたぐ一般性は主張しません。第 3 の repository を設計しましたが、支出前に信頼性あたりのコストで却下しました。
+- **単一質問の session。** OKF の固定 gate 費用は、実際の複数質問 session にわたって償却されるのではなく、質問ごとに一度支払われます。したがってこの run は OKF を *過小評価* しています。
+- **judge は単一の LLM family** で、source から検証した ground truth に対し atom ごとに採点します。
 
-### 蓄積 — トレンドの主張は撤回します
-
-この節では当初、bundle size（concept 1 個 → 35 個）に対するコスト曲線と、次の見出しを公開していました。**「concept 1 個から 35 個へ増える間に OKF は安くなり（$0.1291 → $0.0908）、CLAUDE.md は 2.2 倍高くなりました（$0.1279 → $0.2828）。曲線は分岐します。」** **このトレンドの主張は、標本が裏付けないため撤回します。**
-
-数値そのものは捏造ではありません。事前登録した規則どおり、correct run のみから取った中央値です。しかしそれらは **3、2、5、3、2、4** run の中央値であり、最低点の $0.0701 は *2 run の中央値* です。全 run で見ると level ごとの分布は完全に重なり（concept 1 個の level は $0.0774〜$0.2214、35 個の level は $0.0836〜$0.1606）、全 run の中央値は単調ですらありません。$0.1237、$0.1884、$0.1425、$0.0852、$0.1142、$0.1135 です。この同じ節が 2 段落あとで「n=5 では、ここで分離するものは何もありません」と書いていました。その文が正しく、その上の見出しが誤りでした。曲線はここに再掲しません。2 run の中央値は曲線上の点ではないからです。
-
-gate が頭打ちになる区間の説明も誤っていました。batch が 14 個の concept を index の 1 行に畳んだからだとして、OKF が知識を組織する仕方から創発した性質であるかのように提示していました。**その正体は `lib/config.mjs` の `inject_max_lines: 120` という cap** — 設定定数です。`bench-bundles.mjs` は `gateTruncated` を記録しており、この値は頭打ちが始まるまさにその level で真になります。index の項目は優雅に入れ子にされたのではなく、**予算のために捨てられた** のです。
-
-旧主張の半分は生き残ります。ただし、それ単体としてのみ述べます。CLAUDE.md はすべての concept 本文を毎回の prompt に載せるので、prompt は concept 数に対して線形に増えます。これはその形式から機械的に従う事実です。ここから OKF 側との比較は引き出しません。
-
-正確さは volume で改善せず、ばらつきも残りました（2/5〜5/5）。**level 軸は v3 で廃止します。** それは設定定数を測っており、再実行しても、設定 file から読み取れる数値をより精密に測り直すことにしかならないからです。
+反証基準 **R1–R5 はすべて機械的に評価され、どれも作動しませんでした**（汚染した cell を除外した後） — この run は主張を反証しません。それは n=15 での強い確証と同じではなく、反証の不在です。
 
 ### ローカル overhead（効果の測定結果ではありません）
 
@@ -149,30 +137,21 @@ gate が頭打ちになる区間の説明も誤っていました。batch が 14
 
 `node test/bench.mjs [repository]` で再現できます。local process cost のみであり、token や model latency について何も証明しません。
 
-### コスト、そしてこの run では分からないこと
+### コスト、再現、リンク
 
-知識の構築には実 session で **$3.59**、batch ingest で **$4.92** かかりました。測定した 250 run のコストは **$28.16**、採点に **$9.44** です。
+測定した 440 run のコストは **$66.26**、採点に **$14.74** で、知識と bundle の構築が約 $3.2 追加されました。この run の合計はおよそ **$84** です。有料・認証必須で、smoke test と CI からは意図的に除外しています。
 
 ```sh
 OKF_RUN_LIVE_BENCH=1 node test/bench-knowledge.mjs --target slim --dir <repo>   # real sessions → transcripts
-OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 1,5,20  # real batch → level bundles
+OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 20      # real batch → bundle
 OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                                    # measure
 ```
 
-有料・認証必須で、smoke test と CI からは意図的に除外しています。
-[完全な report](docs/benchmarks/okf-benchmark-2026-07-16.md) ·
+[完全な report](docs/benchmarks/okf-benchmark-2026-07-16-v3.md) ·
 [raw JSON](docs/benchmarks/raw/) ·
-[事前登録](docs/benchmarks/pre-registration-2026-07-16.md) ·
+[committed bundles](docs/benchmarks/bundles/) ·
+[事前登録](docs/benchmarks/pre-registration-2026-07-16-v3.md) ·
 [利用ガイド](docs/USAGE.md)。
-
-限界を率直に述べます。
-
-- **1 cell あたり n=5。** 小さいです。ここで勝ちと表現するのは、分布が完全に分離している場合のみです。
-- **model mix は固定していません。** `claude-sonnet-5` を要求しましたが、CLI は内部処理用に `claude-haiku-4-5` を併せて解決しました。条件間の cost 比較にはその artifact が乗っています。
-- **repository は 2 つ、言語は各 1 つ。** サイズやエコシステムをまたぐ一般性は主張しません。
-- **wall-clock は公開しません。** 測定は concurrency 5 で走りました。cost・token・tool call はそれに影響されませんが、response latency は影響されます。速度の主張には逐次での再 run が必要です。
-- gate text は production の `SessionStart` `additionalContext` 経路ではなく、prompt の先頭に付加しています。同じ text、異なる配送です。
-- policy scenario は人間が方針を著述することに立脚しています。方針とはそういうものです。弁明としては、答えが repo に存在しないことを証明でき、adversary もそれを推測できなかった、ということです。
 
 ## 対応言語
 

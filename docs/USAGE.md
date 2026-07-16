@@ -98,68 +98,64 @@ These are local process measurements, not evidence that OKF saves model tokens o
 
 ## Live OKF effectiveness benchmark
 
-<!-- okf-live-benchmark: valid-2026-07-15T15-03-01Z -->
+<!-- okf-live-benchmark: v3-2026-07-16 -->
 
-A valid isolated run was completed on 2026-07-15. The harness remains paid, authenticated,
-opt-in, and excluded from smoke tests and CI:
+The current benchmark (v3, 2026-07-16) measures OKF against a no-memory baseline, a CLAUDE.md
+incumbent, and two controls, on two pinned public repositories (Slim `80900fb3`, rust-lang/rfcs
+`f635361c`). It replaces an earlier synthetic-fixture run whose baseline searched a directory in
+which the target facts existed nowhere — so that baseline scored 0/5 by construction, not by any
+property of OKF. That design and its results are retired; do not cite them.
+
+The harness is paid, authenticated, opt-in, and excluded from smoke tests and CI:
 
 ```sh
-OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs
+OKF_RUN_LIVE_BENCH=1 node test/bench-knowledge.mjs --target slim --dir <repo>   # real sessions → transcripts
+OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 20      # real batch → bundle
+OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                                    # measure
 ```
 
-Optional controls are `OKF_BENCH_RUNS` (minimum 5), `OKF_BENCH_MODEL`,
-`OKF_BENCH_EFFORT`, `OKF_BENCH_MAX_TURNS`, and `OKF_BENCH_MAX_BUDGET_USD`.
-Defaults are five repeats, model `sonnet`, effort `medium`, eight turns, and a USD 0.50 ceiling
-per follow-up call. All four conditions use the same model, effort, tool allowlist, turn cap,
-JSON schema, and six-task prompt.
+Optional controls: `OKF_BENCH_RUNS` (contrast n, default 15), `OKF_BENCH_CONTROL_RUNS` (control n,
+default 5), `OKF_BENCH_MODEL`, `OKF_BENCH_EFFORT`, `OKF_BENCH_MAX_TURNS`, `OKF_BENCH_MAX_BUDGET_USD`,
+`OKF_BENCH_CONCURRENCY`, and `OKF_BENCH_ONLY_KEY` (run a single scenario end-to-end before spending
+on the full grid).
 
-| Condition | Follow-up context | Purpose |
-|---|---|---|
-| A — no memory | No previous facts or restatement | Baseline continuity failure |
-| B — manual restatement | User repeats all prior facts | Cost of recovering correctness manually |
-| C — OKF enabled | Real collection → batch → gate | End-to-end OKF effect |
-| D — irrelevant OKF | Only unrelated concepts | Fixed gate/cache overhead and distraction check |
+Five conditions — zero-base, answer-key, OKF, wrong-knowledge, CLAUDE.md — all with identical tools
+and a condition-neutral instruction. The gate is delivered through the real `SessionStart` hook
+(`additionalContext`), and delivered bytes are verified per run. Grading is per **atom** against
+source-verified ground truth, with the v2-style binary score published beside it. `total_cost_usd`
+is the headline, with sonnet-only cost beside it so the CLI's internal `claude-haiku` use can be
+netted out.
 
-Environment: Claude Code `2.1.210`, requested `sonnet`/medium and resolved Sonnet 5 plus Haiku
-4.5, macOS arm64, Node `v26.4.0`, commit `c00d3fc`, five crossed-order runs per condition. The
-preflight proved that C contained and gate-routed all 8/8 target facts before follow-up calls;
-D contained 0/8.
+**Two guards this harness enforces, both learned from real failures:**
 
-| Condition | Continuity | Compliance p50 | Token activity p50 / p95 | Wall p50 / p95 | Tools p50 | Cost p50 |
-|---|---:|---:|---:|---:|---:|---:|
-| A — no memory | 0/5 | 0% | 27,320 / 27,574 | 16.40 / 18.17 s | 4 | $0.024037 |
-| B — manual restatement | 5/5 | 100% | 9,070 / 9,093 | 6.07 / 7.42 s | 1 | $0.008410 |
-| C — OKF enabled | 5/5 | 100% | 22,857 / 22,883 | 11.33 / 12.80 s | 6 | $0.033189 |
-| D — irrelevant OKF | 0/5 | 0% | 21,507 / 22,261 | 16.92 / 18.88 s | 3 | $0.030332 |
+- **Model-mix confound.** If any condition's non-primary-model cost share exceeds a threshold
+  (default 15%), the run writes its results and then exits non-zero — a real per-condition model
+  split would make cost comparisons an artifact. It does *not* abort merely because Haiku resolves
+  alongside Sonnet in every condition (that is uniform and is quantified, not a confound).
+- **Project-memory contamination.** Claude Code auto-injects per-directory project memory
+  (`~/.claude/projects/<cwd>/memory/`) into every session. A knowledge-building session exploring
+  the target repo can save team decisions there, and measurement in the same directory would then
+  leak them into the zero-base condition. The harness clears that memory before measuring, and the
+  report excludes any scenario whose zero-base runs read project memory.
 
-C recovered every target fact in 5/5 runs, matching B's correctness without the user repeating
-facts in the follow-up prompt. However, C did not improve efficiency: versus B its median token
-activity was 13,787 higher, wall time 5.26 seconds longer, and CLI cost $0.024779 higher. The
-small sample and server/network variation also prohibit claims from small differences.
+Design, predictions, and the refutation criteria R1–R5 are
+[pre-registered](benchmarks/pre-registration-2026-07-16-v3.md), committed before the first paid
+call. That document also records the six false or unsupported statements the previous (v2)
+publication made and how each was caught from its own raw data. Results, the committed bundles every
+number rests on, and the full report:
 
-Batch ingest used 111,381 token activity and $0.164360 in one call. B−C savings were negative,
-so neither token nor cost break-even exists in this run. See the
-[valid report](benchmarks/okf-live-2026-07-15T15-03-01-343Z.md) and
-[raw JSON](benchmarks/raw/okf-live-2026-07-15T15-03-01-343Z.json).
-
-Runs use a deterministic synthetic transcript with architecture, coding rule, failure fix,
-response preference, file/policy, and an unrelated arithmetic check. A crossed schedule rotates
-condition order. Each condition has one cold-cache run followed by warm runs where the CLI/service
-permits caching; raw cache creation and cache read counters are always retained separately.
-Before the paid follow-up loop, a mandatory audit checks that every target fact exists in a C
-concept and its path appears in the gate, while D contains none. The benchmark-only batch flag
-skips orphan sweep so the user's real Claude history cannot enter the synthetic experiment.
-
-An earlier run at `14:44:09Z` violated that isolation and used an over-strict answer grader. Its
-raw artifact is retained for audit, but its Markdown report is prominently marked `INVALID` and
-none of its measurements are used here.
+- [Full report](benchmarks/okf-benchmark-2026-07-16-v3.md)
+- [Raw JSON](benchmarks/raw/)
+- [Committed bundles](benchmarks/bundles/) — the exact gate text and concept bodies
+- [Pre-registration](benchmarks/pre-registration-2026-07-16-v3.md)
 
 ### Recorded fields
 
-The raw JSON contains order, cold/warm label, structured answer, per-field grade, wrong assumptions,
-additional questions, tool counts, first valid response, API/model duration, wall time, turn count,
-CLI-reported cost, and the complete stream-json event sequence with temporary paths sanitized.
-Usage categories are never collapsed in raw data:
+The raw JSON contains, per run: condition, scenario, atom-level grade with per-atom status, binary
+grade, structured answer, tool counts by name, read paths, whether a concept file was actually read,
+gate bytes actually delivered through the hook, per-model cost breakdown, sonnet-only cost, first
+valid response, API/model duration, wall time, turn count, CLI-reported cost, and the resolved model
+set. Usage categories are never collapsed in raw data:
 
 ```text
 token activity = input_tokens
@@ -168,30 +164,19 @@ token activity = input_tokens
                + cache_read_input_tokens
 ```
 
-This sum is an explicit activity measure, not a billing formula. `userInputTokens` and
-`injectedContextTokens` stay `null` because the Claude CLI does not expose those boundaries.
-Transport/model retry count also stays `null` when the CLI does not expose it. Missing values are
-reported as missing rather than inferred.
+This sum is an explicit activity measure, not a billing formula; `cache_read` dominates it and bills
+far cheaper, so cost and token activity can disagree in direction — cost is the headline. Missing
+values are reported as missing rather than inferred. Temporary paths are sanitized out of the
+published JSON.
 
-Outputs are written to timestamped files under `docs/benchmarks/raw/` plus a Markdown summary in
-`docs/benchmarks/`. Raw events make medians, p95, cache behavior, grading, and cost auditable.
+### Break-even
 
-### Batch cost and break-even
-
-Condition C records the one-time batch model usage in a privacy-safe telemetry file. The summary
-includes batch and repair tokens, cache counters, duration, and CLI-reported USD cost. Break-even
-is shown only when the measured median saving is positive:
-
-```text
-initial OKF cost = batch ingest + repair + measured irrelevant-gate overhead
-per-session net saving = manual-restatement median - OKF median
-break-even sessions = ceil(initial OKF cost / per-session net saving)
-```
-
-Token-activity and CLI-cost break-even are computed separately. No hand-converted price estimate
-is substituted for CLI-reported cost. Official list prices checked on 2026-07-15 were Sonnet 5
-$2/MTok input and $10/MTok output through 2026-08-31, and Haiku 4.5 $1/$5; the calculation still
-uses the CLI-reported total.
+Break-even includes the real batch cost of building the bundle — omit it and per-session savings
+look free. It is computed only where the median saving is positive, and null with a stated reason
+otherwise (negative saving, or a policy scenario where the baseline can never answer so there is no
+saving to define). Break-even against the CLAUDE.md incumbent (pre-registered R5) is evaluated
+separately from break-even against zero-base. No hand-converted price estimate is substituted for
+the CLI-reported total.
 
 ## Real open-source analyzer validation
 

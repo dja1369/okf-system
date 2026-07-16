@@ -1180,18 +1180,21 @@ console.log('\n=== plugin contract and docs ===');
   }));
   ok('all localized READMEs keep commands and benchmark conditions in sync', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
-    // 조건 이름은 번역되지만 시나리오 키는 그대로다. 다섯 조건이 전부 실려야 한다 — 특히
-    // CLAUDE.md 조건. 그게 진짜 경쟁자이고, 그걸 빼면 "OKF가 평범한 플랫 파일도 못 이긴다"는
-    // 반증 가능성 자체가 README에서 사라진다. 정답지 조건도 남아야 한다: 사용자가 점유할 수
-    // 없는 상한선이라는 사실을 명시해야 그게 baseline인 척 재등장하지 않는다.
+    // 조건 이름은 번역되지만 시나리오 키는 그대로다. CLAUDE.md 조건이 반드시 실려야 한다 —
+    // 그게 진짜 경쟁자이고, 빼면 "OKF가 평범한 플랫 파일도 못 이긴다"는 반증 가능성이 사라진다.
+    // v3에서 발행하는 6개 시나리오 키가 8종 전부에 있어야 한다(오염으로 뺀 slim_domain·
+    // slim_policy는 발행 시나리오가 아니므로 여기서 요구하지 않는다).
     return text.includes('/okf:okf-visualize')
       && /\/okf:okf-analysis\s+\[[^\]]+\]/.test(text)
       && !text.includes('/okf:okf-visualize [path]')
       && text.includes('CLAUDE.md')
-      && ['slim_buried', 'slim_cheap', 'slim_stale', 'rfcs_buried', 'rfcs_cheap',
-        'slim_policy', 'slim_domain', 'rfcs_policy'].every((key) => text.includes(key))
+      && ['slim_buried', 'slim_cheap', 'slim_stale', 'rfcs_buried', 'rfcs_cheap', 'rfcs_policy']
+        .every((key) => text.includes(key))
       && text.includes('OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs')
-      && /<!-- okf-benchmark: 2026-07-16 -->/.test(text);
+      && /<!-- okf-benchmark: 2026-07-16-v3 -->/.test(text)
+      // 옛 v2 마커(-v3 접미사 없는 것)가 남아 있으면 안 된다. 새 마커에는 -v3가 붙으므로,
+      // -v3 없는 마커 문자열이 그대로 있으면 v2 절이 덜 교체된 것이다.
+      && !/<!-- okf-benchmark: 2026-07-16 -->/.test(text);
   }));
   ok('all localized READMEs publish the same pinned OSS validation counts', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
@@ -1202,15 +1205,16 @@ console.log('\n=== plugin contract and docs ===');
   }));
   ok('all localized READMEs publish the same valid live benchmark result', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
-    // 번역이 유리한 절반만 옮기는 드리프트를 막는다. 여기 나열한 수치는 전부 OKF에 불리하거나
-    // 불리한 사실을 떠받치는 것들이다: 탐색이 싼 질문에서 OKF가 2배 비싸다는 표($0.0256 vs
-    // $0.0505), 그리고 slim_buried의 제로베이스 기준선($0.1669). 이게 영어에만 남으면 다른
-    // 언어 독자는 다른 시스템을 읽는 것이다.
-    return text.includes('<!-- okf-benchmark: 2026-07-16 -->')
-      && text.includes('$0.0256') && text.includes('$0.0505')
-      && text.includes('$0.1669')
-      && text.includes('okf-benchmark-2026-07-16.md')
-      && text.includes('pre-registration-2026-07-16.md');
+    // 번역이 유리한 절반만 옮기는 드리프트를 막는다. v3에서 고정하는 수치는 OKF에 불리한
+    // 사실과 유리한 사실을 둘 다 떠받친다:
+    //  - 불리: 코드로 알 수 있는 질문에서 제로베이스가 더 싸다(slim_cheap $0.067 vs OKF $0.114).
+    //  - 유리: 코드에 없는 정책에서 제로베이스는 0/15, OKF는 11/15.
+    // 한쪽만 영어에 남으면 다른 언어 독자는 다른 시스템을 읽는 것이다.
+    return text.includes('<!-- okf-benchmark: 2026-07-16-v3 -->')
+      && text.includes('$0.067') && text.includes('$0.114') // slim_cheap: OKF가 더 비쌈(불리)
+      && text.includes('0/15') && text.includes('11/15')    // rfcs_policy: 탐색 실패 vs OKF(유리)
+      && text.includes('okf-benchmark-2026-07-16-v3.md')
+      && text.includes('pre-registration-2026-07-16-v3.md');
   }));
   // 이 테스트는 v3에서 재인코딩됐다. 원래는 누적 축의 양 끝($0.1291→$0.0908, $0.1279→$0.2828)과
   // 게이트 정체(5,415)를 "OKF에 불리한 사실"로 고정했다. 그런데 그 수치들이 떠받치던 주장은
@@ -1222,20 +1226,17 @@ console.log('\n=== plugin contract and docs ===');
   // 자체는 정당하다 — 철회문이 무엇을 취소하는지 밝히려면 원문을 인용해야 하고, 옛 텍스트를
   // 본 독자가 그걸 찾을 수 있어야 한다. 막아야 하는 건 "어떤 번역본은 조용히 옛 주장을
   // 그대로 두는 것"이다. 번역 8종이 서로 다른 결론을 싣게 되는 그 드리프트가 원래 의도였다.
-  ok('every localized README records the retraction rather than quietly keeping the withdrawn claims', readmes.length === 8 && readmes.every((name) => {
+  // v3 벤치마크 절은 v2를 철회 주석과 함께 덧대는 게 아니라 통째로 새로 쓴 것이다. 그래서
+  // 이 테스트의 의도는 "철회를 기록했는가"에서 "v2 좀비 내용이 어느 번역본에도 안 남았는가"로
+  // 옮긴다. v2의 철회된 수치(누적 곡선 $0.1291→$0.0908, $0.1279→$0.2828)와 "14개 concept을
+  // 한 줄로 접었다"는 서사는 v3 절에 존재해서는 안 된다 — 그 주장들은 표본이 못 받쳐 폐기됐다.
+  // 어떤 번역본만 옛 절을 덜 지우면 그 언어 독자는 폐기된 결론을 현행으로 읽는다.
+  ok('no localized README carries withdrawn v2 benchmark content', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
-    // 철회 근거(v3 사전등록서)는 8종 전부에 있어야 한다. 어떤 번역본만 근거 없이 옛 주장을
-    // 들고 있으면 그 언어 독자는 취소된 결론을 현행으로 읽는다.
-    if (!text.includes('pre-registration-2026-07-16-v3.md')) return false;
-    // 철회된 주장을 인용하는 것 자체는 정당하다 — 무엇을 취소하는지 밝히려면 원문이 필요하고,
-    // 옛 텍스트를 본 독자가 그걸 찾을 수 있어야 한다. 다만 인용했으면 정정이 같이 있어야 한다.
-    // 인용만 있고 정정이 없으면 그건 철회가 아니라 여전히 주장하는 것이다.
-    const quotesCurve = text.includes('$0.1291') || text.includes('$0.2828');
-    const withdrawsCurve = /withdraw|철회|撤回|zurückgezogen|retirad|retiré|retirad|Zurückziehung/i.test(text);
-    const quotesNesting = /14 ?(concepts?|개)/.test(text);
-    // 정체의 진짜 원인. 이름을 대는 것 말고 "우아한 중첩"을 반박할 방법이 없다.
-    const namesRealCause = text.includes('inject_max_lines');
-    return (!quotesCurve || withdrawsCurve) && (!quotesNesting || namesRealCause);
+    const hasWithdrawnCurve = text.includes('$0.1291') || text.includes('$0.0908') || text.includes('$0.2828');
+    const hasNestingStory = /14 ?(concepts?|개|概念|Konzepte|conceptos|conceitos)/.test(text);
+    const hasOldReportLink = /okf-benchmark-2026-07-16\.md/.test(text); // -v3 없는 옛 리포트 링크
+    return !hasWithdrawnCurve && !hasNestingStory && !hasOldReportLink;
   }));
 
   const workflow = path.join(PLUGIN_ROOT, '.github', 'workflows', 'test.yml');
