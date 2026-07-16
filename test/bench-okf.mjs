@@ -474,7 +474,7 @@ const records = [];
 const startedAt = new Date().toISOString();
 let judgeCost = 0;
 let done = 0;
-const total = cells.length * runs;
+const total = cells.reduce((s, c) => s + runsFor(c.condition), 0);
 
 // 측정 전에 감사부터 한다: 각 (시나리오, 레벨)의 게이트 텍스트만으로 이미 답이 나오는가.
 // 셀마다 5번씩 물을 이유는 없다 — 게이트 텍스트는 런과 무관하게 고정이다.
@@ -493,20 +493,26 @@ for (const cell of cells.filter((c) => c.condition === 'okf')) {
 // 벽시계 시간뿐이고, 그건 헤드라인 지표가 아니다 — 대신 concurrency를 meta에 남겨서 wallMs를
 // 성능 주장으로 읽지 못하게 한다.
 const queue = [];
-for (let rep = 0; rep < runs; rep++) for (const cell of cells) queue.push({ rep, cell });
+for (const cell of cells) for (let rep = 0; rep < runsFor(cell.condition); rep++) queue.push({ rep, cell });
 let qi = 0;
+let gateFlakeRetries = 0;
 
 async function measureWorker() {
   while (qi < queue.length) {
     const { rep, cell } = queue[qi++];
     const nonce = crypto.randomUUID();
-    const prompt = buildPrompt(cell, nonce);
-    const addDir = cell.condition === 'okf' || cell.condition === 'wrong_knowledge'
-      ? path.join(bundleRoot, (cell.condition === 'okf' ? snapOf(cell.scenario.target, cell.level) : (snapOf(cell.scenario.target === 'slim' ? 'rfcs' : 'slim', cell.level) || levelData[cell.scenario.target === 'slim' ? 'rfcs' : 'slim'].snapshots.at(-1))).dir)
-      : null;
-    const m = await runClaude({ prompt, cwd: targets[cell.scenario.target], addDir });
+    const { prompt, addDir, okfHome } = buildPrompt(cell, nonce);
+    let m = await runClaude({ prompt, cwd: targets[cell.scenario.target], addDir, okfHome });
+    // 게이트를 받아야 하는 셀인데 0바이트로 도착했으면 그건 모델의 실패가 아니라 하니스의
+    // 실패다. 그대로 집계하면 flake가 "OKF 오답"으로 둔갑한다. 재시도하되 횟수를 발행한다 —
+    // 세어서 밝히지 않는 재시도는 보이지 않는 표본 선택이다.
+    if (okfHome && m.gateDeliveredChars === 0) {
+      gateFlakeRetries++;
+      process.stderr.write(`  ⚠ 게이트 미전달(0바이트) — 재시도: ${cell.scenario.key}/${cell.condition}\n`);
+      m = await runClaude({ prompt: buildPrompt(cell, crypto.randomUUID()).prompt, cwd: targets[cell.scenario.target], addDir, okfHome });
+    }
     const answerText = m.answer ? `${m.answer.answer}\n근거: ${(m.answer.evidence || []).join(' | ')}` : '(응답 없음)';
-    const { verdict, costUsd } = await judge(cell.scenario, answerText);
+    const { verdict, atoms, costUsd } = await judge(cell.scenario, answerText);
     judgeCost += costUsd;
     const gate = cell.condition === 'okf' ? gateTextOf(snapOf(cell.scenario.target, cell.level).dir) : '';
     records.push(sanitize({
@@ -522,17 +528,39 @@ async function measureWorker() {
         reason: verdict?.reason ?? null,
         confidentlyWrong: verdict?.correct === false && verdict?.admitted_unknown === false && m.answer?.confidence === 'high',
         regex: regexHit(cell.scenario, answerText),
+        atoms,
       },
     }));
     done++;
     const r = records.at(-1);
-    process.stderr.write(`[${done}/${total}] ${cell.scenario.key}/${cell.condition}${cell.level ? `@L${cell.level}` : ''} correct=${r.grade.correct} $${(m.totalCostUsd || 0).toFixed(4)} tools=${m.toolCalls}\n`);
+    process.stderr.write(`[${done}/${total}] ${cell.scenario.key}/${cell.condition}${cell.level ? `@L${cell.level}` : ''} correct=${r.grade.correct} 원자=${atoms?.correct}/${atoms?.total} $${(m.totalCostUsd || 0).toFixed(4)} tools=${m.toolCalls}\n`);
   }
 }
 await Promise.all(Array.from({ length: concurrency }, measureWorker));
 
-// 모델이 조건별로 갈리면 비용 비교가 모델 믹스 아티팩트가 된다. 사후에 알면 늦으므로 남긴다.
 const resolvedModels = [...new Set(records.flatMap((r) => r.measurement.models))].sort();
+
+// v2는 여기서 기록만 하고 지나갔다. 파일 머리에는 "조건별로 갈리면 중단한다"고 적어놓고서.
+// 다만 v2가 약속한 검사("두 모델이 보이면 중단")는 틀렸다 — haiku는 모든 조건에서 내부
+// 작업용으로 함께 해석되므로 그대로 구현했다면 모든 실행이 중단됐다. 진짜 교란은 "조건 A는
+// sonnet, 조건 B는 haiku"처럼 조건별로 모델 구성이 갈리는 경우다. 그 검사를 구현한다.
+function assertNoModelMixConfound() {
+  const byCondition = {};
+  for (const r of records) {
+    (byCondition[r.condition] ||= new Set());
+    for (const mdl of r.measurement.models) byCondition[r.condition].add(mdl);
+  }
+  const sets = Object.entries(byCondition).map(([c, s]) => [c, [...s].sort().join('+')]);
+  const distinct = [...new Set(sets.map(([, s]) => s))];
+  if (distinct.length <= 1) return null;
+  return `조건별 모델 구성이 갈렸다 — 비용 비교가 모델 단가 아티팩트를 포함한다:\n${
+    sets.map(([c, s]) => `  ${c}: ${s}`).join('\n')}`;
+}
+const modelMixConfound = assertNoModelMixConfound();
+const costByModelTotals = records.reduce((acc, r) => {
+  for (const [mdl, cst] of Object.entries(r.measurement.costByModel || {})) acc[mdl] = Number(((acc[mdl] || 0) + cst).toFixed(4));
+  return acc;
+}, {});
 const cellKey = (r) => `${r.scenario}|${r.condition}|${r.level ?? '-'}`;
 const byCell = {};
 for (const r of records) {
@@ -547,8 +575,17 @@ const summary = Object.fromEntries(Object.entries(byCell).map(([k, c]) => {
     confidentlyWrong: c.rows.filter((r) => r.grade.confidentlyWrong).length,
     readTargetConcept: c.rows.filter((r) => r.readTargetConcept === true).length,
     gateAnswersAlone: c.rows.filter((r) => r.gateAnswersAlone === true).length,
+    // 원자별 점수. v2의 이진 점수(correct)와 나란히 싣는다 — 부분점수는 제품에 유리한
+    // 방향으로만 움직이는 지표 변경이므로, 둘 중 하나만 실으면 지표를 갈아서 이긴 게 된다.
+    atomsCorrect: c.rows.reduce((s, r) => s + (r.grade.atoms?.correct || 0), 0),
+    atomsTotal: c.rows.reduce((s, r) => s + (r.grade.atoms?.total || 0), 0),
+    atomsContradicted: c.rows.reduce((s, r) => s + (r.grade.atoms?.contradicted || 0), 0),
+    // 게이트를 훅으로 전달할 때 실제로 도착한 바이트. 0이면 재시도된 셀이다.
+    gateDeliveredChars: distribution(c.rows.map((r) => r.measurement.gateDeliveredChars)),
     // 효율 비교는 정답인 런만으로 한다. 틀린 채 빨리 끝난 런을 "쌌다"고 세면 안 된다.
     costUsdCorrectOnly: distribution(correct.map((r) => r.measurement.totalCostUsd)),
+    // sonnet 단독 비용. haiku가 섞인 만큼을 빼고 봐도 결론이 같은지 독자가 확인할 수 있다.
+    primaryModelCostUsdCorrectOnly: distribution(correct.map((r) => r.measurement.primaryModelCostUsd)),
     costUsdAll: distribution(c.rows.map((r) => r.measurement.totalCostUsd)),
     tokenActivity: distribution(c.rows.map((r) => r.measurement.tokenActivity)),
     tokenActivityExCacheRead: distribution(c.rows.map((r) => r.measurement.tokenActivityExCacheRead)),
@@ -586,10 +623,17 @@ for (const scen of [...new Set(cells.map((c) => c.scenario.key))]) {
 
 const out = {
   meta: {
-    startedAt, finishedAt: new Date().toISOString(), model, resolvedModels, effort, maxTurns, runs,
+    startedAt, finishedAt: new Date().toISOString(), model, resolvedModels, effort, maxTurns,
+    contrastRuns, controlRuns, contrastConditions: [...CONTRAST_CONDITIONS],
     judgeModel, referenceLevel: REFERENCE_LEVEL, concurrency,
     levelAxisRetired: 'v3는 레벨 비용 곡선을 재지 않는다(사전등록 C9). v2의 그 축은 lib/config.mjs:27 inject_max_lines:120 상한을 재고 있었다 — 설정 상수다.',
     modelMixDetected: resolvedModels.length > 1,
+    modelMixConfound,
+    costByModelTotals,
+    // 게이트를 훅으로 전달하다 0바이트로 도착해 재시도한 횟수. 세지 않은 재시도는 보이지 않는
+    // 표본 선택이므로 반드시 발행한다.
+    gateFlakeRetries,
+    gateDelivery: '진짜 SessionStart 훅(--setting-sources "" + --settings)이 additionalContext로 주입. v2는 프롬프트에 prepend 했다.',
     claudeVersion: spawnSync('claude', ['--version'], { encoding: 'utf8' }).stdout.trim(),
     node: process.version, platform: `${os.platform()} ${os.arch()}`,
     repoCommit: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim(),
@@ -631,3 +675,13 @@ const slug = startedAt.replace(/[:.]/g, '-');
 const outPath = path.join(rawDir, `okf-live-${slug}.json`);
 fs.writeFileSync(outPath, `${JSON.stringify(out, null, 2)}\n`);
 console.log(outPath);
+
+// 데이터를 먼저 쓰고 나서 실패한다. 교란이 있다고 이미 지불한 측정을 버리면 손해만 크고,
+// 조용히 넘어가면 v2를 반복한다 — 파일에 남기고, 소리 내서 죽는다.
+if (modelMixConfound) {
+  console.error(`\n중단: ${modelMixConfound}\n결과는 ${outPath}에 남겼습니다. 조건 간 비용 비교로 쓰지 마십시오.`);
+  process.exit(3);
+}
+if (gateFlakeRetries) {
+  process.stderr.write(`\n주의: 게이트 미전달로 재시도한 셀이 ${gateFlakeRetries}건 있습니다(meta.gateFlakeRetries에 발행됨).\n`);
+}
