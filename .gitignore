@@ -14,3 +14,6 @@ implement.md
 # transcript 원본은 수십 MB라 커밋하지 않되, 번들(concept 본문 + 게이트 텍스트 + levels.json)은
 # 작고 모든 주장이 실제로 딛고 선 것이므로 반드시 커밋한다.
 test/fixtures/bench/transcripts/
+
+# 측정 부분 결과(중단 대비 스냅샷) — 최종 raw JSON만 커밋한다
+docs/benchmarks/raw/partial-*.jsonl
