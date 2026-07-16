@@ -1204,16 +1204,38 @@ console.log('\n=== plugin contract and docs ===');
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
     // 번역이 유리한 절반만 옮기는 드리프트를 막는다. 여기 나열한 수치는 전부 OKF에 불리하거나
     // 불리한 사실을 떠받치는 것들이다: 탐색이 싼 질문에서 OKF가 2배 비싸다는 표($0.0256 vs
-    // $0.0505), rfcs_policy의 정직한 실패(2/5), 그리고 누적 축의 양 끝($0.1291→$0.0908,
-    // $0.1279→$0.2828). 이게 영어에만 남으면 다른 언어 독자는 다른 시스템을 읽는 것이다.
+    // $0.0505), 그리고 slim_buried의 제로베이스 기준선($0.1669). 이게 영어에만 남으면 다른
+    // 언어 독자는 다른 시스템을 읽는 것이다.
     return text.includes('<!-- okf-benchmark: 2026-07-16 -->')
       && text.includes('$0.0256') && text.includes('$0.0505')
-      && text.includes('$0.1669') && text.includes('$0.0701')
-      && text.includes('$0.1291') && text.includes('$0.0908')
-      && text.includes('$0.1279') && text.includes('$0.2828')
-      && text.includes('5,415')
+      && text.includes('$0.1669')
       && text.includes('okf-benchmark-2026-07-16.md')
       && text.includes('pre-registration-2026-07-16.md');
+  }));
+  // 이 테스트는 v3에서 재인코딩됐다. 원래는 누적 축의 양 끝($0.1291→$0.0908, $0.1279→$0.2828)과
+  // 게이트 정체(5,415)를 "OKF에 불리한 사실"로 고정했다. 그런데 그 수치들이 떠받치던 주장은
+  // 철회됐다 — 정답런 3·2·5·3·2·4개의 중앙값이라 표본이 못 받쳤고, 게이트 정체는 지식 조직화의
+  // 성질이 아니라 inject_max_lines:120 상한이었다. 철회된 주장을 계속 고정하면 테스트가
+  // 거짓을 지키는 파수꾼이 된다.
+  //
+  // 그래서 고정 대상을 "철회된 수치"에서 "철회 사실"로 옮긴다. 철회된 수치가 본문에 남는 것
+  // 자체는 정당하다 — 철회문이 무엇을 취소하는지 밝히려면 원문을 인용해야 하고, 옛 텍스트를
+  // 본 독자가 그걸 찾을 수 있어야 한다. 막아야 하는 건 "어떤 번역본은 조용히 옛 주장을
+  // 그대로 두는 것"이다. 번역 8종이 서로 다른 결론을 싣게 되는 그 드리프트가 원래 의도였다.
+  ok('every localized README records the retraction rather than quietly keeping the withdrawn claims', readmes.length === 8 && readmes.every((name) => {
+    const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
+    // 철회 근거(v3 사전등록서)는 8종 전부에 있어야 한다. 어떤 번역본만 근거 없이 옛 주장을
+    // 들고 있으면 그 언어 독자는 취소된 결론을 현행으로 읽는다.
+    if (!text.includes('pre-registration-2026-07-16-v3.md')) return false;
+    // 철회된 주장을 인용하는 것 자체는 정당하다 — 무엇을 취소하는지 밝히려면 원문이 필요하고,
+    // 옛 텍스트를 본 독자가 그걸 찾을 수 있어야 한다. 다만 인용했으면 정정이 같이 있어야 한다.
+    // 인용만 있고 정정이 없으면 그건 철회가 아니라 여전히 주장하는 것이다.
+    const quotesCurve = text.includes('$0.1291') || text.includes('$0.2828');
+    const withdrawsCurve = /withdraw|철회|撤回|zurückgezogen|retirad|retiré|retirad|Zurückziehung/i.test(text);
+    const quotesNesting = /14 ?(concepts?|개)/.test(text);
+    // 정체의 진짜 원인. 이름을 대는 것 말고 "우아한 중첩"을 반박할 방법이 없다.
+    const namesRealCause = text.includes('inject_max_lines');
+    return (!quotesCurve || withdrawsCurve) && (!quotesNesting || namesRealCause);
   }));
 
   const workflow = path.join(PLUGIN_ROOT, '.github', 'workflows', 'test.yml');
