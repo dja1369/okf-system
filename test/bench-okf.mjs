@@ -413,20 +413,26 @@ const snapOf = (t, level) => levelData[t].snapshots.find((s) => s.requestedLevel
 // 측정 셀을 만든다. 시나리오별로 따로 보고한다 — 시나리오를 가로질러 평균내면 시나리오 선택이
 // 헤드라인을 결정하게 된다(싼 grep 질문과 비싼 탐색 질문은 다른 현상이다).
 const REFERENCE_LEVEL = Number(process.env.OKF_BENCH_REF_LEVEL || 20);
-const LEVEL_AXIS = (process.env.OKF_BENCH_LEVELS || '1,5,10,15,20,40').split(',').filter(Boolean).map(Number);
+// LEVEL_AXIS 는 v3에서 없앴다. meta에 남겨두면 재지도 않은 축을 쟀다고 읽힌다.
 const cells = [];
 for (const s of scenarios.scenarios) {
   for (const condition of ['zero_base', 'answer_sheet', 'okf', 'wrong_knowledge', 'claude_md']) {
     cells.push({ scenario: s, condition, level: condition === 'zero_base' || condition === 'answer_sheet' ? null : REFERENCE_LEVEL });
   }
-  // 레벨 축은 buried 시나리오에서만 잰다 — 축의 목적은 "지식이 쌓일수록 어떻게 되는가"이고,
-  // 이는 탐색이 비싼 질문에서만 의미가 있다.
-  if (s.kind !== 'buried' || s.target !== 'slim') continue;
-  for (const level of LEVEL_AXIS) {
-    if (level === REFERENCE_LEVEL) continue;
-    for (const condition of ['okf', 'claude_md']) cells.push({ scenario: s, condition, level });
-  }
 }
+// 레벨 축(비용 곡선)은 v3에서 폐기했다(사전등록 C9).
+//
+// v2는 이 축으로 "1→35 concept에서 OKF는 싸지고 CLAUDE.md는 2.2배 비싸진다. 곡선이 갈라진다"를
+// 발행했다. 그 곡선은 정답런 3·2·5·3·2·4개의 중앙값이었고 최저점은 2개의 중앙값이었다.
+// 전 구간 분포가 겹쳤고, 같은 README가 두 문단 뒤에 "n=5에서는 아무것도 분리되지 않는다"고 적었다.
+//
+// 그리고 이 축이 실제로 재던 것은 지식 조직화가 아니라 lib/config.mjs:27 의 inject_max_lines:120
+// 이다. v2는 게이트가 "1바이트만 늘었다"를 배치가 concept 14개를 한 줄로 접은 결과라고 설명했지만,
+// bench-bundles.mjs 가 기록한 gateTruncated 는 정체가 시작되는 바로 그 지점에서 true다 —
+// 예산 때문에 잘려나간 것이다.
+//
+// n을 올려 다시 재면 설정 파일에서 읽을 수 있는 숫자를 더 정밀하게 재는 데 돈을 쓰게 된다.
+// 상한은 상한이라고 적고, 돈은 실제로 불확실한 주장에 쓴다.
 
 // 셀이 어느 번들을 보는지 한 곳에서만 정한다. v2는 이 계산을 buildPrompt와 measureWorker에
 // 각각 복제해뒀는데, 둘이 어긋나면 게이트와 --add-dir이 서로 다른 번들을 가리키게 된다.
@@ -581,7 +587,8 @@ for (const scen of [...new Set(cells.map((c) => c.scenario.key))]) {
 const out = {
   meta: {
     startedAt, finishedAt: new Date().toISOString(), model, resolvedModels, effort, maxTurns, runs,
-    judgeModel, referenceLevel: REFERENCE_LEVEL, levelAxis: LEVEL_AXIS, concurrency,
+    judgeModel, referenceLevel: REFERENCE_LEVEL, concurrency,
+    levelAxisRetired: 'v3는 레벨 비용 곡선을 재지 않는다(사전등록 C9). v2의 그 축은 lib/config.mjs:27 inject_max_lines:120 상한을 재고 있었다 — 설정 상수다.',
     modelMixDetected: resolvedModels.length > 1,
     claudeVersion: spawnSync('claude', ['--version'], { encoding: 'utf8' }).stdout.trim(),
     node: process.version, platform: `${os.platform()} ${os.arch()}`,
