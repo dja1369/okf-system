@@ -20,8 +20,9 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { okfPaths } from '../lib/paths.mjs';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const { okfPaths } = await import(`${ROOT}/lib/paths.mjs`);
 
 if (process.env.OKF_RUN_LIVE_BENCH !== '1') {
   console.error('유료 라이브 실행입니다. 명시적으로 OKF_RUN_LIVE_BENCH=1을 설정하세요.');

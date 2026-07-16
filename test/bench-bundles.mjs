@@ -12,9 +12,10 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { ensureBootstrap } from '../lib/bootstrap.mjs';
+import { okfPaths } from '../lib/paths.mjs';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const { ensureBootstrap } = await import(`${ROOT}/lib/bootstrap.mjs`);
-const { okfPaths } = await import(`${ROOT}/lib/paths.mjs`);
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`);
