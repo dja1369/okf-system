@@ -243,7 +243,7 @@ Le run en chaîne v4 (120 sessions, vrais batches entre les étapes) a coûté *
 **$9.20** de notation + **$25.81** d’ingestion réelle ≈ **$67** :
 
 ```sh
-OKF_RUN_LIVE_BENCH=1 OKF_BENCH_CHAINS=15 node test/bench-chain.mjs   # chained sessions, real batch, measure
+OKF_RUN_LIVE_BENCH=1 OKF_BENCH_CHAINS=15 node test/bench-chain.mjs   # sessions chaînées, vrai batch, mesure
 ```
 
 [Rapport complet](docs/benchmarks/okf-benchmark-2026-07-16-v3.md) ·
