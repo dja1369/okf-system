@@ -121,7 +121,11 @@ function sanitize(value) {
 // 도 4스텝이 같은 cwd를 쓰므로 같은 위험이 있다 — 안 지우면 "축적 없음" 컨트롤이 거짓이 된다).
 // 그래서 스텝(런)마다 지운다.
 function projectMemoryDir(cwd) {
-  const slug = path.resolve(cwd).replace(/\//g, '-');
+  // Claude Code의 실제 슬러그 규칙은 '/'만이 아니라 영숫자가 아닌 모든 문자('.', '_' 포함)를
+  // '-'로 바꾼다(실측으로 확인 — path.resolve().replace(/\//g,'-')만으로는 '.claude',
+  // 'side_project'처럼 점/언더스코어가 든 경로에서 실제 슬러그와 어긋난다. v3의
+  // bench-okf.mjs도 같은 패턴을 쓰지만 v3의 대상 경로엔 점/언더스코어가 없어 우연히 맞았다).
+  const slug = path.resolve(cwd).replace(/[^a-zA-Z0-9]/g, '-');
   return path.join(os.homedir(), '.claude', 'projects', slug, 'memory');
 }
 function clearProjectMemory(cwd) {
@@ -239,7 +243,11 @@ function gateTextOf(okfHome) {
 // 세션 실행. v3의 runClaude와 같은 계약이되, session_id도 회수한다(체인 전달을 위해 transcript를
 // 찾아야 하므로 — v3의 bench-okf.mjs는 transcript를 쓰지 않아 필요 없었다).
 async function runClaude({ prompt, cwd, addDir, okfHome }) {
-  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--no-session-persistence',
+  // '--no-session-persistence'를 안 쓴다(v3의 bench-okf.mjs와의 유일한 차이) — 이 세션의
+  // transcript가 실제로 ~/.claude/projects/<cwd슬러그>/<sessionId>.jsonl 에 남아야 배치가
+  // 그걸 씹어 다음 스텝의 지식으로 만들 수 있다. zero_base_chain도 같은 인자를 쓰지만
+  // transcript를 회수하지 않으므로 무해하다.
+  const args = ['-p', '--output-format', 'stream-json', '--verbose',
     '--setting-sources', '',
     '--model', model, '--effort', effort, '--max-turns', String(maxTurns), '--max-budget-usd', perCallBudgetUsd,
     '--permission-mode', 'dontAsk',
@@ -355,7 +363,11 @@ function plantAndBatch(okfHome, transcriptPath, usageFile) {
 // 번들 sweep이 이 벤치 세션을 지식으로 오인하는 오염을 원천 차단한다).
 function claimTranscript(sessionId, cwd, outPath) {
   const projects = path.join(os.homedir(), '.claude', 'projects');
-  const slug = path.resolve(cwd).replace(/\//g, '-');
+  // Claude Code의 실제 슬러그 규칙은 '/'만이 아니라 영숫자가 아닌 모든 문자('.', '_' 포함)를
+  // '-'로 바꾼다(실측으로 확인 — path.resolve().replace(/\//g,'-')만으로는 '.claude',
+  // 'side_project'처럼 점/언더스코어가 든 경로에서 실제 슬러그와 어긋난다. v3의
+  // bench-okf.mjs도 같은 패턴을 쓰지만 v3의 대상 경로엔 점/언더스코어가 없어 우연히 맞았다).
+  const slug = path.resolve(cwd).replace(/[^a-zA-Z0-9]/g, '-');
   const p = path.join(projects, slug, `${sessionId}.jsonl`);
   if (!fs.existsSync(p)) return null;
   fs.mkdirSync(path.dirname(outPath), { recursive: true });

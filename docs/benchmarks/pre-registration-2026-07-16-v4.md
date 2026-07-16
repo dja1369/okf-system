@@ -165,4 +165,13 @@ positive total can hide a negative middle step, and that must be visible, not sm
 
 Recorded here rather than edited in silently.
 
-*(none yet)*
+- **2026-07-16, after measurement:** the core prediction (P1) was refuted at n=15 — see
+  [the report](okf-benchmark-chain-2026-07-16-v4.md). R2, R3, and R4 fired. R3's mechanical wording
+  ("zero_base_chain trends the same direction as okf_chain ⇒ contamination guard failed") could not
+  be cleanly distinguished from an alternative this document did not anticipate: Q1–Q4's difficulty
+  was not held constant, and Q4 (a two-part question) plausibly drove a cost/tool-call spike in
+  **both** arms independent of any guard failure. This is named as a real design limitation of this
+  registration, not resolved by assumption — both explanations are reported in the results document.
+  A harness-level flake (14/120 runs, 11.7%, `exitCode=0` but no `result` event) was also observed
+  and is reported separately from wrong answers, in the same spirit as v3's unexplained hook-delivery
+  flake.

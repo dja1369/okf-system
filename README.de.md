@@ -189,6 +189,31 @@ Die Widerlegungskriterien **R1–R5 wurden alle mechanisch ausgewertet und keine
 Ausschluss der kontaminierten Zellen) — dieser Lauf widerlegt die Behauptung nicht. Das ist nicht
 dasselbe wie eine starke Bestätigung bei n=15; es ist das Fehlen einer Widerlegung.
 
+### Ein Chain-Follow-up: Hilft echte Akkumulation? (v4, widerlegt)
+
+<!-- okf-benchmark-chain: 2026-07-16-v4 -->
+
+Ein separater, vorregistrierter Lauf testete OKFs Mechanismus direkt: eine Chain aus 4 verwandten, aber
+verschiedenen Fragen zu `pkg/scheduler` von `kubernetes/kubernetes` (v1.30.0, 178 Go-Dateien), bei der
+die Schlussfolgerung jeder Sitzung durch einen **echten Batch** läuft, bevor die nächste Sitzung startet —
+verglichen mit denselben 4 Fragen, ganz ohne jegliche Akkumulation. Das ist genau die Form, die die
+Vorregistrierung von v3 als „begünstigt OKF und lässt sich so justieren, dass sie ihm schmeichelt"
+markierte und auszuführen ablehnte. v4 führte sie trotzdem aus, diesmal mit Schutzmaßnahmen: Die 4 Fragen
+wurden vor dem Ausgeben eingefroren und gegen den Quelltext verifiziert, der Kontaminations-Schutz löscht
+Claude Codes Projekt-Memory vor **jeder** Sitzung (nicht nur einmal), und die Widerlegungskriterien wurden
+vor der Messung festgelegt — siehe die [Vorregistrierung](docs/benchmarks/pre-registration-2026-07-16-v4.md).
+
+Echte Akkumulation fand statt: Die Gate-Bytes wuchsen über die Schritte hinweg monoton (1835 → 2613 →
+3675 → 4950, n=15 Chains), gestützt auf echte, gemessene Batch-Ausgaben ($25.81 gesamt). **Die
+Kernvorhersage — dass die Kosten über die Chain hinweg fallen — wurde widerlegt.** OKFs Kosten
+entwickelten sich über die vier Fragen $0.231 → $0.216 → $0.258 → **$0.447**; die Kontrolle ohne Gedächtnis
+bewegte sich genauso ($0.255 → $0.256 → $0.272 → $0.411). Die wahrscheinlichste Erklärung ist, dass die
+vierte Frage für beide Arme schlicht schwerer war — sie fragt nach zwei Mechanismen gleichzeitig — nicht,
+dass Akkumulation half oder schadete. OKFs Genauigkeit auf Atom-Ebene übertraf die der Baseline in keinem
+Schritt und lag bei der ersten wie der letzten Frage darunter. Die Binärbewertung (alle Atome korrekt)
+stand bei 0/106 für beide Arme — dieses Fragenset ist hart genug, dass überhaupt nur die Bewertung auf
+Atom-Ebene brauchbar ist. [Vollständiger Bericht](docs/benchmarks/okf-benchmark-chain-2026-07-16-v4.md).
+
 ### Lokaler Overhead (nicht das Wirksamkeitsergebnis)
 
 Gemessen am 2026-07-16, macOS arm64, Node `v26.4.0`, Median mit min/max.
@@ -214,10 +239,19 @@ OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 20      
 OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                                    # measure
 ```
 
+Der v4-Chain-Lauf (120 Sitzungen, echte Batches zwischen den Schritten) kostete **$31.95** Messung +
+**$9.20** Bewertung + **$25.81** echten Ingest ≈ **$67**:
+
+```sh
+OKF_RUN_LIVE_BENCH=1 OKF_BENCH_CHAINS=15 node test/bench-chain.mjs   # chained sessions, real batch, measure
+```
+
 [Vollständiger Bericht](docs/benchmarks/okf-benchmark-2026-07-16-v3.md) ·
+[Chain-Follow-up-Bericht](docs/benchmarks/okf-benchmark-chain-2026-07-16-v4.md) ·
 [Raw JSON](docs/benchmarks/raw/) ·
 [Committete Bundles](docs/benchmarks/bundles/) ·
 [Vorregistrierung](docs/benchmarks/pre-registration-2026-07-16-v3.md) ·
+[Chain-Vorregistrierung](docs/benchmarks/pre-registration-2026-07-16-v4.md) ·
 [Nutzungsleitfaden](docs/USAGE.md).
 
 ## Sprachunterstützung

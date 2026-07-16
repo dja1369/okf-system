@@ -190,6 +190,30 @@ Refutation criteria **R1–R5 were all evaluated mechanically and none fired** (
 contaminated cells) — this run does not refute the claim. That is not the same as a strong
 confirmation at n=15; it is the absence of a refutation.
 
+### A chain follow-up: does real accumulation help? (v4, refuted)
+
+<!-- okf-benchmark-chain: 2026-07-16-v4 -->
+
+A separate, pre-registered run tested OKF's mechanism directly: a chain of 4 related-but-different
+questions about `kubernetes/kubernetes`'s `pkg/scheduler` (v1.30.0, 178 Go files), where each
+session's conclusion is fed through a **real batch** before the next session starts, compared
+against the same 4 questions asked with no accumulation, ever. This is the exact shape v3's
+pre-registration flagged as "favours OKF and is tunable to flatter it" and declined to run. v4 ran
+it anyway, with guards this time: the 4 questions were frozen and source-verified before spending,
+the contamination guard clears Claude Code's project memory before **every** session (not once),
+and refutation criteria were fixed before measurement — see the
+[pre-registration](docs/benchmarks/pre-registration-2026-07-16-v4.md).
+
+Real accumulation happened: gate bytes grew monotonically across steps (1835 → 2613 → 3675 → 4950,
+n=15 chains), backed by real, measured batch spend ($25.81 total). **The core prediction — that cost
+falls across the chain — was refuted.** OKF's cost went $0.231 → $0.216 → $0.258 → **$0.447** across
+the four questions; the no-memory control moved the same way ($0.255 → $0.256 → $0.272 → $0.411).
+The most likely explanation is that the fourth question was simply harder for both arms — it asks
+about two mechanisms at once — not that accumulation helped or hurt. OKF's atom-level accuracy did
+not exceed the baseline's at any step, and was below it at both the first and last question. Binary
+(all-atoms-correct) scoring was 0/106 for both arms — this question set is hard enough that only the
+atom-level score is usable at all. [Full report](docs/benchmarks/okf-benchmark-chain-2026-07-16-v4.md).
+
 ### Local overhead (not the effectiveness result)
 
 Measured 2026-07-16, macOS arm64, Node `v26.4.0`, median with min/max.
@@ -215,10 +239,19 @@ OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 20      
 OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                                    # measure
 ```
 
+The v4 chain run (120 sessions, real batches between steps) cost **$31.95** measurement + **$9.20**
+grading + **$25.81** real ingest ≈ **$67**:
+
+```sh
+OKF_RUN_LIVE_BENCH=1 OKF_BENCH_CHAINS=15 node test/bench-chain.mjs   # chained sessions, real batch, measure
+```
+
 [Full report](docs/benchmarks/okf-benchmark-2026-07-16-v3.md) ·
+[chain follow-up report](docs/benchmarks/okf-benchmark-chain-2026-07-16-v4.md) ·
 [raw JSON](docs/benchmarks/raw/) ·
 [committed bundles](docs/benchmarks/bundles/) ·
 [pre-registration](docs/benchmarks/pre-registration-2026-07-16-v3.md) ·
+[chain pre-registration](docs/benchmarks/pre-registration-2026-07-16-v4.md) ·
 [usage guide](docs/USAGE.md).
 
 ## Language support

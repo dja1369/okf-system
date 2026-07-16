@@ -149,6 +149,28 @@ number rests on, and the full report:
 - [Committed bundles](benchmarks/bundles/) — the exact gate text and concept bodies
 - [Pre-registration](benchmarks/pre-registration-2026-07-16-v3.md)
 
+### Chain follow-up (v4) — does real accumulation help across a chain of related questions?
+
+<!-- okf-live-benchmark-chain: v4-2026-07-16 -->
+
+A separate, pre-registered run (`test/bench-chain.mjs`) tests OKF's mechanism directly: a chain of 4
+related-but-different questions, where each session's conclusion is fed through a **real batch**
+before the next session starts, against a no-accumulation control that asks the same 4 questions
+independently. v3's pre-registration flagged this exact shape as "favours OKF, tunable to flatter
+it" and declined to run it; v4 ran it with guards (frozen/source-verified questions, per-session
+project-memory clearing, mechanical refutation criteria) on `kubernetes/kubernetes`'s
+`pkg/scheduler`. Real accumulation was confirmed (gate bytes grew monotonically, backed by real
+batch spend), but the core prediction — cost falling across the chain — was **refuted**: both arms
+got more expensive at the hardest (fourth) question, and OKF's accuracy did not exceed the
+baseline's at any step.
+
+```sh
+OKF_RUN_LIVE_BENCH=1 OKF_BENCH_CHAINS=15 node test/bench-chain.mjs
+```
+
+- [Chain follow-up report](benchmarks/okf-benchmark-chain-2026-07-16-v4.md)
+- [Chain pre-registration](benchmarks/pre-registration-2026-07-16-v4.md)
+
 ### Recorded fields
 
 The raw JSON contains, per run: condition, scenario, atom-level grade with per-atom status, binary

@@ -187,6 +187,33 @@ Les critères de réfutation **R1–R5 ont tous été évalués mécaniquement e
 (après exclusion des cellules contaminées) — ce run ne réfute pas l’affirmation. Ce n’est pas la même
 chose qu’une confirmation forte à n=15 ; c’est l’absence de réfutation.
 
+### Un suivi en chaîne : la véritable accumulation aide-t-elle ? (v4, réfuté)
+
+<!-- okf-benchmark-chain: 2026-07-16-v4 -->
+
+Un run séparé et pré-enregistré a testé directement le mécanisme d’OKF : une chaîne de 4 questions
+liées mais différentes à propos du `pkg/scheduler` de `kubernetes/kubernetes` (v1.30.0, 178 fichiers
+Go), où la conclusion de chaque session passe par un **vrai batch** avant le démarrage de la session
+suivante, comparée aux mêmes 4 questions posées sans jamais aucune accumulation. C’est exactement la
+forme que le pré-enregistrement de v3 avait signalée comme « favorise OKF et est ajustable pour le
+flatter » et avait refusé de lancer. v4 l’a lancée malgré tout, cette fois avec des garde-fous : les
+4 questions ont été figées et vérifiées depuis le source avant toute dépense, le garde-fou de
+contamination efface la mémoire de projet de Claude Code avant **chaque** session (pas une seule
+fois), et les critères de réfutation ont été fixés avant la mesure — voir le
+[pré-enregistrement](docs/benchmarks/pre-registration-2026-07-16-v4.md).
+
+Une véritable accumulation a bien eu lieu : les octets du gate ont crû de façon monotone au fil des
+étapes (1835 → 2613 → 3675 → 4950, n=15 chaînes), soutenus par une dépense de batch réelle et mesurée
+($25.81 au total). **La prédiction centrale — que le coût baisse au long de la chaîne — a été
+réfutée.** Le coût d’OKF est passé de $0.231 → $0.216 → $0.258 → **$0.447** sur les quatre questions ;
+le contrôle sans mémoire a évolué de la même manière ($0.255 → $0.256 → $0.272 → $0.411).
+L’explication la plus probable est que la quatrième question était simplement plus difficile pour les
+deux bras — elle interroge deux mécanismes à la fois — et non que l’accumulation ait aidé ou nui. La
+précision au niveau des atomes d’OKF n’a dépassé celle de la baseline à aucune étape, et lui était
+inférieure à la fois pour la première et la dernière question. La notation binaire (tous les atomes
+corrects) était de 0/106 pour les deux bras — ce jeu de questions est assez difficile pour que seul
+le score au niveau des atomes soit exploitable. [Rapport complet](docs/benchmarks/okf-benchmark-chain-2026-07-16-v4.md).
+
 ### Overhead local (pas le résultat d’efficacité)
 
 Mesuré le 2026-07-16, macOS arm64, Node `v26.4.0`, médiane avec min/max.
@@ -212,10 +239,19 @@ OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 20      
 OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                                    # mesure
 ```
 
+Le run en chaîne v4 (120 sessions, vrais batches entre les étapes) a coûté **$31.95** de mesure +
+**$9.20** de notation + **$25.81** d’ingestion réelle ≈ **$67** :
+
+```sh
+OKF_RUN_LIVE_BENCH=1 OKF_BENCH_CHAINS=15 node test/bench-chain.mjs   # chained sessions, real batch, measure
+```
+
 [Rapport complet](docs/benchmarks/okf-benchmark-2026-07-16-v3.md) ·
+[rapport de suivi en chaîne](docs/benchmarks/okf-benchmark-chain-2026-07-16-v4.md) ·
 [raw JSON](docs/benchmarks/raw/) ·
 [bundles commités](docs/benchmarks/bundles/) ·
 [pré-enregistrement](docs/benchmarks/pre-registration-2026-07-16-v3.md) ·
+[pré-enregistrement de la chaîne](docs/benchmarks/pre-registration-2026-07-16-v4.md) ·
 [guide d’utilisation](docs/USAGE.md).
 
 ## Langages pris en charge
