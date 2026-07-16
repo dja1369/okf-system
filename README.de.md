@@ -59,10 +59,13 @@ Warum idle-basiert? Sitzungen enden selten explizit — Background-Agenten tun e
 
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
-**OKF erspart Ihnen das Explorieren nicht. Es speichert, was Exploration niemals finden kann.**
+**OKF ist Overhead bei fast allem, was Code beantworten kann, und dort, wo Code überhaupt keine
+Antwort hat, schlägt selbst eine schlichte CLAUDE.md es ebenfalls — OKFs einziger Vorteil besteht
+darin, dies günstiger zu tun. Ein direkter Test seines Kernversprechens (angesammeltes Wissen zahlt
+sich mit der Zeit aus) wurde durchgeführt und widerlegt.**
 
-Beide Hälften dieses Satzes werden unten gemessen, an echten Open-Source-Repositories, mit n=15 je
-Vergleichszelle. Die Hälfte, die für OKF wenig schmeichelhaft ist, wird zuerst veröffentlicht.
+Jede Behauptung in diesem Absatz wird unten gemessen, an echten Open-Source-Repositories, mit n=15
+je Vergleichszelle. Die für OKF wenig schmeichelhaften Teile werden zuerst veröffentlicht.
 
 ### Wie gemessen wurde
 

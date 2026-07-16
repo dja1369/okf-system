@@ -58,10 +58,13 @@ Pourquoi une base sur l’idle ? Les sessions se terminent rarement de façon ex
 
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
-**OKF ne vous dispense pas d’explorer. Il stocke ce que l’exploration ne pourra jamais trouver.**
+**OKF est un surcoût pour presque tout ce que le code peut résoudre, et là où le code n’a aucune
+réponse, un simple CLAUDE.md le surpasse lui aussi — le seul avantage d’OKF est de le faire à moindre
+coût. Un test direct de sa promesse fondamentale (les connaissances accumulées finissent par payer
+avec le temps) a été mené, puis réfuté.**
 
-Les deux moitiés de cette phrase sont mesurées ci-dessous, sur de vrais dépôts open source, à n=15 par
-cellule de comparaison. La moitié qui est peu flatteuse pour OKF est publiée en premier.
+Chaque affirmation de ce paragraphe est mesurée ci-dessous, sur de vrais dépôts open source, à n=15
+par cellule de comparaison. Les parties peu flatteuses pour OKF sont publiées en premier.
 
 ### Comment la mesure a été faite
 
