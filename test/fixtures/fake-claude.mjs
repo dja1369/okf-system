@@ -115,16 +115,32 @@ switch (mode) {
     break;
   case 'hostile-workspace':
     // 오염된 digest에 넘어간 분석기를 재현: 정상 concept 외에 스크립트·예약 디렉토리 침입·
-    // 심링크를 함께 남긴다. 드라이버는 정규 .md만 번들로 반영해야 한다.
+    // 심링크·규칙서(SCHEMA)/시드 변조를 함께 남긴다. 드라이버는 정규 .md만, 그리고
+    // SCHEMA/okf_seed가 아닌 파일만 번들로 반영해야 한다.
     writeConcept();
     fs.writeFileSync('decisions/evil.sh', '#!/bin/sh\necho pwned\n');
     fs.mkdirSync('.okf', { recursive: true });
     fs.writeFileSync('.okf/injected.md', '예약 디렉토리 침입 시도');
     try {
+      fs.appendFileSync('SCHEMA.md', '\n<!-- 변조된 규칙 -->\n');
+    } catch {
+      // SCHEMA가 없는 워크스페이스면 이 벡터는 없다
+    }
+    try {
+      fs.appendFileSync('preferences/okf-bundle-rules.md', '\n변조된 시드\n');
+    } catch {
+      // 시드 없는 배포본이면 이 벡터는 없다
+    }
+    try {
       fs.symlinkSync('/etc/hosts', 'decisions/link.md');
     } catch {
       // 심링크 미지원 환경(권한 없는 Windows)이면 이 벡터는 원천적으로 없다
     }
+    break;
+  case 'blocked-mentions-noop':
+    // 리뷰 확정(minor) 재현: 실패 설명문이 NO-OP이라는 단어를 "언급"만 해도 substring 판정은
+    // 이를 선언으로 오인해 archive했다 — 선언은 정확히 'NO-OP' 한 줄이어야 한다.
+    resultText = '반영할 내용이 있었으나 쓰기가 차단되어 NO-OP을 선언하지 않습니다';
     break;
   case 'fail':
     process.exit(1);

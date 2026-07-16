@@ -619,6 +619,69 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   ok('워크스페이스 반영: .md 아닌 파일은 차단된다', !fs.existsSync(path.join(home, 'decisions', 'evil.sh')));
   ok('워크스페이스 반영: 심링크는 차단된다', !fs.existsSync(path.join(home, 'decisions', 'link.md')));
   ok('워크스페이스 반영: 예약 디렉토리(.okf) 침입은 차단된다', !fs.existsSync(path.join(home, '.okf', 'injected.md')));
+  // 리뷰 확정(minor): 규칙서와 시드는 프롬프트 규범('수정 금지')만으로는 못 지킨다 — 드라이버가 시행해야 한다.
+  ok('워크스페이스 반영: SCHEMA.md 변조 시도는 차단된다', !fs.readFileSync(path.join(home, 'SCHEMA.md'), 'utf8').includes('변조된 규칙'));
+  const seedPath = path.join(home, 'preferences', 'okf-bundle-rules.md');
+  ok(
+    '워크스페이스 반영: okf_seed 시드 변조 시도는 차단된다',
+    fs.existsSync(seedPath) && !fs.readFileSync(seedPath, 'utf8').includes('변조된 시드')
+  );
+}
+{
+  // 리뷰 확정(minor): NO-OP 판정이 substring이면 실패 설명문 속 'NO-OP' 언급만으로 처리완료
+  // archive되어 지식이 조용히 유실된다(E3형 유실 재발). 선언은 정확히 'NO-OP' 한 줄이어야 한다.
+  const home = setupBatchSandbox('noop-mention');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'blocked-mentions-noop' } });
+  ok('NO-OP "언급"은 선언이 아니다 — raw 보존·재시도', listRaw(home).length === 1 && listRemoveCandidate(home).length === 0);
+}
+{
+  // 리뷰 확정(major): sweep이 staging 잔재보다 먼저 돌고 knownSize가 staging을 못 보면,
+  // 직전 배치가 중단되며 staging에 남긴 세션을 같은 크기여도 재수집해 같은 세션이 한 회차에
+  // 두 번 유료 ingest된다 — "같은 크기면 절대 재수집 금지" 불변식 위반.
+  const home = bootstrapped('staging-dedup');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE });
+  const fakeHome = sandbox('fake-home-staging-dedup');
+  const sessionId = 'd6d6d6d6-1111-2222-3333-444444444444';
+  const projectsDir = path.join(fakeHome, '.claude', 'projects', 'my-slug');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  const stagingTranscript = path.join(projectsDir, `${sessionId}.jsonl`);
+  fs.copyFileSync(SAMPLE_TRANSCRIPT, stagingTranscript);
+  const stagingPast = new Date(Date.now() - 2 * 3600_000);
+  fs.utimesSync(stagingTranscript, stagingPast, stagingPast);
+  const crashedStaging = path.join(okfPaths(home).staging, 'crashed-run');
+  fs.mkdirSync(crashedStaging, { recursive: true });
+  fs.copyFileSync(SAMPLE_TRANSCRIPT, path.join(crashedStaging, `2026-07-10--my-slug--${sessionId}.jsonl`));
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  const archivedCopies = listRemoveCandidate(home).filter((f) => f.includes(sessionId));
+  ok('staging 잔재 세션은 같은 크기면 재수집되지 않는다(중복 ingest 금지)', archivedCopies.length === 1, `archived=${archivedCopies.join(', ')}`);
+}
+{
+  // 리뷰 확정(major): cwd 추출 실패 시 수집 제외가 fail-open이었다 — 제외는 프라이버시 약속이다.
+  // (1) 1MB 프리픽스 너머의 cwd도 찾아야 하고, (2) 제외 설정이 있으면 cwd 미확인은 보류한다.
+  const home = bootstrapped('exclude-failclosed');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, capture_exclude_cwd: ['/Users/tester/excluded/**'] });
+  const fakeHome = sandbox('fake-home-exclude-failclosed');
+  const projectsDir = path.join(fakeHome, '.claude', 'projects', 'excluded-proj');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  const bigFirst = path.join(projectsDir, 'a1a1a1a1-1111-2222-3333-444444444444.jsonl');
+  fs.writeFileSync(
+    bigFirst,
+    `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'x'.repeat(1500 * 1024) } })}\n${JSON.stringify({ type: 'user', cwd: '/Users/tester/excluded/big', message: { role: 'user', content: '제외 대상 대화' } })}\n`
+  );
+  const noCwd = path.join(projectsDir, 'b2b2b2b2-1111-2222-3333-444444444444.jsonl');
+  fs.writeFileSync(noCwd, `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'cwd 메타데이터가 없는 대화' } })}\n`);
+  const excludePast = new Date(Date.now() - 2 * 3600_000);
+  fs.utimesSync(bigFirst, excludePast, excludePast);
+  fs.utimesSync(noCwd, excludePast, excludePast);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  ok(
+    '1MB 프리픽스 너머의 cwd도 찾아 제외한다',
+    !listRemoveCandidate(home).some((f) => f.includes('a1a1a1a1')) && !listRaw(home).some((f) => f.includes('a1a1a1a1'))
+  );
+  ok(
+    '제외 설정 활성 시 cwd 미확인 transcript는 수집 보류(fail-closed)',
+    !listRemoveCandidate(home).some((f) => f.includes('b2b2b2b2')) && !listRaw(home).some((f) => f.includes('b2b2b2b2'))
+  );
 }
 {
   // 분석기 호출에는 워크스페이스 한정 Write/Edit 허용 규칙을 함께 주입한다(belt-and-braces).

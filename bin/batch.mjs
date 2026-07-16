@@ -118,31 +118,52 @@ function samePath(a, b) {
 }
 
 // Claude may write a large queue-operation record before the first user/assistant record that
-// carries cwd. Read a bounded prefix larger than the batch chunk ceiling, never the whole file.
+// carries cwd — 리뷰 확정(major): 고정 1MB 프리픽스만 보면 그런 transcript에서 cwd를 놓쳐
+// 수집 제외(capture_exclude_cwd)가 무력화됐다. 완전한 줄 단위로 최대 32MB까지 훑되, 처음
+// 발견되는 cwd에서 즉시 멈춘다(정상 transcript는 첫 몇 KB에서 끝난다). 바이트 단위 carry로
+// 청크 경계의 멀티바이트 문자도 깨지지 않는다.
 function readTranscriptCwd(transcriptPath) {
-  let prefix;
+  const HARD_CAP = 32 * 1024 * 1024;
+  let fd;
   try {
-    const fd = fs.openSync(transcriptPath, 'r');
-    try {
-      const buffer = Buffer.alloc(1024 * 1024);
-      const bytes = fs.readSync(fd, buffer, 0, buffer.length, 0);
-      prefix = buffer.subarray(0, bytes).toString('utf8');
-    } finally {
-      fs.closeSync(fd);
-    }
+    fd = fs.openSync(transcriptPath, 'r');
   } catch {
     return null;
   }
-  for (const line of prefix.split('\n')) {
-    if (!line.includes('"cwd"')) continue;
-    try {
-      const row = JSON.parse(line);
-      if (typeof row.cwd === 'string') return row.cwd;
-    } catch {
-      // The bounded prefix may end mid-record; the session-id registry remains the primary guard.
+  try {
+    const chunk = Buffer.alloc(1024 * 1024);
+    let carry = Buffer.alloc(0);
+    let offset = 0;
+    const cwdFromLine = (lineBuf) => {
+      const line = lineBuf.toString('utf8');
+      if (!line.includes('"cwd"')) return null;
+      try {
+        const row = JSON.parse(line);
+        if (typeof row.cwd === 'string') return row.cwd;
+      } catch {
+        // 깨진/잘린 레코드 — 다음 줄에서 계속. 세션ID 레지스트리가 별도 가드로 남아 있다.
+      }
+      return null;
+    };
+    while (offset < HARD_CAP) {
+      const bytes = fs.readSync(fd, chunk, 0, chunk.length, offset);
+      if (bytes <= 0) break;
+      offset += bytes;
+      let buf = carry.length > 0 ? Buffer.concat([carry, chunk.subarray(0, bytes)]) : chunk.subarray(0, bytes);
+      let start = 0;
+      let nl;
+      while ((nl = buf.indexOf(0x0a, start)) !== -1) {
+        const cwd = cwdFromLine(buf.subarray(start, nl));
+        if (cwd != null) return cwd;
+        start = nl + 1;
+      }
+      carry = Buffer.from(buf.subarray(start)); // chunk 버퍼 재사용과의 aliasing 방지 복사
+      if (carry.length > HARD_CAP) return null; // 한 줄이 캡을 초과 — 포기
     }
+    return carry.length > 0 ? cwdFromLine(carry) : null; // 개행 없이 끝나는 마지막 줄
+  } finally {
+    fs.closeSync(fd);
   }
-  return null;
 }
 
 function transcriptCwdIsOkfHome(transcriptPath, okfHome) {
@@ -238,6 +259,7 @@ function scanOrphanSessions(okfHome, config, collect) {
   const cutoff = Date.now() - SWEEP_LOOKBACK_DAYS * 86400_000;
   let recovered = 0;
   let freshPending = 0;
+  let unknownCwdHeld = 0;
 
   for (const dirent of projectDirs) {
     // OKF 자신의 테스트·벤치가 임시 디렉토리에서 남긴 세션은 사용자 지식이 아니다. 이 필터가
@@ -264,8 +286,16 @@ function scanOrphanSessions(okfHome, config, collect) {
       if (st.size <= knownSize) continue; // 그 크기까지는 이미 수집/처리됨 — 성장했을 때만 다시 본다
 
       const cwd = readTranscriptCwd(full);
-      if (cwd != null && samePath(cwd, okfHome)) continue; // 분석기 자신의 세션
-      if (cwd != null && matchGlob(cwd, config.capture_exclude_cwd)) continue; // 사용자 지정 수집 제외
+      if (cwd != null && samePath(cwd, okfHome)) continue; // 분석기 자신의 세션(2차 가드는 세션ID 레지스트리)
+      if (config.capture_exclude_cwd.length > 0) {
+        // 리뷰 확정(major): 제외는 프라이버시 약속이다 — cwd를 확인할 수 없으면 수집하지
+        // 않는 쪽(fail-closed)이 맞다. 모르는 채로 LLM에 실어 보내는 것보다 보류가 낫다.
+        if (cwd == null) {
+          unknownCwdHeld++;
+          continue;
+        }
+        if (matchGlob(cwd, config.capture_exclude_cwd)) continue; // 사용자 지정 수집 제외
+      }
 
       if (Date.now() - st.mtimeMs < idleMs) {
         freshPending++; // 아직 대화 중일 수 있다 — 유휴 도달까지 링거가 기다린다
@@ -290,6 +320,9 @@ function scanOrphanSessions(okfHome, config, collect) {
         log(okfHome, `sweep 복사 실패 ${path.basename(full)}: code=${safeErrorCode(err)}`);
       }
     }
+  }
+  if (collect && unknownCwdHeld > 0) {
+    log(okfHome, `cwd 미확인 transcript ${unknownCwdHeld}개 수집 보류 — 수집 제외 설정이 활성이라 fail-closed`);
   }
   return { recovered, freshPending };
 }
@@ -722,6 +755,7 @@ function buildAnalyzerWorkspace(okfHome, runId, chunkIndex, chunk) {
 // (SCHEMA 규칙 4 — 대체는 새 파일 + superseded 산문). 반영 후 lint가 내용 규정을 검사한다.
 function applyAnalyzerWorkspace(okfHome, wsRoot) {
   let applied = 0;
+  let blocked = 0;
   const walk = (dir, rel) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       if (rel === '' && (SCAN_EXCLUDE_DIRS.has(e.name) || e.name === INGEST_INBOX_DIR)) continue;
@@ -743,12 +777,22 @@ function applyAnalyzerWorkspace(okfHome, wsRoot) {
         // 신규 파일
       }
       if (prev && Buffer.compare(prev, next) === 0) continue;
+      // 리뷰 확정(minor): 규칙서(SCHEMA.md)와 okf_seed 시드는 "수정 금지"가 프롬프트 규범으로만
+      // 있었다 — 오염된 digest에 넘어간 분석기가 규칙서를 영구 교체할 수 있는 경계 구멍이라
+      // 여기 드라이버가 시행한다. SCHEMA는 bootstrap 버전 동기화가 유일한 갱신 경로다.
+      if (childRel === 'SCHEMA.md' || (prev && /^okf_seed:\s*true\b/m.test(prev.subarray(0, 2048).toString('utf8')))) {
+        blocked++;
+        continue;
+      }
       fs.mkdirSync(path.dirname(destAbs), { recursive: true });
       fs.writeFileSync(destAbs, next);
       applied++;
     }
   };
   walk(wsRoot, '');
+  if (blocked > 0) {
+    log(okfHome, `분석기 산출물 반영 거부 ${blocked}건 — SCHEMA.md/okf_seed 시드 수정 시도`);
+  }
   return applied;
 }
 
@@ -779,7 +823,9 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
     // 실측(E3): 쓰기가 막히면 분석기는 성공 종료하지만 아무것도 못 쓰고, NO-OP 선언 대신 차단
     // 사정을 설명한다. 이를 NO-OP으로 오분류하면 지식이 조용히 유실된다(30일 뒤 삭제).
     // "무변경 + NO-OP 미선언"은 실패다 — raw를 되돌려 재시도 대상으로 남기고, 상태에 드러낸다.
-    if (!isDirty(paths.home) && !/\bNO-OP\b/.test(ingestResult.output)) {
+    // 선언 판정은 정확히 'NO-OP' 한 줄(ingest.md 프로토콜) — 설명문 속 "언급"(substring)은
+    // 선언이 아니다(리뷰 확정: 유실 쪽이 아니라 재시도 쪽으로 기울어야 한다).
+    if (!isDirty(paths.home) && ingestResult.output.trim() !== 'NO-OP') {
       log(okfHome, `청크 ${i + 1}: 무변경인데 NO-OP 선언 없음 — 쓰기 차단/유실 의심, 원복 후 중단`);
       return false;
     }
@@ -878,11 +924,18 @@ function runBatch() {
       log(okfHome, `config ${warning.key}: ${warning.code} — 기본값 사용`);
     }
 
-    // §5-5 순서(0.락 1.sweep 2.크래시복구 3.purge 4.스냅샷)대로: sweep을 purge보다 먼저 실행한다.
-    // 리뷰 지적(사후 반영) — 이전엔 purge가 먼저 돌아서, TTL 경계에 걸린 _remove_candidate
-    // 마커를 sweep이 "known" 판정에 쓰기도 전에 지워버려 이미 처리된 세션을 같은 실행 안에서
-    // orphan으로 오판해 재수집·재ingest하는 경로가 있었다. §5-4/§7-8: raw 상태와 무관하게
-    // 항상 실행 — 유일한 백스톱이 raw-empty 게이트에 막히면 안 됨.
+    // 순서가 중요하다: staging 잔재 반환 → 큐 위생 → sweep.
+    // 리뷰 확정(major): sweep이 staging 잔재보다 먼저 돌면, 직전 배치가 청크 실패로 중단되며
+    // staging에 남긴 세션을 sweep의 크기 지도(queuedById)가 못 보고 knownSize=0으로 판정해
+    // 같은 크기여도 재수집한다 — 같은 세션이 한 회차에 두 파일로 중복 유료 ingest됐다.
+    // 잔재를 먼저 raw로 되돌리면 sweep이 그것을 큐 사본으로 보고 크기 비교가 성립한다.
+    recoverStagingLeftovers(okfHome);
+    quarantineJunkRaw(okfHome);
+
+    // §5-5 순서: sweep을 purge보다 먼저 실행한다. 리뷰 지적(사후 반영) — 이전엔 purge가 먼저
+    // 돌아서, TTL 경계에 걸린 _remove_candidate 마커를 sweep이 "known" 판정에 쓰기도 전에
+    // 지워버려 이미 처리된 세션을 같은 실행 안에서 재수집·재ingest하는 경로가 있었다.
+    // §5-4/§7-8: raw 상태와 무관하게 항상 실행 — 유일한 백스톱이 raw-empty 게이트에 막히면 안 됨.
     // The paid synthetic benchmark preserves the user's real Claude auth, so changing
     // CLAUDE_CONFIG_DIR would break login. Its explicit isolation flag prevents real session
     // history from entering the synthetic condition; normal production batches always sweep.
@@ -891,9 +944,6 @@ function runBatch() {
     const swept = skipSweepForBenchmark ? { recovered: 0, freshPending: 0 } : sweepOrphanSessions(okfHome, config);
     if (skipSweepForBenchmark) log(okfHome, 'benchmark isolation: orphan sweep 생략');
     if (swept.recovered > 0) log(okfHome, `sweep: 세션 ${swept.recovered}개 수집`);
-
-    recoverStagingLeftovers(okfHome);
-    quarantineJunkRaw(okfHome);
 
     const dirtyResult = handleDirtyWorkingTree(okfHome, lockResult.recoveredFromStaleLock);
     if (!dirtyResult.ok) {
