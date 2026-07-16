@@ -114,6 +114,35 @@ v3에서 실패로부터 배워 넣은 두 가드: (1) 조건별 비주(non-prim
 raw JSON: `docs/benchmarks/raw/okf-live-2026-07-16T08-31-48-458Z.json`. v2 실행의 raw(05-28·06-13)는
 v3 사전등록서가 v2 허위 진술 6건을 반박하는 증거로 보존한다.
 
+## 점진적 체인 벤치마크 (v4, 2026-07-16) — 반증됨
+
+`test/bench-chain.mjs` 신규. v3 사전등록서가 "방향이 OKF에 유리하고 조작 가능"하다는 이유로
+명시적으로 기각했던 설계(세션이 이어지며 배치로 실제 축적 → 다음 세션이 변형 질문에 답함)를,
+이번엔 가드를 갖춰(Q1~Q4 사전고정+소스 대조 검증, 매 스텝 프로젝트 메모리 클리어, 기계적 반증
+기준) 다시 시도했다. 대상: `kubernetes/kubernetes` v1.30.0(`7c48c2bd`), `pkg/scheduler`(178 Go
+파일, sparse-checkout). 체인 15개 × 2 arm(okf_chain/zero_base_chain) × 4스텝 = 120세션.
+
+**핵심 발견(raw JSON 직접 검증):** 게이트 바이트는 실제로 단조 증가(1835→2613→3675→4950B,
+`gateGrewMonotonically=true`, 실제 배치비용 $25.81) — 축적 자체는 인프라 수준에서 확인됨. 그러나
+핵심 예측(체인이 진행될수록 OKF 비용이 내려간다, P1)은 **반증**됨: okf_chain 비용이 $0.231→
+$0.216→$0.258→**$0.447**로 오히려 순증가했고, zero_base_chain도 $0.255→$0.256→$0.272→$0.411로
+같은 모양으로 올랐다. 가장 그럴듯한 설명은 Q4가 두 arm 모두에게 유독 어려운 2부 구성 질문이었다는
+것(축적 효과가 아님). 반증 기준 R2(비용 하락 없음)·R3(두 arm 같은 방향, 단 난이도차 대안설명
+있음)·R4(OKF 정확도가 zero_base보다 낮은 스텝 존재)가 발동했고, R1(게이트 성장)·R5(모델믹스)는
+발동 안 함. harness 레벨 result-누락 flake 14/120(11.7%, exitCode=0인데 result 이벤트 없음)도
+발견돼 오답과 분리 집계했다.
+
+발견한 실제 버그(수정 완료): `path.resolve(cwd).replace(/\//g,'-')`만으로 Claude Code의 cwd 슬러그를
+계산하면 `.`·`_`가 든 경로(예: `.claude`, `side_project`)에서 실제 슬러그와 어긋난다(실제는 영숫자가
+아닌 모든 문자를 `-`로 바꿈). `bench-chain.mjs`는 `[^a-zA-Z0-9]`로 고쳤다 — `bench-okf.mjs`의
+`projectMemoryDir`도 같은 패턴을 쓰지만 v3 대상 경로(`targets/slim`, `targets/rfcs`)에 점/언더스코어가
+없어 우연히 안 걸렸을 뿐, 잠재적으로 같은 결함이 있다(이번 PR 범위 밖 — 별도 확인 필요).
+
+측정 총비용 ≈ $67(측정 $31.95 + 채점 $9.20 + 실제 배치 $25.81). 리포트:
+`docs/benchmarks/okf-benchmark-chain-2026-07-16-v4.md`, 사전등록:
+`docs/benchmarks/pre-registration-2026-07-16-v4.md`, raw JSON:
+`docs/benchmarks/raw/okf-chain-live-2026-07-16T11-49-21-216Z.json`.
+
 ## 마지막 검증 결과
 
 실행 환경: macOS arm64, Node `v26.4.0`, Claude Code `2.1.210`.

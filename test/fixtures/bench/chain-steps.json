@@ -1,0 +1,92 @@
+{
+  "note": "K8s 스케줄러 '점진적 체인' 시나리오. 세션k가 Qk를 조사→실제 배치로 즉시 적재→세션k+1이 그 지식을 게이트로 받아 변형 질문 Q(k+1)에 답한다. 각 스텝은 같은 프레임워크(플러그인 레지스트리/확장점 디스패치)를 공유하되 서로 다른 구체적 사실을 겨냥한다 — 완전히 같은 사실의 패러프레이즈가 아니다.",
+  "designedAt": "2026-07-16",
+  "verifiedBy": "실제 체크아웃 소스를 sed/grep으로 직접 대조 검증(에이전트 초안 인용 전수 확인)",
+  "pins": {
+    "k8s": {
+      "repo": "kubernetes/kubernetes",
+      "tag": "v1.30.0",
+      "commit": "7c48c2bd72b9bf5c44d21d7338cc7bea77d0ad2a",
+      "scope": "pkg/scheduler"
+    }
+  },
+  "target": "k8s",
+  "steps": [
+    {
+      "key": "k8s_chain_q1",
+      "order": 1,
+      "question_ko": "쿠버네티스 스케줄러의 기본(default) 프로필에서, PodTopologySpread 플러그인은 Score 확장점에서 어떤 구체 구조체(struct)가 실행되며, 그 구조체는 어떤 인터페이스를 만족하고, 인메모리 레지스트리(NewInTreeRegistry)에는 어떤 이름/방식으로 등록되어 프레임워크가 그것을 찾아내는가?",
+      "ground_truth": "PodTopologySpread 구조체(pkg/scheduler/framework/plugins/podtopologyspread/plugin.go:61)가 framework.ScorePlugin 인터페이스(pkg/scheduler/framework/interface.go:492-501, Score/ScoreExtensions 메서드 요구)를 만족시키며(var _ framework.ScorePlugin = &PodTopologySpread{}, plugin.go:77), 실제 Score 메서드는 pkg/scheduler/framework/plugins/podtopologyspread/scoring.go:191에 구현되어 있다. 이름은 Name = names.PodTopologySpread(plugin.go:81 → 상수 값 \"PodTopologySpread\"는 pkg/scheduler/framework/plugins/names/names.go:37). 레지스트리에는 pkg/scheduler/framework/plugins/registry.go:65에서 podtopologyspread.Name: runtime.FactoryAdapter(fts, podtopologyspread.New)로 등록되며, 기본 프로필의 MultiPoint 목록(pkg/scheduler/apis/config/v1/default_plugins.go:49)에 {Name: names.PodTopologySpread, Weight: 2}로 올라 있다. 프레임워크는 NewFramework(pkg/scheduler/framework/runtime/framework.go:242)에서 이 레지스트리 맵을 순회하며 필요한 이름만 factory 호출로 인스턴스화(같은 파일 305-311행)하고, expandMultiPointPlugins(492-577행)가 MultiPoint 목록을 각 확장점(Score 등)으로 펼쳐 f.scorePlugins에 채운다.",
+      "ground_truth_atoms": [
+        { "id": "q1_a1", "fact": "PodTopologySpread 구조체 정의 위치", "critical": true, "file": "pkg/scheduler/framework/plugins/podtopologyspread/plugin.go", "line": "61" },
+        { "id": "q1_a2", "fact": "PodTopologySpread가 framework.ScorePlugin 인터페이스를 만족(var _ 선언)", "critical": true, "file": "pkg/scheduler/framework/plugins/podtopologyspread/plugin.go", "line": "77" },
+        { "id": "q1_a3", "fact": "Name = names.PodTopologySpread 상수 선언", "critical": true, "file": "pkg/scheduler/framework/plugins/podtopologyspread/plugin.go", "line": "81" },
+        { "id": "q1_a4", "fact": "PodTopologySpread = \"PodTopologySpread\" 문자열 상수값", "critical": true, "file": "pkg/scheduler/framework/plugins/names/names.go", "line": "37" },
+        { "id": "q1_a5", "fact": "(pl *PodTopologySpread) Score(...) 실제 구현부", "critical": true, "file": "pkg/scheduler/framework/plugins/podtopologyspread/scoring.go", "line": "191" },
+        { "id": "q1_a6", "fact": "ScoreExtensions() 구현", "critical": false, "file": "pkg/scheduler/framework/plugins/podtopologyspread/scoring.go", "line": "269" },
+        { "id": "q1_a7", "fact": "레지스트리 등록: podtopologyspread.Name: runtime.FactoryAdapter(fts, podtopologyspread.New)", "critical": true, "file": "pkg/scheduler/framework/plugins/registry.go", "line": "65" },
+        { "id": "q1_a8", "fact": "기본 MultiPoint 목록에 {Name: names.PodTopologySpread, Weight: 2}", "critical": true, "file": "pkg/scheduler/apis/config/v1/default_plugins.go", "line": "49" },
+        { "id": "q1_a9", "fact": "framework.ScorePlugin 인터페이스 정의(Score/ScoreExtensions 시그니처)", "critical": true, "file": "pkg/scheduler/framework/interface.go", "line": "492-501" },
+        { "id": "q1_a10", "fact": "NewFramework가 registry를 순회하며 pg.Has(name)인 것만 factory 호출", "critical": true, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "305-311" },
+        { "id": "q1_a11", "fact": "expandMultiPointPlugins가 MultiPoint 목록을 Score 등 확장점별 슬라이스로 펼침", "critical": false, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "492-577" }
+      ]
+    },
+    {
+      "key": "k8s_chain_q2",
+      "order": 2,
+      "question_ko": "같은 기본 프로필에서 NodeResourcesFit 플러그인이 Score 확장점에서 실행하는 구체 구조체는 무엇이며, PodTopologySpread와 달리 그 Score 로직이 왜 '고정된 하나의 알고리즘'이 아니라 설정에 따라 달라지는가? 또한 기본 weight는 얼마인가?",
+      "ground_truth": "구조체는 Fit(pkg/scheduler/framework/plugins/noderesources/fit.go:86, var _ framework.ScorePlugin = &Fit{} line 43). PodTopologySpread와 달리 Fit은 resourceAllocationScorer를 내장(composition)하며, 이 필드는 NewFit(fit.go:164-176) 내부에서 args.ScoringStrategy.Type(기본값 LeastAllocated)을 키로 nodeResourceStrategyTypeMap(fit.go:58-78, 3가지: LeastAllocated/MostAllocated/RequestedToCapacityRatio)을 조회해 동적으로 채워진다(resourceAllocationScorer: *scorePlugin(args)). 실제 Fit.Score(fit.go:504)는 내부적으로 f.score(...)를 호출하고, resourceAllocationScorer.score(resource_allocation.go:48)가 구조체 필드 scorer func(requested, allocable []int64) int64(resource_allocation.go:43)를 통해 전략별로 다른 함수를 실행한다. 즉 '어떤 구체 알고리즘이 도는가'는 factory 시점의 인자에 달려 있다. 레지스트리 등록은 noderesources.Name: runtime.FactoryAdapter(fts, noderesources.NewFit)(registry.go:67). 기본 weight는 1(apis/config/v1/default_plugins.go:41)로, PodTopologySpread(2)보다 낮다. 기본 전략(LeastAllocated)은 SetDefaults_NodeResourcesFitArgs(apis/config/v1/defaults.go:228-234)에서 지정된다.",
+      "ground_truth_atoms": [
+        { "id": "q2_b1", "fact": "Fit 구조체 정의 위치", "critical": true, "file": "pkg/scheduler/framework/plugins/noderesources/fit.go", "line": "86" },
+        { "id": "q2_b2", "fact": "Fit이 framework.ScorePlugin 인터페이스를 만족", "critical": true, "file": "pkg/scheduler/framework/plugins/noderesources/fit.go", "line": "43" },
+        { "id": "q2_b3", "fact": "Name = names.NodeResourcesFit 상수", "critical": true, "file": "pkg/scheduler/framework/plugins/noderesources/fit.go", "line": "47" },
+        { "id": "q2_b4", "fact": "nodeResourceStrategyTypeMap: 전략→scorer 매핑 3종(LeastAllocated/MostAllocated/RequestedToCapacityRatio)", "critical": true, "file": "pkg/scheduler/framework/plugins/noderesources/fit.go", "line": "58-78" },
+        { "id": "q2_b5", "fact": "NewFit이 args.ScoringStrategy.Type으로 맵을 조회해 resourceAllocationScorer를 동적으로 채움", "critical": true, "file": "pkg/scheduler/framework/plugins/noderesources/fit.go", "line": "164-176" },
+        { "id": "q2_b6", "fact": "resourceAllocationScorer 구조체(scorer 함수 필드 포함)", "critical": true, "file": "pkg/scheduler/framework/plugins/noderesources/resource_allocation.go", "line": "38-45" },
+        { "id": "q2_b7", "fact": "(f *Fit) Score(...) 구현, 내부적으로 f.score(...) 호출", "critical": true, "file": "pkg/scheduler/framework/plugins/noderesources/fit.go", "line": "504-518" },
+        { "id": "q2_b8", "fact": "resourceAllocationScorer.score(...)가 구조체 필드 scorer(...)를 실행", "critical": false, "file": "pkg/scheduler/framework/plugins/noderesources/resource_allocation.go", "line": "48" },
+        { "id": "q2_b9", "fact": "레지스트리 등록: noderesources.Name: runtime.FactoryAdapter(fts, noderesources.NewFit)", "critical": true, "file": "pkg/scheduler/framework/plugins/registry.go", "line": "67" },
+        { "id": "q2_b10", "fact": "기본 MultiPoint weight = 1(PodTopologySpread의 2보다 낮음)", "critical": true, "file": "pkg/scheduler/apis/config/v1/default_plugins.go", "line": "41" },
+        { "id": "q2_b11", "fact": "기본 ScoringStrategy = LeastAllocated", "critical": true, "file": "pkg/scheduler/apis/config/v1/defaults.go", "line": "228-234" }
+      ]
+    },
+    {
+      "key": "k8s_chain_q3",
+      "order": 3,
+      "question_ko": "사용자가 KubeSchedulerConfiguration에서 profiles[].plugins.score.enabled에 NodeAffinity를 이름 그대로 다시 나열하면서 커스텀 weight(예: 5)를 지정했다고 하자. 기본 프로필에는 NodeAffinity가 MultiPoint를 통해 weight 2로 이미 활성화되어 있는데, 이 두 값이 충돌하지 않고 사용자의 5가 최종 적용되는 이유는 무엇이며, 그 병합/우선순위 결정은 정확히 어느 함수/코드에서 일어나는가?",
+      "ground_truth": "두 단계에서 일어난다. (1) v1 설정 디폴팅 단계: mergePlugins(apis/config/v1/default_plugins.go:96)가 Score 확장점에 대해 mergePluginSet(같은 파일 110-160)을 호출한다. NodeAffinity의 기본 항목은 MultiPoint.Enabled에만 있으므로(default_plugins.go:39), '기존 항목을 사용자 값으로 교체' 브랜치(141-146행)는 매치되지 않고, 대신 '교체되지 않은 커스텀 항목은 그대로 append'(154-158행)에 의해 사용자의 {NodeAffinity, weight:5}가 Score.Enabled에 별도 항목으로 추가된다. 이 시점엔 MultiPoint.Enabled의 weight=2 항목과 Score.Enabled의 weight=5 항목이 공존한다. (2) 프레임워크 인스턴스화 단계: expandMultiPointPlugins(framework.go:492-577)가 Score 확장점을 펼칠 때, enabledSet(499-502행)에 NodeAffinity가 이미 있으므로 MultiPoint.Enabled를 순회하다 같은 이름을 만나면 override로 판단(538-541행, 로그 'MultiPoint plugin is explicitly re-configured; overriding')하고 그 MultiPoint 항목은 버려진다. 최종 weight 확정은 getScoreWeights(framework.go:435-459, 호출부 349행)에서, Score.Enabled가 MultiPoint.Enabled보다 먼저 순회되어(349행) f.scorePluginWeight['NodeAffinity']=5가 먼저 세팅되고(447행), 이후 MultiPoint의 weight=2 항목을 만나면 442행의 'if _, ok := f.scorePluginWeight[e.Name]; ok { continue }'에 걸려 무시된다. 이 우선순위는 440-441행 주석에 명시('let the individual Score weight take precedence').",
+      "ground_truth_atoms": [
+        { "id": "q3_c1", "fact": "기본 NodeAffinity 항목은 MultiPoint.Enabled에만 존재(weight 2)", "critical": true, "file": "pkg/scheduler/apis/config/v1/default_plugins.go", "line": "39" },
+        { "id": "q3_c2", "fact": "mergePlugins가 Score 확장점에 대해 mergePluginSet 호출", "critical": true, "file": "pkg/scheduler/apis/config/v1/default_plugins.go", "line": "96" },
+        { "id": "q3_c3", "fact": "mergePluginSet 정의: 디폴트 교체 vs 추가 append 로직", "critical": true, "file": "pkg/scheduler/apis/config/v1/default_plugins.go", "line": "110-160" },
+        { "id": "q3_c4", "fact": "'이름이 일치하면 사용자 값으로 교체' 브랜치", "critical": true, "file": "pkg/scheduler/apis/config/v1/default_plugins.go", "line": "141-146" },
+        { "id": "q3_c5", "fact": "'교체되지 않은 커스텀 항목은 그대로 append' 브랜치", "critical": true, "file": "pkg/scheduler/apis/config/v1/default_plugins.go", "line": "154-158" },
+        { "id": "q3_c6", "fact": "setDefaults_KubeSchedulerProfile이 mergePlugins 호출", "critical": true, "file": "pkg/scheduler/apis/config/v1/defaults.go", "line": "71" },
+        { "id": "q3_c7", "fact": "expandMultiPointPlugins에서 enabledSet 이름 중복 시 override 처리", "critical": true, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "538-541" },
+        { "id": "q3_c8", "fact": "getScoreWeights 호출부: Score.Enabled가 MultiPoint.Enabled보다 먼저 순회됨", "critical": true, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "349" },
+        { "id": "q3_c9", "fact": "getScoreWeights 내부: 이미 세팅된 이름은 continue로 스킵(먼저 온 값 유지)", "critical": true, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "442-444" },
+        { "id": "q3_c10", "fact": "f.scorePluginWeight[e.Name] = int(e.Weight) 세팅", "critical": true, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "447" },
+        { "id": "q3_c11", "fact": "주석: 'let the individual Score weight take precedence'", "critical": false, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "440-441" }
+      ]
+    },
+    {
+      "key": "k8s_chain_q4",
+      "order": 4,
+      "question_ko": "사용자가 프로필에서 plugins.multiPoint.disabled에 ImageLocality를 넣어 기본 Score 플러그인 하나를 비활성화하고, 동시에 plugins.score.enabled에 NodeResourcesBalancedAllocation을 명시적으로 다시 나열했다고 하자. (1) 이 비활성화 목록은 실제 플러그인 인스턴스화보다 앞서 정확히 어디서 적용되어 ImageLocality의 factory가 아예 호출되지 않게 만드는가? (2) 같은 Score 확장점 안에서 남은 플러그인들의 실행 순서는 무엇이 결정하며, NodeResourcesBalancedAllocation을 재나열하면 순서가 어떻게 바뀌는가?",
+      "ground_truth": "(1) 비활성화는 두 단계로 적용된다. 먼저 v1 디폴팅 단계에서 mergePluginSet(default_plugins.go:110-160)이 customPluginSet.Disabled(116-122행)와 defaultPluginSet.Disabled(126-129행)를 모아 disabledPlugins 집합을 만들고, defaultPluginSet.Enabled를 순회하며(136-148행) 이름이 그 집합에 있으면 137-139행에서 continue로 건너뛴다. ImageLocality의 기본 항목은 MultiPoint에만 있으므로(default_plugins.go:53) MultiPoint에 대한 mergePluginSet 호출(89행)에서 완전히 제거되어, 내부(internal) config.Plugins.MultiPoint.Enabled에 애초에 나타나지 않는다. 다음으로 실제 인스턴스화 직전, NewFramework(framework.go:242)의 pg := f.pluginsNeeded(profile.Plugins)(288행, pluginsNeeded 정의 1601-1621행)가 이미 걸러진 Enabled 목록들에서 이름을 모으므로 ImageLocality는 pg에 없고, 인스턴스화 루프(305-311행)의 'if !pg.Has(name) { continue }'(308행)에 걸려 imagelocality.New factory 자체가 호출되지 않는다. (2) Score 확장점 내 실행 순서는 expandMultiPointPlugins(framework.go:492-577)가 결정한다: (part1) 해당 확장점(Score)에 명시적으로 재나열되어 override로 판정된 플러그인들이 그 나열 순서대로 먼저(554-565행 부근), (part2) 나머지 MultiPoint 전용 플러그인들이 profile.Plugins.MultiPoint.Enabled에 적힌 순서대로, (part3) 그 외 확장점-전용 Enabled 플러그인들이 마지막에 붙는다. NodeResourcesBalancedAllocation을 plugins.score.enabled에 재나열하면 enabledSet(499-502행)에 잡혀 MultiPoint 순회 시 override로 판정되고(538-542행), 최종 f.scorePlugins 슬라이스의 맨 앞(part1)으로 옮겨진다 — 기본 상태였다면 MultiPoint 목록(default_plugins.go:33-55, 21개 플러그인 나열 순)상 뒤쪽(21개 중 19번째)에 있던 것이 맨 앞으로 이동한다.",
+      "ground_truth_atoms": [
+        { "id": "q4_d1", "fact": "mergePluginSet이 Disabled 목록으로 disabledPlugins set 구성", "critical": true, "file": "pkg/scheduler/apis/config/v1/default_plugins.go", "line": "116-129" },
+        { "id": "q4_d2", "fact": "기본 Enabled 순회 중 disabled면 continue", "critical": true, "file": "pkg/scheduler/apis/config/v1/default_plugins.go", "line": "137-139" },
+        { "id": "q4_d3", "fact": "ImageLocality 기본 항목은 MultiPoint에만 존재", "critical": true, "file": "pkg/scheduler/apis/config/v1/default_plugins.go", "line": "53" },
+        { "id": "q4_d4", "fact": "mergePlugins가 MultiPoint에 대해서도 mergePluginSet 호출", "critical": true, "file": "pkg/scheduler/apis/config/v1/default_plugins.go", "line": "89" },
+        { "id": "q4_d5", "fact": "pg := f.pluginsNeeded(profile.Plugins) (인스턴스화 직전)", "critical": true, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "288" },
+        { "id": "q4_d6", "fact": "pluginsNeeded 정의: 각 PluginSet.Enabled + MultiPoint.Enabled 이름만 수집", "critical": true, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "1601-1621" },
+        { "id": "q4_d7", "fact": "인스턴스화 루프: if !pg.Has(name) { continue }", "critical": true, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "308" },
+        { "id": "q4_d9", "fact": "expandMultiPointPlugins: enabledSet 구성", "critical": true, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "499-502" },
+        { "id": "q4_d10", "fact": "override 판정 로직(이미 특정 확장점에 나열됨 → override)", "critical": true, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "534-542" },
+        { "id": "q4_d11", "fact": "재정렬 3단계 로직(override → multiPoint 전용 → 나머지)", "critical": true, "file": "pkg/scheduler/framework/runtime/framework.go", "line": "554-574" },
+        { "id": "q4_d12", "fact": "기본 MultiPoint 목록 순서(21개 플러그인 나열)", "critical": true, "file": "pkg/scheduler/apis/config/v1/default_plugins.go", "line": "33-55" }
+      ]
+    }
+  ]
+}

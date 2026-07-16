@@ -125,6 +125,14 @@ OKF 答对了 **15 题中的 11 题**，成本约为携带同样事实的 CLAUDE
 
 证伪标准 **R1–R5 全部经机械评估，无一触发**（在排除被污染的格之后）——本次运行没有证伪该主张。这与 n=15 下的有力确认不是一回事；它只是没有出现证伪。
 
+### 链式后续：真实累积有帮助吗？（v4，已证伪）
+
+<!-- okf-benchmark-chain: 2026-07-16-v4 -->
+
+一次独立的、预注册的运行直接测试了 OKF 的机制：针对 `kubernetes/kubernetes` 的 `pkg/scheduler`（v1.30.0，178 个 Go 文件）提出一条由 4 个相关但不同的问题组成的链，其中每个会话的结论都会在下一个会话开始前经过一次**真实的 batch**，并与从不做任何累积、同样提出这 4 个问题的情形做对比。这正是 v3 的预注册标记为「有利于 OKF 且可以调参来讨好它」并拒绝运行的那种形态。v4 还是运行了它，但这次带上了防护措施：这 4 个问题在花钱之前就被冻结并从源码验证过，污染防护会在**每一个**会话之前清除 Claude Code 的项目记忆（而不是只清一次），而证伪标准在测量之前就已确定——见[预注册](docs/benchmarks/pre-registration-2026-07-16-v4.md)。
+
+真实的累积确实发生了：gate 字节数在各步之间单调增长（1835 → 2613 → 3675 → 4950，n=15 条链），背后是真实、可测量的 batch 花费（共 $25.81）。**核心预测——成本会随着链推进而下降——被证伪了。** OKF 的成本在这四个问题上依次为 $0.231 → $0.216 → $0.258 → **$0.447**；无记忆对照也是同样的走向（$0.255 → $0.256 → $0.272 → $0.411）。最可能的解释是，第四个问题对两组来说都单纯更难——它一次问了两个机制——而不是累积帮了忙或帮了倒忙。OKF 的 atom 级准确率在任何一步都没有超过基线，并且在第一个和最后一个问题上都低于基线。二元（所有 atom 全对）评分对两组都是 0/106——这组问题难到只有 atom 级分数才可用。[完整报告](docs/benchmarks/okf-benchmark-chain-2026-07-16-v4.md)。
+
 ### 本地开销（不是效果基准结果）
 
 2026-07-16 测量，macOS arm64，Node `v26.4.0`，中位数附最小/最大值。
@@ -147,10 +155,18 @@ OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 20      
 OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                                    # measure
 ```
 
+v4 链式运行（120 个会话，各步之间有真实 batch）花费 **$31.95** 测量 + **$9.20** 评分 + **$25.81** 真实 ingest ≈ **$67**：
+
+```sh
+OKF_RUN_LIVE_BENCH=1 OKF_BENCH_CHAINS=15 node test/bench-chain.mjs   # chained sessions, real batch, measure
+```
+
 [完整报告](docs/benchmarks/okf-benchmark-2026-07-16-v3.md) ·
+[链式后续报告](docs/benchmarks/okf-benchmark-chain-2026-07-16-v4.md) ·
 [raw JSON](docs/benchmarks/raw/) ·
 [已提交的 bundle](docs/benchmarks/bundles/) ·
 [预注册](docs/benchmarks/pre-registration-2026-07-16-v3.md) ·
+[链式预注册](docs/benchmarks/pre-registration-2026-07-16-v4.md) ·
 [使用指南](docs/USAGE.md)。
 
 ## 语言支持
