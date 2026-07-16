@@ -59,10 +59,13 @@ Por ejemplo, “desplegar 10% → 50% → 100% y revertir por encima de 0,5% de 
 
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
-**OKF no te ahorra explorar. Almacena lo que explorar nunca puede encontrar.**
+**OKF supone una sobrecarga para casi todo lo que el código puede responder, y donde el código no tiene
+respuesta alguna, un simple CLAUDE.md también lo supera — la única ventaja de OKF es hacerlo más barato.
+Una prueba directa de su promesa central (el conocimiento acumulado rinde con el tiempo) se ejecutó y
+quedó refutada.**
 
-Las dos mitades de esa frase están medidas abajo, sobre repositorios open-source reales, con n=15 por
-celda de comparación. La mitad que resulta desfavorable para OKF se publica primero.
+Cada afirmación de ese párrafo está medida abajo, sobre repositorios open-source reales, con n=15 por
+celda de comparación. Las partes desfavorables para OKF se publican primero.
 
 ### Cómo se midió
 

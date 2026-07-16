@@ -72,10 +72,12 @@ Claude Code permits one `statusLine`. OKF does not install or overwrite it. Poin
 
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
-**OKF does not save you from exploring. It stores what exploring can never find.**
+**OKF is overhead on almost everything code can answer, and where code has no answer at all, a
+plain CLAUDE.md beats it too — OKF's only edge is doing that more cheaply. A direct test of its
+core promise (accumulated knowledge pays off over time) was run and refuted.**
 
-Both halves of that sentence are measured below, on real open-source repositories, at n=15 per
-comparison cell. The half that is unflattering to OKF is published first.
+Every claim in that paragraph is measured below, on real open-source repositories, at n=15 per
+comparison cell. The parts unflattering to OKF are published first.
 
 ### How it was measured
 

@@ -58,9 +58,9 @@ Por que baseado em ociosidade? Sessões raramente terminam de forma explícita �
 
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
-**O OKF não te poupa de explorar. Ele guarda aquilo que explorar nunca vai encontrar.**
+**O OKF é sobrecarga em quase tudo que o código consegue responder, e onde o código não tem resposta alguma, um simples CLAUDE.md também o supera — a única vantagem do OKF é fazer isso de forma mais barata. Um teste direto de sua promessa central (conhecimento acumulado compensa ao longo do tempo) foi executado e refutado.**
 
-As duas metades dessa frase estão medidas abaixo, em repositórios open source reais, com n=15 por célula de comparação. A metade desfavorável ao OKF vem publicada primeiro.
+Cada afirmação desse parágrafo está medida abaixo, em repositórios open source reais, com n=15 por célula de comparação. As partes desfavoráveis ao OKF vêm publicadas primeiro.
 
 ### Como foi medido
 
