@@ -59,6 +59,15 @@ Por ejemplo, “desplegar 10% → 50% → 100% y revertir por encima de 0,5% de 
 
 <!-- okf-benchmark: 2026-07-16 -->
 
+> **Retractación (2026-07-16).** Tres afirmaciones publicadas originalmente en esta sección han sido
+> retiradas tras auditar los datos crudos de esta misma ejecución: la explicación de la trampa en
+> `rfcs_policy` (fabricada — la trampa nunca se activó), el titular de la tendencia de acumulación
+> (no respaldado por su muestra) y el título original de esta sección, «Donde OKF es lo único que
+> funciona» (refutado por su propia tabla). Cada retractación está señalada donde estaba la
+> afirmación. Qué se retiró, y cómo se detectó cada caso, está registrado en el
+> [preregistro v3](docs/benchmarks/pre-registration-2026-07-16-v3.md). El resto de los hallazgos de
+> esta sección no cambia.
+
 **OKF no te ahorra explorar. Almacena lo que explorar nunca puede encontrar.**
 
 Las dos mitades de esa frase están medidas abajo, sobre repositorios open-source reales, y la mitad que
@@ -76,8 +85,7 @@ cuesta de verdad y la línea base sin memoria puede ganar genuinamente:
 
 Cada concept de cada bundle lo produjo el pipeline real — una sesión `claude -p` real explorando el
 repo fijado, su transcript real de Claude Code, batch ingest real, gate real. **Ningún concept se
-escribió a mano**, incluido el relleno que crea volumen. Esto importa más de lo que parece: véase
-[Acumulación](#acumulación-lo-que-el-relleno-escrito-a-mano-no-puede-mostrar).
+escribió a mano**, incluido el relleno que crea volumen.
 
 Cinco condiciones. Todas reciben tools idénticas (`Read`, `Glob`, `Grep`, `Bash(git log/show/diff/blame/grep)`)
 y una instrucción idéntica y neutral respecto a la condición — a ninguna condición se le dice que consulte el gate.
@@ -122,7 +130,7 @@ escapa — cierto antes del commit `f897118b`, falso en el commit fijado) y el m
 y lo corrigió igualmente**, 4/5. El conocimiento obsoleto no lo volvió confiadamente incorrecto. La
 predicción preregistrada de que lo haría fue errónea.
 
-### Donde OKF es lo único que funciona: conocimiento que el código no contiene
+### Donde explorar no puede ayudar: conocimiento que el código no contiene
 
 Política de equipo y vocabulario de dominio — decididos en conversación, nunca escritos en el repo. Cada
 escenario fue atacado por un adversario independiente que buscó en el working tree, ~300 revisiones del
@@ -151,37 +159,48 @@ OKF respondió 11 de 15, a 1.6–1.9× menos que CLAUDE.md llevando los mismos h
 **no leyó ningún archivo de concept** (0/5) — bastó la línea del índice, con 2 tool calls frente a las
 7 de zero-base.
 
-`rfcs_policy` es el fracaso honesto: OKF solo logró 2/5. La propuesta `N-2` que está en la pila de
-documentos es una trampa lo bastante fuerte como para apartar al modelo de una línea del índice correcta.
-CLAUDE.md sacó 0/5 ahí.
+**Aquí CLAUDE.md también funciona**, y la tabla lo dice: 5/5 en `slim_policy` y 5/5 en `slim_domain`,
+superando en este último el 4/5 de OKF. Lo que esta tabla respalda es paridad con el titular a 1.6–1.9×
+menos coste, con inyección acotada — no exclusividad. Esta sección se publicó primero como «Donde OKF
+es lo único que funciona», algo que su propia tabla refuta; **ese título queda retirado.**
 
-### Acumulación: lo que el relleno escrito a mano no puede mostrar
+`rfcs_policy` es el fracaso honesto: OKF solo logró 2/5. **La explicación publicada aquí — que la
+propuesta `N-2` de la pila de documentos es una trampa lo bastante fuerte como para apartar al modelo
+de una línea del índice correcta — era falsa y queda retirada.** Las 5 ejecuciones de OKF leyeron solo
+archivos del bundle; ninguna abrió un documento RFC; ninguna respondió `N-2`. Las cinco respondieron
+«4 releases». La trampa nunca se activó. La causa del 2/5 no se investigó antes de publicar, y aquí no
+se ofrece ninguna explicación sustituta; hay una nueva medición en marcha. CLAUDE.md sacó 0/5 en este
+escenario, así que OKF sigue ganando al titular aquí.
 
-Misma pregunta (`slim_buried`), mismo harness, bundle crecido ingiriendo más sesiones reales.
+### Acumulación: la afirmación de tendencia queda retirada
 
-| Concepts en el bundle | Bytes del gate | OKF | CLAUDE.md | zero-base (referencia plana) |
-|---:|---:|---:|---:|---:|
-| 1 | 2,551 | $0.1291 | $0.1279 | $0.1669 |
-| 5 | 3,621 | $0.1020 | $0.1506 | $0.1669 |
-| 8 | 4,701 | $0.1425 | $0.1741 | $0.1669 |
-| 10 | 5,414 | $0.0919 | $0.2358 | $0.1669 |
-| 15 | 5,415 | **$0.0701** | $0.2249 | $0.1669 |
-| 35 | 5,415 | $0.0908 | **$0.2828** | $0.1669 |
+Esta sección publicó primero una curva de coste sobre el tamaño del bundle (1 → 35 concepts) y el
+titular **«De 1 a 35 concepts OKF se abarató ($0.1291 → $0.0908) mientras CLAUDE.md se encareció 2.2×
+($0.1279 → $0.2828). Las curvas divergen.»** **Esa afirmación de tendencia queda retirada por no estar
+respaldada por su muestra.**
 
-**De 1 a 35 concepts OKF se abarató ($0.1291 → $0.0908) mientras CLAUDE.md se encareció 2.2×
-($0.1279 → $0.2828).** Las curvas divergen.
+Los números no eran inventados — son medianas solo de ejecuciones correctas, que es la regla
+preregistrada. Pero son medianas de **3, 2, 5, 3, 2 y 4** ejecuciones, y el punto mínimo de $0.0701 es
+*la mediana de dos ejecuciones*. Tomando todas las ejecuciones, las distribuciones de los niveles se
+solapan por completo (el nivel de 1 concept abarca $0.0774–$0.2214; el de 35 concepts, $0.0836–$0.1606)
+y las medianas sobre todas las ejecuciones no son monótonas en absoluto: $0.1237, $0.1884, $0.1425,
+$0.0852, $0.1142, $0.1135. Esta misma sección ya decía, dos párrafos más abajo, «Con n=5 aquí no se
+separa nada» — esa frase era correcta y el titular que tenía encima no lo era. La curva no se vuelve a
+publicar aquí, porque una mediana de dos ejecuciones no es un punto de una curva.
 
-La razón se ve en la segunda columna. Entre 15 y 35 concepts — 2.3× el conocimiento — el
-gate creció **un byte**, porque el batch creó un dominio anidado y colapsó 14 concepts en una
-sola línea de índice (`- [slim](/references/slim/index.md): 하위 도메인 — concept 14개`). CLAUDE.md
-lleva el cuerpo de cada concept en cada prompt, así que crece linealmente. **El gate no.**
+La meseta del gate también se explicó mal. Se atribuyó a que el batch colapsaba 14 concepts en una sola
+línea de índice, presentado como una propiedad emergente de cómo OKF organiza el conocimiento. **Es el
+tope `inject_max_lines: 120` de `lib/config.mjs`** — una constante de configuración. `bench-bundles.mjs`
+registra `gateTruncated`, que es cierto exactamente en el nivel donde empieza la meseta: las entradas
+del índice se **descartaron por presupuesto**, no se anidaron con elegancia.
 
-Este es el hallazgo que solo el conocimiento real podía producir. Una ejecución anterior de este benchmark
-sembró relleno a mano — veinte concepts escritos a mano, todos planos, todos en `decisions/` — lo que fuerza
-al índice a crecer linealmente y concluyó que la economía de OKF empeora con la acumulación. El batch real
-no apila el conocimiento así. La medición era del fixture, no del sistema.
+Una mitad de la afirmación antigua sobrevive, y solo enunciada por separado: CLAUDE.md lleva el cuerpo
+de cada concept en cada prompt, así que su prompt crece linealmente con el número de concepts. Eso se
+sigue mecánicamente del formato. Aquí no se extrae de ello ninguna comparación con el lado de OKF.
 
-Exactitud, honestamente: no mejora con el volumen y sigue siendo ruidosa (2/5–5/5). Con n=5 aquí no se separa nada.
+La exactitud no mejoró con el volumen y siguió siendo ruidosa (2/5–5/5). **El eje de niveles queda
+retirado en v3**: mide una constante de configuración, así que volver a ejecutarlo solo compraría una
+lectura más precisa de un número que puede leerse en un archivo de configuración.
 
 ### Overhead local (no es el resultado de efectividad)
 

@@ -59,6 +59,15 @@ Warum idle-basiert? Sitzungen enden selten explizit — Background-Agenten tun e
 
 <!-- okf-benchmark: 2026-07-16 -->
 
+> **Widerruf (2026-07-16).** Drei ursprünglich in diesem Abschnitt veröffentlichte Behauptungen wurden
+> nach einem Audit der Rohdaten dieses Laufs zurückgezogen: die Falle-Erklärung zu `rfcs_policy`
+> (erfunden — die Falle hat nie ausgelöst), die Schlagzeile zum Akkumulationstrend (von ihrer
+> Stichprobe nicht gedeckt) und der ursprüngliche Titel dieses Abschnitts, „Wo OKF das Einzige ist,
+> was funktioniert“ (von der eigenen Tabelle widerlegt). Jeder Widerruf ist dort vermerkt, wo die
+> Behauptung stand. Was zurückgezogen wurde und wie jeder Punkt aufgefallen ist, steht in der
+> [v3-Vorregistrierung](docs/benchmarks/pre-registration-2026-07-16-v3.md). Alle übrigen Befunde
+> dieses Abschnitts bleiben unverändert.
+
 **OKF erspart Ihnen das Explorieren nicht. Es speichert, was Exploration niemals finden kann.**
 
 Beide Hälften dieses Satzes werden unten gemessen, an echten Open-Source-Repositories, und die
@@ -76,8 +85,7 @@ was Exploration tatsächlich kostet, und die Baseline ohne Gedächtnis wirklich 
 
 Jedes Concept in jedem Bundle wurde von der echten Pipeline erzeugt — eine echte `claude -p`-Sitzung,
 die das fixierte Repo exploriert, ihr echtes Claude-Code-Transcript, echter Batch-Ingest, echtes
-Gate. **Kein Concept wurde von Hand geschrieben**, auch nicht der Füllstoff, der Volumen erzeugt. Das
-wiegt schwerer, als es klingt: siehe [Akkumulation](#akkumulation-was-von-hand-gesetzter-füllstoff-nicht-zeigen-kann).
+Gate. **Kein Concept wurde von Hand geschrieben**, auch nicht der Füllstoff, der Volumen erzeugt.
 
 Fünf Bedingungen. Alle erhalten identische Tools (`Read`, `Glob`, `Grep`, `Bash(git log/show/diff/blame/grep)`)
 und eine identische, bedingungsneutrale Anweisung — keiner Bedingung wird gesagt, sie solle das Gate
@@ -126,7 +134,7 @@ escaped nicht — wahr vor Commit `f897118b`, falsch am fixierten Commit) und da
 Code und korrigierte sie trotzdem**, 4/5. Veraltetes Wissen machte es nicht selbstbewusst falsch. Die
 vorregistrierte Vorhersage, dass es das täte, war falsch.
 
-### Wo OKF das Einzige ist, was funktioniert: Wissen, das der Code nicht enthält
+### Wo Exploration nicht helfen kann: Wissen, das der Code nicht enthält
 
 Team-Policy und Domänenvokabular — im Gespräch entschieden, nie ins Repo geschrieben. Jedes Szenario
 wurde von einem unabhängigen Angreifer attackiert, der den Working Tree, ~300 Revisionen
@@ -158,39 +166,50 @@ OKF beantwortete 11 von 15, zu 1.6–1.9× weniger als CLAUDE.md mit denselben F
 las es **überhaupt keine Concept-Datei** (0/5) — die Indexzeile allein genügte, bei 2 Tool-Calls
 gegen 7 von zero-base.
 
-`rfcs_policy` ist das ehrliche Scheitern: OKF schaffte nur 2/5. Der `N-2`-Vorschlag, der im
-Dokumentenhaufen liegt, ist eine starke genug Falle, um das Modell von einer korrekten Indexzeile
-wegzuziehen. CLAUDE.md erreichte dort 0/5.
+**CLAUDE.md funktioniert hier ebenfalls**, und die Tabelle sagt das auch: 5/5 bei `slim_policy` und
+5/5 bei `slim_domain`, womit es OKFs 4/5 schlägt. Was diese Tabelle stützt, ist Gleichstand mit dem
+Platzhirsch bei 1.6–1.9× geringeren Kosten und begrenzter Injektion — nicht Einzigartigkeit. Dieser
+Abschnitt erschien zuerst als „Wo OKF das Einzige ist, was funktioniert“, was seine eigene Tabelle
+widerlegt; **dieser Titel wird zurückgezogen.**
 
-### Akkumulation: was von Hand gesetzter Füllstoff nicht zeigen kann
+`rfcs_policy` ist das ehrliche Scheitern: OKF schaffte nur 2/5. **Die hier veröffentlichte Erklärung
+— der `N-2`-Vorschlag im Dokumentenhaufen sei eine starke genug Falle, um das Modell von einer
+korrekten Indexzeile wegzuziehen — war falsch und wird zurückgezogen.** Alle 5 OKF-Läufe lasen
+ausschließlich Bundle-Dateien; keiner öffnete ein RFC-Dokument; keiner antwortete `N-2`. Alle fünf
+antworteten „4 Releases“. Die Falle hat nie ausgelöst. Die Ursache der 2/5 wurde vor der
+Veröffentlichung nicht untersucht, und hier wird keine Ersatzerklärung angeboten; eine Neumessung
+läuft. CLAUDE.md erreichte in diesem Szenario 0/5, OKF schlägt den Platzhirsch hier also weiterhin.
 
-Gleiche Frage (`slim_buried`), gleiche Harness, Bundle gewachsen durch Ingest weiterer echter
-Sitzungen.
+### Akkumulation: die Trendbehauptung wird zurückgezogen
 
-| Concepts im Bundle | Gate-Bytes | OKF | CLAUDE.md | zero-base (flache Referenz) |
-|---:|---:|---:|---:|---:|
-| 1 | 2,551 | $0.1291 | $0.1279 | $0.1669 |
-| 5 | 3,621 | $0.1020 | $0.1506 | $0.1669 |
-| 8 | 4,701 | $0.1425 | $0.1741 | $0.1669 |
-| 10 | 5,414 | $0.0919 | $0.2358 | $0.1669 |
-| 15 | 5,415 | **$0.0701** | $0.2249 | $0.1669 |
-| 35 | 5,415 | $0.0908 | **$0.2828** | $0.1669 |
+Dieser Abschnitt veröffentlichte zunächst eine Kostenkurve über die Bundle-Größe (1 → 35 Concepts)
+und die Schlagzeile **„Von 1 auf 35 Concepts wurde OKF günstiger ($0.1291 → $0.0908), während
+CLAUDE.md 2.2× teurer wurde ($0.1279 → $0.2828). Die Kurven laufen auseinander."** **Diese
+Trendbehauptung wird als von ihrer Stichprobe nicht gedeckt zurückgezogen.**
 
-**Von 1 auf 35 Concepts wurde OKF günstiger ($0.1291 → $0.0908), während CLAUDE.md 2.2× teurer wurde
-($0.1279 → $0.2828).** Die Kurven laufen auseinander.
+Die Zahlen waren nicht erfunden — es sind Mediane über ausschließlich korrekte Läufe, so wie
+vorregistriert. Aber es sind Mediane aus **3, 2, 5, 3, 2 und 4** Läufen, und der Tiefpunkt $0.0701
+ist *der Median aus zwei Läufen*. Über alle Läufe hinweg überlappen die Verteilungen der Level
+vollständig (das Level mit 1 Concept reicht von $0.0774–$0.2214, das mit 35 Concepts von
+$0.0836–$0.1606), und die Mediane über alle Läufe sind überhaupt nicht monoton: $0.1237, $0.1884,
+$0.1425, $0.0852, $0.1142, $0.1135. Derselbe Abschnitt schrieb zwei Absätze weiter „Bei n=5 trennt
+hier nichts" — dieser Satz war richtig und die Schlagzeile darüber nicht. Die Kurve wird hier nicht
+erneut abgedruckt, denn ein Median aus zwei Läufen ist kein Punkt auf einer Kurve.
 
-Der Grund ist in der zweiten Spalte sichtbar. Zwischen 15 und 35 Concepts — 2.3× so viel Wissen —
-wuchs das Gate um **ein Byte**, weil der Batch eine verschachtelte Domäne anlegte und 14 Concepts zu
-einer einzigen Indexzeile zusammenfasste (`- [slim](/references/slim/index.md): 하위 도메인 — concept 14개`).
-CLAUDE.md trägt jeden Concept-Body in jedem Prompt mit, wächst also linear. **Das Gate nicht.**
+Auch das Plateau des Gates wurde falsch erklärt. Es wurde darauf zurückgeführt, dass der Batch 14
+Concepts zu einer einzigen Indexzeile zusammenfasse — dargestellt als emergente Eigenschaft dessen,
+wie OKF Wissen organisiert. **Es ist die Obergrenze `inject_max_lines: 120` in `lib/config.mjs`** —
+eine Konfigurationskonstante. `bench-bundles.mjs` erfasst `gateTruncated`, und das ist genau auf dem
+Level wahr, auf dem das Plateau beginnt: Indexeinträge wurden **aus Budgetgründen verworfen**, nicht
+elegant verschachtelt.
 
-Das ist der Befund, den nur echtes Wissen hervorbringen konnte. Ein früherer Lauf dieses Benchmarks
-setzte Füllstoff von Hand — zwanzig verfasste Concepts, alle flach, alle in `decisions/` —, was den
-Index zwingt, linear zu wachsen, und schloss daraus, dass OKFs Ökonomie mit Akkumulation schlechter
-wird. Der echte Batch stapelt Wissen nicht so. Gemessen wurde das Fixture, nicht das System.
+Eine Hälfte der alten Behauptung überlebt, und nur für sich allein gestellt: CLAUDE.md trägt jeden
+Concept-Body in jedem Prompt mit, sein Prompt wächst also linear mit der Zahl der Concepts. Das folgt
+mechanisch aus dem Format. Ein Vergleich zur OKF-Seite wird daraus hier nicht gezogen.
 
-Zur Genauigkeit, ehrlich: Sie verbessert sich nicht mit dem Volumen und bleibt verrauscht (2/5–5/5).
-Bei n=5 trennt hier nichts.
+Die Genauigkeit verbesserte sich nicht mit dem Volumen und blieb verrauscht (2/5–5/5). **Die
+Level-Achse wird in v3 stillgelegt**: Sie misst eine Konfigurationskonstante, ein erneuter Lauf würde
+also nur eine präzisere Lesung einer Zahl erkaufen, die in einer Config-Datei nachschlagbar ist.
 
 ### Lokaler Overhead (nicht das Wirksamkeitsergebnis)
 

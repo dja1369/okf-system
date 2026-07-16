@@ -72,6 +72,14 @@ Claude Code permits one `statusLine`. OKF does not install or overwrite it. Poin
 
 <!-- okf-benchmark: 2026-07-16 -->
 
+> **Retraction (2026-07-16).** Three claims first published in this section have been withdrawn after
+> an audit of this run's own raw data: the `rfcs_policy` trap explanation (fabricated — the trap never
+> fired), the accumulation trend headline (not supported by its sample), and this section's original
+> title, "Where OKF is the only thing that works" (refuted by its own table). Each retraction is
+> marked below where the claim stood. What was withdrawn, and how each was caught, is recorded in the
+> [v3 pre-registration](docs/benchmarks/pre-registration-2026-07-16-v3.md). Every other finding in
+> this section is unchanged.
+
 **OKF does not save you from exploring. It stores what exploring can never find.**
 
 Both halves of that sentence are measured below, on real open-source repositories, and the half that
@@ -89,8 +97,7 @@ actually costs and the no-memory baseline can genuinely win:
 
 Every concept in every bundle was produced by the real pipeline — a real `claude -p` session
 exploring the pinned repo, its real Claude Code transcript, real batch ingest, real gate. **No
-concept was written by hand**, including the filler that creates volume. This matters more than it
-sounds: see [Accumulation](#accumulation-what-hand-seeded-filler-cannot-show).
+concept was written by hand**, including the filler that creates volume.
 
 Five conditions. All receive identical tools (`Read`, `Glob`, `Grep`, `Bash(git log/show/diff/blame/grep)`)
 and an identical, condition-neutral instruction — no condition is told to consult the gate.
@@ -135,7 +142,7 @@ escape — true before commit `f897118b`, false at the pinned commit) and the mo
 and corrected it anyway**, 4/5. Stale knowledge did not make it confidently wrong. The
 pre-registered prediction that it would was wrong.
 
-### Where OKF is the only thing that works: knowledge the code does not contain
+### Where exploration cannot help: knowledge the code does not contain
 
 Team policy and domain vocabulary — decided in conversation, never written to the repo. Each
 scenario was attacked by an independent adversary who searched the working tree, ~300 revisions of
@@ -164,37 +171,48 @@ OKF answered 11 of 15, at 1.6–1.9× less than CLAUDE.md carrying the same fact
 read **no concept file at all** (0/5) — the index line alone was enough, at 2 tool calls against
 zero-base's 7.
 
-`rfcs_policy` is the honest failure: OKF managed only 2/5. The `N-2` proposal sitting in the document
-pile is a strong enough trap to pull the model off a correct index line. CLAUDE.md scored 0/5 there.
+**CLAUDE.md works here too**, and the table says so: 5/5 on `slim_policy`, and 5/5 on `slim_domain`,
+beating OKF's 4/5. What this table supports is parity with the incumbent at 1.6–1.9× less cost, with
+bounded injection — not uniqueness. This section was first published as "Where OKF is the only thing
+that works", which its own table refutes; **that title is withdrawn.**
 
-### Accumulation: what hand-seeded filler cannot show
+`rfcs_policy` is the honest failure: OKF managed only 2/5. **The explanation published here — that
+the `N-2` proposal in the document pile is a strong enough trap to pull the model off a correct index
+line — was wrong, and is withdrawn.** All 5 OKF runs read only bundle files; none opened an RFC
+document; none answered `N-2`. All five answered "4 releases". The trap never fired. The cause of the
+2/5 was not investigated before publishing, and no replacement explanation is offered here; a
+re-measurement is underway. CLAUDE.md scored 0/5 on this scenario, so OKF still beats the incumbent
+here.
 
-Same question (`slim_buried`), same harness, bundle grown by ingesting more real sessions.
+### Accumulation: the trend claim is withdrawn
 
-| Concepts in bundle | Gate bytes | OKF | CLAUDE.md | zero-base (flat reference) |
-|---:|---:|---:|---:|---:|
-| 1 | 2,551 | $0.1291 | $0.1279 | $0.1669 |
-| 5 | 3,621 | $0.1020 | $0.1506 | $0.1669 |
-| 8 | 4,701 | $0.1425 | $0.1741 | $0.1669 |
-| 10 | 5,414 | $0.0919 | $0.2358 | $0.1669 |
-| 15 | 5,415 | **$0.0701** | $0.2249 | $0.1669 |
-| 35 | 5,415 | $0.0908 | **$0.2828** | $0.1669 |
+This section first published a cost curve over bundle size (1 → 35 concepts) and the headline
+**"From 1 to 35 concepts OKF got cheaper ($0.1291 → $0.0908) while CLAUDE.md got 2.2× dearer
+($0.1279 → $0.2828). The curves diverge."** **That trend claim is withdrawn as unsupported by its
+sample.**
 
-**From 1 to 35 concepts OKF got cheaper ($0.1291 → $0.0908) while CLAUDE.md got 2.2× dearer
-($0.1279 → $0.2828).** The curves diverge.
+The numbers were not fabricated — they are correct-runs-only medians, which is the pre-registered
+rule. But they are medians of **3, 2, 5, 3, 2 and 4** runs, and the $0.0701 low point is *the median
+of two runs*. Across all runs the level distributions overlap completely (the 1-concept level spans
+$0.0774–$0.2214; the 35-concept level spans $0.0836–$0.1606), and the all-runs medians are not
+monotonic at all: $0.1237, $0.1884, $0.1425, $0.0852, $0.1142, $0.1135. This same section already
+said, two paragraphs later, "At n=5 nothing here separates" — that sentence was correct and the
+headline above it was not. The curve is not republished here, because a median of two runs is not a
+point on a curve.
 
-The reason is visible in the second column. Between 15 and 35 concepts — 2.3× the knowledge — the
-gate grew by **one byte**, because the batch created a nested domain and collapsed 14 concepts into a
-single index line (`- [slim](/references/slim/index.md): 하위 도메인 — concept 14개`). CLAUDE.md
-carries every concept body in every prompt, so it grows linearly. **The gate does not.**
+The gate plateau was explained wrongly too. It was attributed to the batch collapsing 14 concepts
+into a single index line, presented as an emergent property of how OKF organises knowledge. **It is
+the `inject_max_lines: 120` cap in `lib/config.mjs`** — a configuration constant. `bench-bundles.mjs`
+records `gateTruncated`, which is true at exactly the level where the plateau begins: index entries
+were **dropped for budget**, not elegantly nested.
 
-This is the finding that only real knowledge could produce. A previous run of this benchmark
-seeded filler by hand — twenty authored concepts, all flat, all in `decisions/` — which forces the
-index to grow linearly and concluded that OKF's economics get worse with accumulation. The real batch
-does not stack knowledge that way. The measurement was of the fixture, not of the system.
+One half of the old claim survives, and only stated on its own: CLAUDE.md carries every concept body
+in every prompt, so its prompt grows linearly with the number of concepts. That is mechanically true
+of the format. No OKF-side comparison is drawn from it here.
 
-Accuracy, honestly: it does not improve with volume and stays noisy (2/5–5/5). At n=5 nothing here
-separates.
+Accuracy did not improve with volume and stayed noisy (2/5–5/5). **The level axis is retired in v3**:
+it measures a configuration constant, so re-running it would only buy a more precise reading of a
+number that can be read off a config file.
 
 ### Local overhead (not the effectiveness result)
 

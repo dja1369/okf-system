@@ -1145,6 +1145,21 @@ console.log('\n=== plugin contract and docs ===');
   ok('ingest 프롬프트가 기록-대상 지시문 구분을 담는다', ingestPrompt.includes('지시가 담은 사실을 기록'));
   ok('ingest 프롬프트가 타입별 추출 자문 체크리스트를 담는다', ingestPrompt.includes('무엇을 남기나'));
   ok('ingest 프롬프트가 digest 전량 Read를 요구한다', ingestPrompt.includes('digest는 전부 Read'));
+
+  // 배치 ingest 충실도 회귀 고정: 출처가 숫자를 원인에 귀속시키면 concept는 그 인과를 값과 같은
+  // 줄에 실어야 한다. 실측(v2 rfcs_policy 2/5): 소스가 "릴리스 4개"의 이유를 명시했는데도 생성된
+  // concept는 결과(4개 대기)만 남기고 기원(왜 4인가)을 버렸다. readTargetConcept가 5/5 —
+  // 모든 런이 그 파일을 열었는데 — 3/5가 "왜 4릴리즈인지 근거는 번들에 없음"이라 답했다. 숫자만
+  // 있고 근거가 없으면 미래 세션은 그 값을 방어하지 못한다.
+  //
+  // 이건 프롬프트 텍스트 단언이며 행동 단언의 **프록시**다. 행동 검증이 불가능한 이유: 지식을
+  // 실제로 쓰는 경로는 배치가 `claude -p`로 진짜 LLM을 호출하는 것뿐이고(과금), 스모크는
+  // fake-claude로 도는 무과금 오프라인 CI다 — fake-claude는 고정 응답을 낼 뿐 개념을 저술하지
+  // 않으므로 그 위에서 "인과가 살아남았다"를 단언하면 프롬프트가 아니라 픽스처를 검사하게 된다.
+  // 여기서 지킬 수 있는 것은 "규칙이 프롬프트에 살아 있는가"까지다. 인과가 실제로 보존되는지는
+  // 유료 축(test/bench-okf.mjs의 rfcs_policy, 사전등록 P5)이 측정한다.
+  ok('ingest 프롬프트가 숫자·기준값의 인과를 같은 줄에 남기라고 요구한다',
+    /원인에 귀속[\s\S]{0,60}같은 줄에 적어라/.test(ingestPrompt));
 }
 {
   const batchCommand = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-batch.md'), 'utf8');

@@ -58,6 +58,8 @@ Por que baseado em ociosidade? Sessões raramente terminam de forma explícita �
 
 <!-- okf-benchmark: 2026-07-16 -->
 
+> **Retratação (2026-07-16).** Três alegações publicadas originalmente nesta seção foram retiradas depois de uma auditoria dos dados brutos deste próprio run: a explicação da armadilha em `rfcs_policy` (fabricada — a armadilha nunca disparou), a manchete da tendência de acumulação (não sustentada pela própria amostra) e o título original desta seção, "Onde só o OKF funciona" (refutado pela própria tabela). Cada retratação está marcada onde a alegação estava. O que foi retirado, e como cada caso foi flagrado, está registrado no [pré-registro v3](docs/benchmarks/pre-registration-2026-07-16-v3.md). Todas as demais descobertas desta seção seguem inalteradas.
+
 **O OKF não te poupa de explorar. Ele guarda aquilo que explorar nunca vai encontrar.**
 
 As duas metades dessa frase estão medidas abaixo, em repositórios open source reais, e a metade desfavorável vem publicada primeiro.
@@ -71,7 +73,7 @@ Dois repositórios públicos fixados — sem fixture sintético, então explorar
 | Codebase | [slimphp/Slim](https://github.com/slimphp/Slim) | `80900fb3` (125 arquivos PHP) |
 | Pilha de documentos | [rust-lang/rfcs](https://github.com/rust-lang/rfcs) | `f635361c` (651 arquivos Markdown) |
 
-Cada concept de cada bundle foi produzido pelo pipeline real — uma sessão `claude -p` real explorando o repo fixado, seu transcript real do Claude Code, batch ingest real, gate real. **Nenhum concept foi escrito à mão**, incluindo o enchimento que cria volume. Isso importa mais do que parece: veja [Acumulação](#acumulação-o-que-enchimento-semeado-à-mão-não-consegue-mostrar).
+Cada concept de cada bundle foi produzido pelo pipeline real — uma sessão `claude -p` real explorando o repo fixado, seu transcript real do Claude Code, batch ingest real, gate real. **Nenhum concept foi escrito à mão**, incluindo o enchimento que cria volume.
 
 Cinco condições. Todas recebem ferramentas idênticas (`Read`, `Glob`, `Grep`, `Bash(git log/show/diff/blame/grep)`) e uma instrução idêntica e neutra quanto à condição — nenhuma condição é instruída a consultar o gate.
 
@@ -101,7 +103,7 @@ Cinco cenários cujas respostas estão no código-fonte ou no histórico do git,
 
 Vale nomear o `slim_stale`: o bundle carregava uma afirmação desatualizada (o renderizador de erro HTML não faz escape — verdade antes do commit `f897118b`, falso no commit fixado) e o modelo **conferiu o código e corrigiu a informação mesmo assim**, 4/5. Conhecimento desatualizado não o deixou confiantemente errado. A previsão pré-registrada de que deixaria estava errada.
 
-### Onde só o OKF funciona: conhecimento que o código não contém
+### Onde explorar não ajuda: conhecimento que o código não contém
 
 Política de time e vocabulário de domínio — decididos em conversa, nunca escritos no repo. Cada cenário foi atacado por um adversário independente que vasculhou a working tree, ~300 revisões do histórico do git, mensagens de commit, docs, config, stashes e objetos dangling (zero acertos), e que **registrou um palpite baseado em convenção antes de olhar**. Esses palpites fizeram 0/3, 0/3 e 1/5.
 
@@ -119,28 +121,21 @@ Cada repo também contém uma armadilha: dê grep em "emitter" e você acha `Res
 
 O OKF respondeu 11 de 15, a 1.6–1.9× menos que o CLAUDE.md carregando os mesmos fatos. No `slim_domain` ele **não leu nenhum arquivo de concept** (0/5) — só a linha do índice bastou, com 2 tool calls contra as 7 da zero-base.
 
-`rfcs_policy` é a falha honesta: o OKF conseguiu apenas 2/5. A proposta `N-2` parada na pilha de documentos é uma armadilha forte o suficiente para tirar o modelo de uma linha de índice correta. O CLAUDE.md fez 0/5 ali.
+**Aqui o CLAUDE.md também funciona**, e a tabela diz isso: 5/5 no `slim_policy` e 5/5 no `slim_domain`, batendo neste último o 4/5 do OKF. O que esta tabela sustenta é paridade com o incumbente a 1.6–1.9× menos custo, com injeção limitada — não exclusividade. Esta seção foi publicada primeiro como "Onde só o OKF funciona", o que a própria tabela refuta; **esse título fica retirado.**
 
-### Acumulação: o que enchimento semeado à mão não consegue mostrar
+`rfcs_policy` é a falha honesta: o OKF conseguiu apenas 2/5. **A explicação publicada aqui — de que a proposta `N-2` parada na pilha de documentos seria uma armadilha forte o suficiente para tirar o modelo de uma linha de índice correta — estava errada, e fica retirada.** Os 5 runs do OKF leram apenas arquivos do bundle; nenhum abriu um documento RFC; nenhum respondeu `N-2`. Os cinco responderam "4 releases". A armadilha nunca disparou. A causa do 2/5 não foi investigada antes da publicação, e nenhuma explicação substituta é oferecida aqui; uma nova medição está em andamento. O CLAUDE.md fez 0/5 neste cenário, então o OKF ainda bate o incumbente aqui.
 
-Mesma pergunta (`slim_buried`), mesmo harness, bundle crescido por ingestão de mais sessões reais.
+### Acumulação: a alegação de tendência fica retirada
 
-| Concepts no bundle | Bytes do gate | OKF | CLAUDE.md | zero-base (referência plana) |
-|---:|---:|---:|---:|---:|
-| 1 | 2,551 | $0.1291 | $0.1279 | $0.1669 |
-| 5 | 3,621 | $0.1020 | $0.1506 | $0.1669 |
-| 8 | 4,701 | $0.1425 | $0.1741 | $0.1669 |
-| 10 | 5,414 | $0.0919 | $0.2358 | $0.1669 |
-| 15 | 5,415 | **$0.0701** | $0.2249 | $0.1669 |
-| 35 | 5,415 | $0.0908 | **$0.2828** | $0.1669 |
+Esta seção publicou primeiro uma curva de custo sobre o tamanho do bundle (1 → 35 concepts) e a manchete **"De 1 para 35 concepts o OKF ficou mais barato ($0.1291 → $0.0908) enquanto o CLAUDE.md ficou 2.2× mais caro ($0.1279 → $0.2828). As curvas divergem."** **Essa alegação de tendência fica retirada por não ser sustentada pela própria amostra.**
 
-**De 1 para 35 concepts o OKF ficou mais barato ($0.1291 → $0.0908) enquanto o CLAUDE.md ficou 2.2× mais caro ($0.1279 → $0.2828).** As curvas divergem.
+Os números não foram fabricados — são medianas apenas dos runs corretos, que é a regra pré-registrada. Mas são medianas de **3, 2, 5, 3, 2 e 4** runs, e o ponto mínimo de $0.0701 é *a mediana de dois runs*. Considerando todos os runs, as distribuições dos níveis se sobrepõem completamente (o nível de 1 concept vai de $0.0774 a $0.2214; o de 35 concepts, de $0.0836 a $0.1606), e as medianas sobre todos os runs não são monotônicas de jeito nenhum: $0.1237, $0.1884, $0.1425, $0.0852, $0.1142, $0.1135. Esta mesma seção já dizia, dois parágrafos adiante, "Com n=5, nada aqui separa" — essa frase estava certa e a manchete acima dela não. A curva não é republicada aqui, porque uma mediana de dois runs não é um ponto numa curva.
 
-A razão está visível na segunda coluna. Entre 15 e 35 concepts — 2.3× o conhecimento — o gate cresceu **um byte**, porque o batch criou um domínio aninhado e colapsou 14 concepts em uma única linha de índice (`- [slim](/references/slim/index.md): 하위 도메인 — concept 14개`). O CLAUDE.md carrega o corpo de cada concept em todo prompt, então cresce linearmente. **O gate não.**
+O platô do gate também foi explicado errado. Foi atribuído ao batch colapsar 14 concepts em uma única linha de índice, apresentado como propriedade emergente de como o OKF organiza conhecimento. **É o teto `inject_max_lines: 120` em `lib/config.mjs`** — uma constante de configuração. O `bench-bundles.mjs` registra `gateTruncated`, verdadeiro exatamente no nível onde o platô começa: entradas do índice foram **descartadas por orçamento**, não aninhadas com elegância.
 
-Essa é a descoberta que só conhecimento real poderia produzir. Um run anterior deste benchmark semeou enchimento à mão — vinte concepts autorais, todos planos, todos em `decisions/` — o que força o índice a crescer linearmente e concluiu que a economia do OKF piora com a acumulação. O batch real não empilha conhecimento desse jeito. A medição era do fixture, não do sistema.
+Metade da alegação antiga sobrevive, e só enunciada sozinha: o CLAUDE.md carrega o corpo de cada concept em todo prompt, então seu prompt cresce linearmente com o número de concepts. Isso decorre mecanicamente do formato. Daqui não se extrai nenhuma comparação do lado do OKF.
 
-Acurácia, honestamente: ela não melhora com o volume e continua ruidosa (2/5–5/5). Com n=5, nada aqui separa.
+A acurácia não melhorou com o volume e continuou ruidosa (2/5–5/5). **O eixo de níveis fica aposentado na v3**: ele mede uma constante de configuração, então re-rodá-lo só compraria uma leitura mais precisa de um número que dá para ler num arquivo de configuração.
 
 ### Overhead local (não é o resultado de efetividade)
 

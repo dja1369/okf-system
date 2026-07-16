@@ -58,6 +58,8 @@ Session 1              ~1時間の idle           Background batch           Ses
 
 <!-- okf-benchmark: 2026-07-16 -->
 
+> **撤回のお知らせ（2026-07-16）。** この節で最初に公開した主張のうち 3 件を、この run 自身の生データを監査した結果、撤回しました。`rfcs_policy` の罠による説明（捏造 — 罠は一度も作動していませんでした）、蓄積のトレンド見出し（その標本では裏付けられません）、そしてこの節の元の題「OKF だけが機能する場所」（自らの表に反証されています）です。各撤回は、その主張があった場所に明記しています。何を撤回し、それぞれをどう検出したかは [v3 事前登録](docs/benchmarks/pre-registration-2026-07-16-v3.md) に記録しています。この節のそれ以外の知見は変わっていません。
+
 **OKF は探索を肩代わりしてくれるものではありません。探索では決して見つけられないものを保存するものです。**
 
 この一文の両側を、以下、実在の open-source repository 上で測定します。そして不利な側を先に公開します。
@@ -71,7 +73,7 @@ Session 1              ~1時間の idle           Background batch           Ses
 | Codebase | [slimphp/Slim](https://github.com/slimphp/Slim) | `80900fb3`（PHP file 125 個） |
 | Document pile | [rust-lang/rfcs](https://github.com/rust-lang/rfcs) | `f635361c`（Markdown file 651 個） |
 
-どの bundle のどの concept も、実際の pipeline が生成したものです — 固定 repo を探索する実際の `claude -p` session、その実際の Claude Code transcript、実際の batch ingest、実際の gate。**手で書いた concept は一つもありません**。volume を作り出す filler も含めてです。これは聞こえる以上に重要です。下の「蓄積」節を参照してください。
+どの bundle のどの concept も、実際の pipeline が生成したものです — 固定 repo を探索する実際の `claude -p` session、その実際の Claude Code transcript、実際の batch ingest、実際の gate。**手で書いた concept は一つもありません**。volume を作り出す filler も含めてです。
 
 5 条件。すべてが同一の tools（`Read`、`Glob`、`Grep`、`Bash(git log/show/diff/blame/grep)`）と、条件に対して中立な同一の指示を受け取ります。gate を参照せよと告げられる条件はありません。
 
@@ -101,7 +103,7 @@ Session 1              ~1時間の idle           Background batch           Ses
 
 `slim_stale` は名指しする価値があります。bundle は古くなった主張（HTML error renderer が escape しない — commit `f897118b` より前は真、固定 commit では偽）を抱えていましたが、model は **それでも code を確認して訂正しました**、4/5 です。古い知識は model を自信満々の誤りにはしませんでした。そうなるという事前登録の予測は外れました。
 
-### OKF だけが機能する場所: code に含まれない知識
+### 探索では届かない場所: code に含まれない知識
 
 チームの方針とドメイン語彙 — 会話で決まり、repo には一度も書かれなかったものです。各 scenario は独立した adversary の攻撃を受けました。adversary は working tree、git history の約 300 revision、commit message、docs、config、stash、dangling object を検索し（hit ゼロ）、しかも **見る前に慣習からの推測を記録しました**。その推測は 0/3、0/3、1/5 でした。
 
@@ -119,28 +121,21 @@ Session 1              ~1時間の idle           Background batch           Ses
 
 OKF は 15 問中 11 問に答え、同じ事実を運ぶ CLAUDE.md の 1.6〜1.9 分の 1 のコストで済ませました。`slim_domain` では **concept file を一つも読みませんでした**（0/5） — index の行だけで足り、tool call は zero-base の 7 に対して 2 でした。
 
-`rfcs_policy` は正直な失敗です。OKF は 2/5 しか取れませんでした。document pile に居座る `N-2` 提案は、model を正しい index 行から引き剥がすに足る強い罠です。CLAUDE.md はそこで 0/5 でした。
+**ここでは CLAUDE.md も機能します。** 表がそう告げています。`slim_policy` で 5/5、`slim_domain` で 5/5 と、後者は OKF の 4/5 を上回ります。この表が裏付けるのは、現職者と同等の正確さを 1.6〜1.9 分の 1 のコストと制限された注入量で達成するということであって、OKF だけが唯一だということではありません。この節は当初「OKF だけが機能する場所」という題で公開しましたが、自らの表がその題に反証しています。**その題は撤回します。**
 
-### 蓄積 — 手で撒いた filler では示せないもの
+`rfcs_policy` は正直な失敗です。OKF は 2/5 しか取れませんでした。**ここに載せていた説明 — document pile に居座る `N-2` 提案が model を正しい index 行から引き剥がすに足る強い罠だ、という説明 — は誤りであり、撤回します。** OKF の 5 run はすべて bundle file しか読んでいません。RFC document を開いた run は一つもなく、`N-2` と答えた run も一つもありません。5 つとも「4 release」と答えました。罠は一度も作動していません。2/5 の原因は公開前に調査しておらず、ここで代わりの説明を提示することもしません。再測定が進行中です。この scenario で CLAUDE.md は 0/5 でしたから、OKF は依然として現職者に勝っています。
 
-同じ質問（`slim_buried`）、同じ harness、実際の session をさらに ingest して育てた bundle です。
+### 蓄積 — トレンドの主張は撤回します
 
-| bundle 内の concept 数 | Gate の byte 数 | OKF | CLAUDE.md | zero-base（flat reference） |
-|---:|---:|---:|---:|---:|
-| 1 | 2,551 | $0.1291 | $0.1279 | $0.1669 |
-| 5 | 3,621 | $0.1020 | $0.1506 | $0.1669 |
-| 8 | 4,701 | $0.1425 | $0.1741 | $0.1669 |
-| 10 | 5,414 | $0.0919 | $0.2358 | $0.1669 |
-| 15 | 5,415 | **$0.0701** | $0.2249 | $0.1669 |
-| 35 | 5,415 | $0.0908 | **$0.2828** | $0.1669 |
+この節では当初、bundle size（concept 1 個 → 35 個）に対するコスト曲線と、次の見出しを公開していました。**「concept 1 個から 35 個へ増える間に OKF は安くなり（$0.1291 → $0.0908）、CLAUDE.md は 2.2 倍高くなりました（$0.1279 → $0.2828）。曲線は分岐します。」** **このトレンドの主張は、標本が裏付けないため撤回します。**
 
-**concept 1 個から 35 個へ増える間に OKF は安くなり（$0.1291 → $0.0908）、CLAUDE.md は 2.2 倍高くなりました（$0.1279 → $0.2828）。** 曲線は分岐します。
+数値そのものは捏造ではありません。事前登録した規則どおり、correct run のみから取った中央値です。しかしそれらは **3、2、5、3、2、4** run の中央値であり、最低点の $0.0701 は *2 run の中央値* です。全 run で見ると level ごとの分布は完全に重なり（concept 1 個の level は $0.0774〜$0.2214、35 個の level は $0.0836〜$0.1606）、全 run の中央値は単調ですらありません。$0.1237、$0.1884、$0.1425、$0.0852、$0.1142、$0.1135 です。この同じ節が 2 段落あとで「n=5 では、ここで分離するものは何もありません」と書いていました。その文が正しく、その上の見出しが誤りでした。曲線はここに再掲しません。2 run の中央値は曲線上の点ではないからです。
 
-理由は 2 列目に見えています。concept 15 個と 35 個の間 — 知識は 2.3 倍 — で gate は **1 byte** しか増えていません。batch が入れ子のドメインを作り、14 個の concept を index の 1 行に畳んだからです（`- [slim](/references/slim/index.md): 하위 도메인 — concept 14개`）。CLAUDE.md はすべての concept 本文を毎回の prompt に載せるので線形に増えます。**gate は増えません。**
+gate が頭打ちになる区間の説明も誤っていました。batch が 14 個の concept を index の 1 行に畳んだからだとして、OKF が知識を組織する仕方から創発した性質であるかのように提示していました。**その正体は `lib/config.mjs` の `inject_max_lines: 120` という cap** — 設定定数です。`bench-bundles.mjs` は `gateTruncated` を記録しており、この値は頭打ちが始まるまさにその level で真になります。index の項目は優雅に入れ子にされたのではなく、**予算のために捨てられた** のです。
 
-これは実際の知識でなければ得られない発見です。この benchmark の以前の run は filler を手で撒いていました — 著述した concept 20 個、すべて flat、すべて `decisions/` の中。これは index を線形に増やすことを強制し、蓄積とともに OKF の経済性は悪化すると結論づけました。実際の batch は知識をそのように積みません。測っていたのは fixture であって、system ではありませんでした。
+旧主張の半分は生き残ります。ただし、それ単体としてのみ述べます。CLAUDE.md はすべての concept 本文を毎回の prompt に載せるので、prompt は concept 数に対して線形に増えます。これはその形式から機械的に従う事実です。ここから OKF 側との比較は引き出しません。
 
-正確さについては正直に。volume で改善はせず、ばらつきも残ります（2/5〜5/5）。n=5 では、ここで分離するものは何もありません。
+正確さは volume で改善せず、ばらつきも残りました（2/5〜5/5）。**level 軸は v3 で廃止します。** それは設定定数を測っており、再実行しても、設定 file から読み取れる数値をより精密に測り直すことにしかならないからです。
 
 ### ローカル overhead（効果の測定結果ではありません）
 

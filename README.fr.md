@@ -58,6 +58,15 @@ Pourquoi une base sur l’idle ? Les sessions se terminent rarement de façon ex
 
 <!-- okf-benchmark: 2026-07-16 -->
 
+> **Rétractation (2026-07-16).** Trois affirmations publiées à l’origine dans cette section ont été
+> retirées après un audit des données brutes de ce run lui-même : l’explication du piège de
+> `rfcs_policy` (fabriquée — le piège ne s’est jamais déclenché), le titre de la tendance
+> d’accumulation (non étayé par son échantillon) et le titre d’origine de cette section, « Là où OKF
+> est la seule chose qui marche » (réfuté par son propre tableau). Chaque rétractation est signalée à
+> l’endroit où l’affirmation se trouvait. Ce qui a été retiré, et comment chaque cas a été détecté,
+> est consigné dans le [pré-enregistrement v3](docs/benchmarks/pre-registration-2026-07-16-v3.md).
+> Tous les autres résultats de cette section sont inchangés.
+
 **OKF ne vous dispense pas d’explorer. Il stocke ce que l’exploration ne pourra jamais trouver.**
 
 Les deux moitiés de cette phrase sont mesurées ci-dessous, sur de vrais dépôts open source, et la
@@ -75,8 +84,7 @@ l’exploration coûte réellement et la baseline sans mémoire peut réellement
 
 Chaque concept de chaque bundle a été produit par le vrai pipeline — une vraie session `claude -p`
 explorant le dépôt épinglé, son vrai transcript Claude Code, un vrai batch ingest, un vrai gate.
-**Aucun concept n’a été écrit à la main**, y compris le remplissage qui crée du volume. Cela compte
-plus qu’il n’y paraît : voir [Accumulation](#accumulation--ce-que-du-remplissage-écrit-à-la-main-ne-peut-pas-montrer).
+**Aucun concept n’a été écrit à la main**, y compris le remplissage qui crée du volume.
 
 Cinq conditions. Toutes reçoivent des tools identiques (`Read`, `Glob`, `Grep`, `Bash(git log/show/diff/blame/grep)`)
 et une instruction identique, neutre vis-à-vis de la condition — aucune condition ne se voit dire de consulter le gate.
@@ -122,7 +130,7 @@ HTML n’échappe pas — vrai avant le commit `f897118b`, faux au commit éping
 vérifié le code et l’a corrigée quand même**, 4/5. La connaissance périmée ne l’a pas rendu confiant
 à tort. La prédiction pré-enregistrée qui annonçait le contraire était fausse.
 
-### Là où OKF est la seule chose qui marche : la connaissance que le code ne contient pas
+### Là où l’exploration ne peut pas aider : la connaissance que le code ne contient pas
 
 Politique d’équipe et vocabulaire métier — décidés en conversation, jamais écrits dans le dépôt.
 Chaque scénario a été attaqué par un adversaire indépendant qui a fouillé l’arbre de travail, ~300
@@ -154,40 +162,49 @@ OKF a répondu à 11 sur 15, pour 1.6–1.9× moins cher que CLAUDE.md portant l
 `slim_domain` il n’a lu **aucun fichier de concept** (0/5) — la seule ligne d’index a suffi, avec
 2 tool calls contre 7 pour zero-base.
 
-`rfcs_policy` est l’échec honnête : OKF n’a atteint que 2/5. La proposition `N-2` qui traîne dans la
-pile de documents est un piège assez fort pour détourner le modèle d’une ligne d’index correcte.
-CLAUDE.md y a marqué 0/5.
+**CLAUDE.md marche ici aussi**, et le tableau le dit : 5/5 sur `slim_policy`, et 5/5 sur
+`slim_domain`, où il bat le 4/5 d’OKF. Ce que ce tableau étaye, c’est la parité avec le titulaire en
+place pour 1.6–1.9× moins cher, avec une injection bornée — pas l’exclusivité. Cette section a d’abord
+été publiée sous le titre « Là où OKF est la seule chose qui marche », que son propre tableau réfute ;
+**ce titre est retiré.**
 
-### Accumulation — ce que du remplissage écrit à la main ne peut pas montrer
+`rfcs_policy` est l’échec honnête : OKF n’a atteint que 2/5. **L’explication publiée ici — la
+proposition `N-2` qui traîne dans la pile de documents serait un piège assez fort pour détourner le
+modèle d’une ligne d’index correcte — était fausse, et elle est retirée.** Les 5 runs OKF n’ont lu que
+des fichiers du bundle ; aucun n’a ouvert de document RFC ; aucun n’a répondu `N-2`. Tous les cinq ont
+répondu « 4 releases ». Le piège ne s’est jamais déclenché. La cause du 2/5 n’a pas été investiguée
+avant publication, et aucune explication de remplacement n’est proposée ici ; une nouvelle mesure est
+en cours. CLAUDE.md y a marqué 0/5, donc OKF bat toujours le titulaire en place sur ce scénario.
 
-Même question (`slim_buried`), même harness, bundle grossi en ingérant plus de vraies sessions.
+### Accumulation — l’affirmation de tendance est retirée
 
-| Concepts dans le bundle | Octets du gate | OKF | CLAUDE.md | zero-base (référence plate) |
-|---:|---:|---:|---:|---:|
-| 1 | 2,551 | $0.1291 | $0.1279 | $0.1669 |
-| 5 | 3,621 | $0.1020 | $0.1506 | $0.1669 |
-| 8 | 4,701 | $0.1425 | $0.1741 | $0.1669 |
-| 10 | 5,414 | $0.0919 | $0.2358 | $0.1669 |
-| 15 | 5,415 | **$0.0701** | $0.2249 | $0.1669 |
-| 35 | 5,415 | $0.0908 | **$0.2828** | $0.1669 |
+Cette section a d’abord publié une courbe de coût en fonction de la taille du bundle (1 → 35 concepts)
+et le titre **« De 1 à 35 concepts, OKF est devenu moins cher ($0.1291 → $0.0908) tandis que CLAUDE.md
+est devenu 2.2× plus cher ($0.1279 → $0.2828). Les courbes divergent. »** **Cette affirmation de
+tendance est retirée, faute d’être étayée par son échantillon.**
 
-**De 1 à 35 concepts, OKF est devenu moins cher ($0.1291 → $0.0908) tandis que CLAUDE.md est devenu
-2.2× plus cher ($0.1279 → $0.2828).** Les courbes divergent.
+Les chiffres n’étaient pas fabriqués — ce sont des médianes sur les seuls runs corrects, ce qui est la
+règle pré-enregistrée. Mais ce sont des médianes de **3, 2, 5, 3, 2 et 4** runs, et le point bas à
+$0.0701 est *la médiane de deux runs*. Sur l’ensemble des runs, les distributions des niveaux se
+recouvrent complètement (le niveau à 1 concept s’étend de $0.0774 à $0.2214 ; celui à 35 concepts, de
+$0.0836 à $0.1606), et les médianes sur tous les runs ne sont pas monotones du tout : $0.1237,
+$0.1884, $0.1425, $0.0852, $0.1142, $0.1135. Cette même section disait déjà, deux paragraphes plus
+loin, « À n=5, rien ici ne sépare » — cette phrase était juste et le titre au-dessus d’elle ne l’était
+pas. La courbe n’est pas republiée ici, car une médiane de deux runs n’est pas un point sur une courbe.
 
-La raison est visible dans la deuxième colonne. Entre 15 et 35 concepts — 2.3× la connaissance — le
-gate a grandi d’**un octet**, parce que le batch a créé un domaine imbriqué et a fondu 14 concepts en
-une seule ligne d’index (`- [slim](/references/slim/index.md): 하위 도메인 — concept 14개`).
-CLAUDE.md porte le corps de chaque concept dans chaque prompt, il grandit donc linéairement. **Le
-gate, non.**
+Le plateau du gate a lui aussi été mal expliqué. On l’a attribué au batch fondant 14 concepts en une
+seule ligne d’index, présenté comme une propriété émergente de la façon dont OKF organise la
+connaissance. **C’est le plafond `inject_max_lines: 120` dans `lib/config.mjs`** — une constante de
+configuration. `bench-bundles.mjs` enregistre `gateTruncated`, vrai exactement au niveau où le plateau
+commence : les entrées d’index ont été **écartées faute de budget**, pas élégamment imbriquées.
 
-C’est le résultat que seule de la vraie connaissance pouvait produire. Un run précédent de ce
-benchmark semait le remplissage à la main — vingt concepts rédigés à la main, tous plats, tous dans
-`decisions/` — ce qui force l’index à grandir linéairement et concluait que l’économie d’OKF empire
-avec l’accumulation. Le vrai batch n’empile pas la connaissance de cette façon. La mesure portait sur
-la fixture, pas sur le système.
+Une moitié de l’ancienne affirmation survit, et seulement énoncée seule : CLAUDE.md porte le corps de
+chaque concept dans chaque prompt, son prompt grandit donc linéairement avec le nombre de concepts.
+Cela découle mécaniquement du format. Aucune comparaison du côté d’OKF n’en est tirée ici.
 
-La précision, honnêtement : elle ne s’améliore pas avec le volume et reste bruitée (2/5–5/5). À n=5,
-rien ici ne sépare.
+La précision ne s’est pas améliorée avec le volume et est restée bruitée (2/5–5/5). **L’axe des
+niveaux est retiré en v3** : il mesure une constante de configuration, et le relancer n’achèterait
+qu’une lecture plus précise d’un nombre qu’on peut lire dans un fichier de configuration.
 
 ### Overhead local (pas le résultat d’efficacité)
 
