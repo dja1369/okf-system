@@ -21,8 +21,8 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/session-end.mjs\"",
             "async": true,
-            "timeout": 600,
-            "statusMessage": "OKF capture..."
+            "timeout": 60,
+            "statusMessage": "OKF batch trigger..."
           }
         ]
       }

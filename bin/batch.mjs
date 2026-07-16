@@ -1,29 +1,31 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveOkfHome, okfPaths, pluginRoot, claudeConfigDir, isOkfTestSessionDir } from '../lib/paths.mjs';
+import { resolveOkfHome, okfPaths, pluginRoot, claudeConfigDir, isOkfTestSessionDir, sanitizeForFilename, SCAN_EXCLUDE_DIRS } from '../lib/paths.mjs';
 import { readConfig, DEFAULT_CONFIG } from '../lib/config.mjs';
 import { git, isDirty, commitAll, rollback } from '../lib/git.mjs';
 import { runLint, formatReport } from '../lib/lint.mjs';
 import { regenerateIndex } from '../lib/index-gen.mjs';
 import { digestFile } from '../lib/digest.mjs';
-import { sanitizeForFilename } from '../lib/capture.mjs';
+import { matchGlob } from '../lib/glob.mjs';
 import { readLock, isLockStale } from '../lib/lock.mjs';
 import { ensurePrivateDir, securePrivateFile, writePrivateJsonAtomic } from '../lib/permissions.mjs';
 import { safeErrorCode } from '../lib/status.mjs';
 
 const LOCK_ACQUIRE_MAX_ATTEMPTS = 10; // 경합 재시도 상한 — 이론상 수렴하지만 무한루프 방지용 안전판
 const SWEEP_LOOKBACK_DAYS = 7; // §7-8: 이보다 오래된 orphan transcript는 sweep 대상에서 제외
-// 리뷰 지적(사후 반영): mtime만 보면 아직 다른 창에서 진행 중인 세션(방금 메시지를 보냄 ->
-// mtime이 "최근")까지 orphan으로 오판해 미완성 대화를 중간에 sweep-ingest해버릴 수 있다.
-// 최소 유휴 시간을 두어, 최근에 계속 갱신되는 중인 파일은 이번 회차엔 건너뛰고 다음 배치가
-// 다시 판단하게 한다 — 완벽하진 않지만(긴 침묵 중인 진행 세션은 여전히 걸릴 수 있음) 창을 크게 줄인다.
-const SWEEP_MIN_IDLE_MS = 30 * 60_000;
+// 유휴 판정은 config(sweep_min_idle_minutes, 기본 60분)로 옮겼다 — "마지막 활동 후 N분"이
+// 수집의 1차 기준이 됐기 때문이다. 세션 훅은 수집 시점이 아니라 배치를 깨우는 트리거일 뿐이다.
 const BATCH_SESSION_RETENTION_MS = 14 * 86400_000;
 const BATCH_SESSION_REGISTRY_LIMIT = 2000;
 const CHUNK_BYTE_LIMIT = 300 * 1024; // §5-5 6단계
 const INGEST_TIMEOUT_MS = 15 * 60_000;
 const REPAIR_TIMEOUT_MS = 15 * 60_000;
+// 링거(유휴 대기) 노브 — 기본 5분 간격 확인, 최대 8시간. 테스트가 수 분씩 잠들지 않도록
+// env로만 조정한다(사용자 노브는 sweep_min_idle_minutes 쪽이다).
+const LINGER_POLL_MS = positiveIntFromEnv('OKF_LINGER_POLL_MS', 5 * 60_000);
+const LINGER_MAX_MS = positiveIntFromEnv('OKF_LINGER_MAX_MS', 8 * 3600_000);
 const SESSION_ID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 
 // 리뷰 지적(사후 반영): capture.mjs는 로컬 날짜(toLocaleDateString('en-CA'))를 쓰는데
@@ -115,32 +117,58 @@ function samePath(a, b) {
   }
 }
 
-function transcriptCwdIsOkfHome(transcriptPath, okfHome) {
-  // Claude may write a large queue-operation record before the first user/assistant record that
-  // carries cwd. Read a bounded prefix larger than the batch chunk ceiling, never the whole file.
-  let prefix;
+// Claude may write a large queue-operation record before the first user/assistant record that
+// carries cwd — 리뷰 확정(major): 고정 1MB 프리픽스만 보면 그런 transcript에서 cwd를 놓쳐
+// 수집 제외(capture_exclude_cwd)가 무력화됐다. 완전한 줄 단위로 최대 32MB까지 훑되, 처음
+// 발견되는 cwd에서 즉시 멈춘다(정상 transcript는 첫 몇 KB에서 끝난다). 바이트 단위 carry로
+// 청크 경계의 멀티바이트 문자도 깨지지 않는다.
+function readTranscriptCwd(transcriptPath) {
+  const HARD_CAP = 32 * 1024 * 1024;
+  let fd;
   try {
-    const fd = fs.openSync(transcriptPath, 'r');
-    try {
-      const buffer = Buffer.alloc(1024 * 1024);
-      const bytes = fs.readSync(fd, buffer, 0, buffer.length, 0);
-      prefix = buffer.subarray(0, bytes).toString('utf8');
-    } finally {
-      fs.closeSync(fd);
-    }
+    fd = fs.openSync(transcriptPath, 'r');
   } catch {
-    return false;
+    return null;
   }
-  for (const line of prefix.split('\n')) {
-    if (!line.includes('"cwd"')) continue;
-    try {
-      const row = JSON.parse(line);
-      if (typeof row.cwd === 'string') return samePath(row.cwd, okfHome);
-    } catch {
-      // The bounded prefix may end mid-record; the session-id registry remains the primary guard.
+  try {
+    const chunk = Buffer.alloc(1024 * 1024);
+    let carry = Buffer.alloc(0);
+    let offset = 0;
+    const cwdFromLine = (lineBuf) => {
+      const line = lineBuf.toString('utf8');
+      if (!line.includes('"cwd"')) return null;
+      try {
+        const row = JSON.parse(line);
+        if (typeof row.cwd === 'string') return row.cwd;
+      } catch {
+        // 깨진/잘린 레코드 — 다음 줄에서 계속. 세션ID 레지스트리가 별도 가드로 남아 있다.
+      }
+      return null;
+    };
+    while (offset < HARD_CAP) {
+      const bytes = fs.readSync(fd, chunk, 0, chunk.length, offset);
+      if (bytes <= 0) break;
+      offset += bytes;
+      let buf = carry.length > 0 ? Buffer.concat([carry, chunk.subarray(0, bytes)]) : chunk.subarray(0, bytes);
+      let start = 0;
+      let nl;
+      while ((nl = buf.indexOf(0x0a, start)) !== -1) {
+        const cwd = cwdFromLine(buf.subarray(start, nl));
+        if (cwd != null) return cwd;
+        start = nl + 1;
+      }
+      carry = Buffer.from(buf.subarray(start)); // chunk 버퍼 재사용과의 aliasing 방지 복사
+      if (carry.length > HARD_CAP) return null; // 한 줄이 캡을 초과 — 포기
     }
+    return carry.length > 0 ? cwdFromLine(carry) : null; // 개행 없이 끝나는 마지막 줄
+  } finally {
+    fs.closeSync(fd);
   }
-  return false;
+}
+
+function transcriptCwdIsOkfHome(transcriptPath, okfHome) {
+  const cwd = readTranscriptCwd(transcriptPath);
+  return cwd != null && samePath(cwd, okfHome);
 }
 
 // ---------- 0. 락 획득 (원자적 wx + stale 판정 2단계) ----------
@@ -183,29 +211,55 @@ function releaseLock(okfHome) {
   tryUnlink(okfPaths(okfHome).lock);
 }
 
-// ---------- 1. 유실 세션 회수 (sweep, §7-8) ----------
-function sweepOrphanSessions(okfHome) {
-  // 리뷰 지적(사후 반영): CLAUDE_CONFIG_DIR을 무시하고 항상 os.homedir()/.claude만 봤다 —
-  // lib/paths.mjs의 OKF_HOME 해석 규칙과 어긋나서, 사용자가 CLAUDE_CONFIG_DIR을 설정한
-  // 환경에서는 sweep이 엉뚱한(또는 존재하지 않는) 위치를 스캔해 백스톱이 조용히 무력화됐다.
+// ---------- 1. 수집 (sweep, §7-8 — 이제 1차 수집 경로) ----------
+// 수집 기준은 세션 훅이 아니라 "마지막 활동 후 sweep_min_idle_minutes 유휴 + 크기 성장"이다.
+// - 유휴: 사용자·에이전트 대부분은 세션을 명시적으로 끝내지 않으므로, 조용해진 대화만 완결로 본다.
+// - 크기: 이미 수집/처리된 세션은 원본이 그보다 커졌을 때만(=대화가 이어졌을 때만) 다시 수집한다.
+//   같은 크기면 절대 재수집하지 않는다(불변식). resume발 중간 스냅샷이 세션ID를 "처리됨"으로
+//   못박아 후반 대화를 영영 잃던 버그의 해법이기도 하다.
+// CLAUDE_CONFIG_DIR 존중(리뷰 지적 사후 반영): OKF_HOME 해석과 같은 루트를 봐야 한다.
+// collect=false면 판정만 하고 복사하지 않는다 — 링거의 probe용.
+function scanOrphanSessions(okfHome, config, collect) {
   const projectsDir = path.join(claudeConfigDir(), 'projects');
   let projectDirs;
   try {
     projectDirs = fs.readdirSync(projectsDir, { withFileTypes: true }).filter((d) => d.isDirectory());
   } catch {
-    return 0;
+    return { recovered: 0, freshPending: 0 };
   }
 
   const paths = okfPaths(okfHome);
-  const knownSessionIds = new Set();
-  for (const f of safeReaddir(paths.raw)) knownSessionIds.add(sessionIdFromFilename(f));
-  for (const dateDir of safeReaddir(paths.removeCandidate)) {
-    for (const f of safeReaddir(path.join(paths.removeCandidate, dateDir))) knownSessionIds.add(sessionIdFromFilename(f));
+  const idleMs = config.sweep_min_idle_minutes * 60_000;
+
+  const queuedById = new Map();
+  for (const f of safeReaddir(paths.raw)) {
+    if (!f.endsWith('.jsonl')) continue;
+    try {
+      queuedById.set(sessionIdFromFilename(f), { dest: path.join(paths.raw, f), size: fs.statSync(path.join(paths.raw, f)).size });
+    } catch {
+      // 방금 이동/삭제된 큐 파일은 없는 것으로 본다
+    }
   }
-  for (const sessionId of batchSessionIds(okfHome)) knownSessionIds.add(sessionId);
+  const archivedMaxById = new Map();
+  for (const dateDir of safeReaddir(paths.removeCandidate)) {
+    for (const f of safeReaddir(path.join(paths.removeCandidate, dateDir))) {
+      if (!f.endsWith('.jsonl')) continue;
+      const id = sessionIdFromFilename(f);
+      let size = 0;
+      try {
+        size = fs.statSync(path.join(paths.removeCandidate, dateDir, f)).size;
+      } catch {
+        // stat 실패한 보관본은 0으로 취급 — 재수집이 유실보다 낫다
+      }
+      archivedMaxById.set(id, Math.max(archivedMaxById.get(id) ?? 0, size));
+    }
+  }
+  const selfSessionIds = batchSessionIds(okfHome);
 
   const cutoff = Date.now() - SWEEP_LOOKBACK_DAYS * 86400_000;
   let recovered = 0;
+  let freshPending = 0;
+  let unknownCwdHeld = 0;
 
   for (const dirent of projectDirs) {
     // OKF 자신의 테스트·벤치가 임시 디렉토리에서 남긴 세션은 사용자 지식이 아니다. 이 필터가
@@ -216,10 +270,9 @@ function sweepOrphanSessions(okfHome) {
     for (const f of safeReaddir(dir)) {
       if (!f.endsWith('.jsonl')) continue;
       const sessionId = sessionIdFromFilename(f);
-      if (knownSessionIds.has(sessionId)) continue;
+      if (selfSessionIds.has(sessionId)) continue;
 
       const full = path.join(dir, f);
-      if (transcriptCwdIsOkfHome(full, okfHome)) continue;
       let st;
       try {
         st = fs.statSync(full);
@@ -227,23 +280,55 @@ function sweepOrphanSessions(okfHome) {
         continue;
       }
       if (st.size === 0 || st.mtimeMs < cutoff) continue;
-      if (Date.now() - st.mtimeMs < SWEEP_MIN_IDLE_MS) continue; // 아직 다른 창에서 진행 중일 가능성 — 이번 회차는 건너뜀
+
+      const queued = queuedById.get(sessionId);
+      const knownSize = Math.max(queued?.size ?? 0, archivedMaxById.get(sessionId) ?? 0);
+      if (st.size <= knownSize) continue; // 그 크기까지는 이미 수집/처리됨 — 성장했을 때만 다시 본다
+
+      const cwd = readTranscriptCwd(full);
+      if (cwd != null && samePath(cwd, okfHome)) continue; // 분석기 자신의 세션(2차 가드는 세션ID 레지스트리)
+      if (config.capture_exclude_cwd.length > 0) {
+        // 리뷰 확정(major): 제외는 프라이버시 약속이다 — cwd를 확인할 수 없으면 수집하지
+        // 않는 쪽(fail-closed)이 맞다. 모르는 채로 LLM에 실어 보내는 것보다 보류가 낫다.
+        if (cwd == null) {
+          unknownCwdHeld++;
+          continue;
+        }
+        if (matchGlob(cwd, config.capture_exclude_cwd)) continue; // 사용자 지정 수집 제외
+      }
+
+      if (Date.now() - st.mtimeMs < idleMs) {
+        freshPending++; // 아직 대화 중일 수 있다 — 유휴 도달까지 링거가 기다린다
+        continue;
+      }
+
+      if (!collect) {
+        recovered++;
+        continue;
+      }
 
       const project = sanitizeForFilename(dirent.name);
       const dateStr = localDateString(st.mtime);
-      const dest = path.join(paths.raw, `${dateStr}--${project}--${sessionId}.jsonl`);
+      const dest = queued ? queued.dest : path.join(paths.raw, `${dateStr}--${project}--${sessionId}.jsonl`);
       try {
         fs.mkdirSync(paths.raw, { recursive: true });
-        fs.copyFileSync(full, dest);
+        fs.copyFileSync(full, dest); // 큐에 이미 있으면 superset으로 교체된다
         securePrivateFile(dest);
-        knownSessionIds.add(sessionId);
+        queuedById.set(sessionId, { dest, size: st.size });
         recovered++;
       } catch (err) {
         log(okfHome, `sweep 복사 실패 ${path.basename(full)}: code=${safeErrorCode(err)}`);
       }
     }
   }
-  return recovered;
+  if (collect && unknownCwdHeld > 0) {
+    log(okfHome, `cwd 미확인 transcript ${unknownCwdHeld}개 수집 보류 — 수집 제외 설정이 활성이라 fail-closed`);
+  }
+  return { recovered, freshPending };
+}
+
+function sweepOrphanSessions(okfHome, config) {
+  return scanOrphanSessions(okfHome, config, true);
 }
 
 // ---------- 2. 크래시 복구 ----------
@@ -270,6 +355,42 @@ function recoverStagingLeftovers(okfHome) {
       // no-op
     }
   }
+}
+
+// ---------- 1.5 큐 위생 ----------
+// sweep 필터(isOkfTestSessionDir, §7-8)는 "앞으로 줍지 않기"만 한다 — 필터가 생기기 전(또는
+// 구버전 훅)이 이미 raw/에 넣어버린 오염은 회차마다 유료 배치에 실렸다. 실측(2026-07-16,
+// 실번들): raw 165개 중 158개가 okf-smoke-* 테스트 픽스처, 6개가 분석기 자기 세션(cwd=OKF_HOME)
+// 이었고, 배치 7회가 전부를 LLM에 태워 NO-OP만 받았다. 격리는 삭제가 아니라 _remove_candidate
+// 이동이라 remove_candidate_ttl_days(기본 30일) 동안 가역이다.
+// raw 파일명은 `YYYY-MM-DD--<project>--<sessionId>.jsonl`이고 project 자체가 '--'를 포함할 수
+// 있으므로(워크트리 경로 등) sessionId는 마지막 '--' 뒤로 잘라낸다.
+function projectSegmentOf(filename) {
+  const core = filename.replace(/\.jsonl$/, '').replace(/^\d{4}-\d{2}-\d{2}--/, '');
+  const sep = core.lastIndexOf('--');
+  return sep > 0 ? core.slice(0, sep) : core;
+}
+
+function quarantineJunkRaw(okfHome) {
+  const paths = okfPaths(okfHome);
+  const todayDir = path.join(paths.removeCandidate, localDateString());
+  let quarantined = 0;
+  for (const f of safeReaddir(paths.raw)) {
+    if (!f.endsWith('.jsonl')) continue;
+    const full = path.join(paths.raw, f);
+    if (!isOkfTestSessionDir(projectSegmentOf(f)) && !transcriptCwdIsOkfHome(full, okfHome)) continue;
+    try {
+      fs.mkdirSync(todayDir, { recursive: true });
+      fs.renameSync(full, path.join(todayDir, f));
+      quarantined++;
+    } catch (err) {
+      log(okfHome, `큐 위생 격리 실패 ${f}: code=${safeErrorCode(err)}`);
+    }
+  }
+  if (quarantined > 0) {
+    log(okfHome, `큐 위생: 오염 raw ${quarantined}개 격리(테스트 픽스처/분석기 자기 세션) — LLM 호출 없이 _remove_candidate로 이동`);
+  }
+  return quarantined;
 }
 
 // dirty 작업트리 판정: recoveredFromStaleLock이면 무조건 크래시 잔여물로 간주해 원복(§7-4 코덱스 2차 지적).
@@ -431,8 +552,27 @@ function chunkBySize(digestPaths, limitBytes) {
   return chunks;
 }
 
-function runClaude(prompt, { cwd, timeoutMs, claudeBin, model, effort }) {
+// 번들은 ~/.claude 아래에 산다 — Claude Code는 그 경로의 쓰기를 "sensitive file"로 보고 승인을
+// 요구하는데, headless 배치에는 승인할 사람이 없어 분석기의 모든 Write/Edit이 조용히 거부됐다.
+// 실측(E3, stream-json 추적): 분석기가 concept 3개를 정확히 쓰려다 전부 차단됐고, 배치는 이를
+// "NO-OP(반영할 지식 없음)"으로 오분류했다 — 시스템이 지식을 하나도 못 쌓던 근본 원인.
+// 번들 디렉토리 안으로만 한정한 allow 규칙을 주입한다('//' 접두 = 절대경로 규칙). 번들 밖
+// 쓰기는 여전히 기본 정책이 막는다.
+function buildAnalyzerSettings(bundleDir) {
+  const root = bundleDir.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  return JSON.stringify({
+    hooks: {},
+    permissions: { allow: [`Write(//${root}/**)`, `Edit(//${root}/**)`] },
+  });
+}
+
+function runClaude(prompt, { cwd, okfHome, timeoutMs, claudeBin, model, effort }) {
   const bin = claudeBin || 'claude';
+  // --settings를 JSON 문자열로 명령줄에 실으면 Windows(claude.cmd 대응 shell:true) 경로에서
+  // cmd.exe가 따옴표를 벗겨 JSON이 깨진다(CI 실측: "Expected property name or '}' in JSON").
+  // 파일로 쓰고 경로만 넘긴다 — 워크스페이스(cwd) 안이라 실행 후 워크스페이스와 함께 삭제된다.
+  const settingsPath = path.join(cwd, '.analyzer-settings.json');
+  fs.writeFileSync(settingsPath, buildAnalyzerSettings(cwd));
   const args = [
     // The ingest prompt contains transcript-derived project names. Keep it off the command
     // line so Windows' required shell:true path for claude.cmd cannot reinterpret &, |, %, etc.
@@ -443,7 +583,7 @@ function runClaude(prompt, { cwd, timeoutMs, claudeBin, model, effort }) {
     // 차단 메커니즘이고, --disallowedTools는 보조로 병기한다(§9 item 4, 이번에 실측 완료).
     '--tools', 'Read,Glob,Grep,Write,Edit',
     '--disallowedTools', 'Bash',
-    '--settings', '{"hooks":{}}',
+    '--settings', settingsPath,
     // 실측 발견(사후 반영, 중대): CLAUDE_CONFIG_DIR을 통째로 격리하면 keychain/OAuth 인증까지
     // 함께 격리되어 `claude -p`가 "Not logged in"으로 즉시 실패한다 — API 키 사용자만 우연히
     // 동작하고 (이 프로젝트 사용자 다수가 그럴) OAuth/구독 로그인 사용자는 배치가 원천적으로
@@ -486,7 +626,8 @@ function runClaude(prompt, { cwd, timeoutMs, claudeBin, model, effort }) {
       return { ok: false, error };
     }
     try {
-      rememberBatchSession(cwd, result?.session_id);
+      // cwd는 이제 임시 워크스페이스다 — 레지스트리는 반드시 번들(.okf)에 남아야 다음 sweep이 본다.
+      rememberBatchSession(okfHome || cwd, result?.session_id);
     } catch {
       // Registry failure is covered by the transcript cwd backstop and must not fail ingest.
     }
@@ -571,60 +712,164 @@ function rollbackChunk(okfHome, chunk) {
   }
 }
 
+// ---------- 5.5 분석기 워크스페이스 ----------
+// 번들은 ~/.claude 아래에 살고, Claude Code는 그 경로의 모든 쓰기를 "sensitive file"로 차단한다.
+// 실측(E3/E5): headless에서 이 차단은 --settings allow 규칙으로도 --allowedTools로도 안 풀리고
+// bypassPermissions만 뚫리는데, 그건 분석기를 디스크 전체에 풀어놓는 것이라 채택할 수 없다.
+// 그래서 분석기는 임시 워크스페이스(비민감 경로)의 지식 사본을 상대로 작업하고, 드라이버가
+// 산출물을 검증해 번들로 반영한다. 부수 효과: 분석기가 raw/·_remove_candidate/·.okf/·.git에
+// 물리적으로 접근할 수 없다(SCHEMA 규칙 7이 프롬프트 규범에서 물리 격리로 승격).
+const INGEST_INBOX_DIR = '.ingest-inbox';
+
+function copyKnowledgeTree(srcDir, destDir, isRoot) {
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const e of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (isRoot && (SCAN_EXCLUDE_DIRS.has(e.name) || e.name === INGEST_INBOX_DIR)) continue;
+    if (e.name === '.git') continue;
+    const s = path.join(srcDir, e.name);
+    const d = path.join(destDir, e.name);
+    if (e.isSymbolicLink()) continue;
+    if (e.isDirectory()) copyKnowledgeTree(s, d, false);
+    else if (e.isFile()) fs.copyFileSync(s, d);
+  }
+}
+
+function buildAnalyzerWorkspace(okfHome, runId, chunkIndex, chunk) {
+  const wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), `okf-ingest-${runId}-${chunkIndex}-`));
+  copyKnowledgeTree(okfHome, wsRoot, true);
+  const inbox = path.join(wsRoot, INGEST_INBOX_DIR);
+  fs.mkdirSync(inbox, { recursive: true });
+  const wsChunk = chunk.map((dp) => {
+    const digest = path.join(inbox, path.basename(dp.digest));
+    const source = path.join(inbox, path.basename(dp.source));
+    fs.copyFileSync(dp.digest, digest);
+    fs.copyFileSync(dp.source, source);
+    return { digest, source };
+  });
+  return { wsRoot, wsChunk };
+}
+
+// 워크스페이스 → 번들 반영. 정규 .md 파일만 반영한다: 심링크·스크립트 등 다른 파일형은
+// (오염된 digest에 넘어간 분석기의 산출물일 수 있으므로) 번들에 닿지 않고, index.md는
+// 드라이버가 재생성하므로 제외, 예약 디렉토리는 루트에서 걸러진다. 삭제는 반영하지 않는다
+// (SCHEMA 규칙 4 — 대체는 새 파일 + superseded 산문). 반영 후 lint가 내용 규정을 검사한다.
+function applyAnalyzerWorkspace(okfHome, wsRoot) {
+  let applied = 0;
+  let blocked = 0;
+  const walk = (dir, rel) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (rel === '' && (SCAN_EXCLUDE_DIRS.has(e.name) || e.name === INGEST_INBOX_DIR)) continue;
+      if (e.name === '.git') continue;
+      const abs = path.join(dir, e.name);
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) {
+        walk(abs, childRel);
+        continue;
+      }
+      if (!e.isFile() || !e.name.endsWith('.md') || e.name === 'index.md') continue;
+      const destAbs = path.join(okfHome, childRel);
+      const next = fs.readFileSync(abs);
+      let prev = null;
+      try {
+        prev = fs.readFileSync(destAbs);
+      } catch {
+        // 신규 파일
+      }
+      if (prev && Buffer.compare(prev, next) === 0) continue;
+      // 리뷰 확정(minor): 규칙서(SCHEMA.md)와 okf_seed 시드는 "수정 금지"가 프롬프트 규범으로만
+      // 있었다 — 오염된 digest에 넘어간 분석기가 규칙서를 영구 교체할 수 있는 경계 구멍이라
+      // 여기 드라이버가 시행한다. SCHEMA는 bootstrap 버전 동기화가 유일한 갱신 경로다.
+      if (childRel === 'SCHEMA.md' || (prev && /^okf_seed:\s*true\b/m.test(prev.subarray(0, 2048).toString('utf8')))) {
+        blocked++;
+        continue;
+      }
+      fs.mkdirSync(path.dirname(destAbs), { recursive: true });
+      fs.writeFileSync(destAbs, next);
+      applied++;
+    }
+  };
+  walk(wsRoot, '');
+  if (blocked > 0) {
+    log(okfHome, `분석기 산출물 반영 거부 ${blocked}건 — SCHEMA.md/okf_seed 시드 수정 시도`);
+  }
+  return applied;
+}
+
 // 리뷰 지적(사후 반영): regenerateIndex/runLint/commitAll 중 하나가 (git commit 실패,
 // ENOSPC, index.lock 경합 등으로) 동기 예외를 던지면 이전엔 그 예외가 processChunks 밖으로
 // 그대로 전파돼 runBatch()의 try/finally가 락만 정상 해제하고 죽었다 — 다음 실행은 "락이
 // 없다" -> 정상 신규 획득(recoveredFromStaleLock=false)으로 보고, 청크 도중 남은 dirty
 // 작업트리를 "사용자 편집"으로 오분류할 위험이 있었다(§7-4가 막으려던 바로 그 상황).
 // 여기서 즉시 잡아서 그 청크만 롤백하면, 다음 실행이 헷갈릴 dirty 상태 자체가 안 남는다.
-function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, config) {
-  const ingestResult = runClaude(buildIngestPrompt(pluginRootDir, chunk), {
-    cwd: paths.home,
-    timeoutMs: INGEST_TIMEOUT_MS,
-    claudeBin: config.claude_bin,
-    model: config.batch_model,
-    effort: config.batch_effort,
-  });
-  if (!ingestResult.ok) {
-    log(okfHome, `청크 ${i + 1} ingest 실패: ${describeClaudeError(ingestResult.error)} — 원복 후 배치 중단`);
-    return false;
-  }
-
-  regenerateIndex(okfHome);
-  let report = runLint(okfHome);
-
-  if (report.errors.length > 0) {
-    log(okfHome, `청크 ${i + 1} lint 실패, repair 1회 시도. rules=${summarizeLintForLog(report)}`);
-    const repairResult = runClaude(buildRepairPrompt(pluginRootDir, report), {
-      cwd: paths.home,
-      timeoutMs: REPAIR_TIMEOUT_MS,
+function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, config, runId) {
+  const { wsRoot, wsChunk } = buildAnalyzerWorkspace(okfHome, runId, i, chunk);
+  try {
+    const ingestResult = runClaude(buildIngestPrompt(pluginRootDir, wsChunk), {
+      cwd: wsRoot,
+      okfHome,
+      timeoutMs: INGEST_TIMEOUT_MS,
       claudeBin: config.claude_bin,
       model: config.batch_model,
       effort: config.batch_effort,
     });
-    if (repairResult.ok) {
-      regenerateIndex(okfHome);
-      report = runLint(okfHome);
+    if (!ingestResult.ok) {
+      log(okfHome, `청크 ${i + 1} ingest 실패: ${describeClaudeError(ingestResult.error)} — 원복 후 배치 중단`);
+      return false;
     }
-  }
 
-  if (report.errors.length > 0) {
-    log(okfHome, `청크 ${i + 1} repair 후에도 lint 실패 — 원복. rules=${summarizeLintForLog(report)}`);
-    return false;
-  }
+    applyAnalyzerWorkspace(okfHome, wsRoot);
 
-  // ingest가 "재사용 가치 없음(NO-OP)" 판단으로 아무것도 안 썼을 수 있다 — 이 경우 커밋할 diff가
-  // 없으므로(빈 git commit은 에러) 커밋을 스킵하고 raw만 처리 완료로 이동한다.
-  if (isDirty(paths.home)) {
-    commitAll(paths.home, `okf: ingest ${localDateString()} (chunk ${i + 1}/${totalChunks})`);
-    log(okfHome, `청크 ${i + 1} 커밋 완료`);
-  } else {
-    log(okfHome, `청크 ${i + 1}: NO-OP (반영할 지식 없음)`);
+    // 실측(E3): 쓰기가 막히면 분석기는 성공 종료하지만 아무것도 못 쓰고, NO-OP 선언 대신 차단
+    // 사정을 설명한다. 이를 NO-OP으로 오분류하면 지식이 조용히 유실된다(30일 뒤 삭제).
+    // "무변경 + NO-OP 미선언"은 실패다 — raw를 되돌려 재시도 대상으로 남기고, 상태에 드러낸다.
+    // 선언 판정은 정확히 'NO-OP' 한 줄(ingest.md 프로토콜) — 설명문 속 "언급"(substring)은
+    // 선언이 아니다(리뷰 확정: 유실 쪽이 아니라 재시도 쪽으로 기울어야 한다).
+    if (!isDirty(paths.home) && ingestResult.output.trim() !== 'NO-OP') {
+      log(okfHome, `청크 ${i + 1}: 무변경인데 NO-OP 선언 없음 — 쓰기 차단/유실 의심, 원복 후 중단`);
+      return false;
+    }
+
+    regenerateIndex(okfHome);
+    let report = runLint(okfHome);
+
+    if (report.errors.length > 0) {
+      log(okfHome, `청크 ${i + 1} lint 실패, repair 1회 시도. rules=${summarizeLintForLog(report)}`);
+      const repairResult = runClaude(buildRepairPrompt(pluginRootDir, report), {
+        cwd: wsRoot,
+        okfHome,
+        timeoutMs: REPAIR_TIMEOUT_MS,
+        claudeBin: config.claude_bin,
+        model: config.batch_model,
+        effort: config.batch_effort,
+      });
+      if (repairResult.ok) {
+        applyAnalyzerWorkspace(okfHome, wsRoot);
+        regenerateIndex(okfHome);
+        report = runLint(okfHome);
+      }
+    }
+
+    if (report.errors.length > 0) {
+      log(okfHome, `청크 ${i + 1} repair 후에도 lint 실패 — 원복. rules=${summarizeLintForLog(report)}`);
+      return false;
+    }
+
+    // ingest가 "재사용 가치 없음(NO-OP)" 판단으로 아무것도 안 썼을 수 있다 — 이 경우 커밋할 diff가
+    // 없으므로(빈 git commit은 에러) 커밋을 스킵하고 raw만 처리 완료로 이동한다.
+    if (isDirty(paths.home)) {
+      commitAll(paths.home, `okf: ingest ${localDateString()} (chunk ${i + 1}/${totalChunks})`);
+      log(okfHome, `청크 ${i + 1} 커밋 완료`);
+    } else {
+      log(okfHome, `청크 ${i + 1}: NO-OP (반영할 지식 없음)`);
+    }
+    return true;
+  } finally {
+    fs.rmSync(wsRoot, { recursive: true, force: true });
   }
-  return true;
 }
 
-function processChunks(okfHome, chunks, pluginRootDir, config) {
+function processChunks(okfHome, chunks, pluginRootDir, config, runId) {
   const paths = okfPaths(okfHome);
   const todayDir = path.join(paths.removeCandidate, localDateString());
 
@@ -634,7 +879,7 @@ function processChunks(okfHome, chunks, pluginRootDir, config) {
 
     let succeeded;
     try {
-      succeeded = processChunkBody(okfHome, chunk, i, chunks.length, paths, pluginRootDir, config);
+      succeeded = processChunkBody(okfHome, chunk, i, chunks.length, paths, pluginRootDir, config, runId);
     } catch (err) {
       log(okfHome, `청크 ${i + 1} 처리 중 예외 발생: code=${safeErrorCode(err)} — 크래시로 간주해 원복 후 배치 중단`);
       succeeded = false;
@@ -670,7 +915,8 @@ function runBatch() {
   const runId = `${Date.now()}-${process.pid}`;
 
   const lockResult = acquireLock(okfHome);
-  if (!lockResult.acquired) return; // 다른 배치가 정상 진행 중이거나 경합 상한 초과 — 다음 스케줄에 재시도
+  // 다른 배치가 정상 진행 중이거나 경합 상한 초과 — 다음 스케줄에 재시도
+  if (!lockResult.acquired) return { acquiredLock: false, freshPending: 0 };
 
   try {
     log(okfHome, `배치 시작 (recoveredFromStaleLock=${lockResult.recoveredFromStaleLock})`);
@@ -678,26 +924,31 @@ function runBatch() {
       log(okfHome, `config ${warning.key}: ${warning.code} — 기본값 사용`);
     }
 
-    // §5-5 순서(0.락 1.sweep 2.크래시복구 3.purge 4.스냅샷)대로: sweep을 purge보다 먼저 실행한다.
-    // 리뷰 지적(사후 반영) — 이전엔 purge가 먼저 돌아서, TTL 경계에 걸린 _remove_candidate
-    // 마커를 sweep이 "known" 판정에 쓰기도 전에 지워버려 이미 처리된 세션을 같은 실행 안에서
-    // orphan으로 오판해 재수집·재ingest하는 경로가 있었다. §5-4/§7-8: raw 상태와 무관하게
-    // 항상 실행 — 유일한 백스톱이 raw-empty 게이트에 막히면 안 됨.
+    // 순서가 중요하다: staging 잔재 반환 → 큐 위생 → sweep.
+    // 리뷰 확정(major): sweep이 staging 잔재보다 먼저 돌면, 직전 배치가 청크 실패로 중단되며
+    // staging에 남긴 세션을 sweep의 크기 지도(queuedById)가 못 보고 knownSize=0으로 판정해
+    // 같은 크기여도 재수집한다 — 같은 세션이 한 회차에 두 파일로 중복 유료 ingest됐다.
+    // 잔재를 먼저 raw로 되돌리면 sweep이 그것을 큐 사본으로 보고 크기 비교가 성립한다.
+    recoverStagingLeftovers(okfHome);
+    quarantineJunkRaw(okfHome);
+
+    // §5-5 순서: sweep을 purge보다 먼저 실행한다. 리뷰 지적(사후 반영) — 이전엔 purge가 먼저
+    // 돌아서, TTL 경계에 걸린 _remove_candidate 마커를 sweep이 "known" 판정에 쓰기도 전에
+    // 지워버려 이미 처리된 세션을 같은 실행 안에서 재수집·재ingest하는 경로가 있었다.
+    // §5-4/§7-8: raw 상태와 무관하게 항상 실행 — 유일한 백스톱이 raw-empty 게이트에 막히면 안 됨.
     // The paid synthetic benchmark preserves the user's real Claude auth, so changing
     // CLAUDE_CONFIG_DIR would break login. Its explicit isolation flag prevents real session
     // history from entering the synthetic condition; normal production batches always sweep.
     const skipSweepForBenchmark = process.env.OKF_BENCH_SKIP_SWEEP === '1'
       && Boolean(process.env.OKF_BENCH_USAGE_FILE);
-    const recovered = skipSweepForBenchmark ? 0 : sweepOrphanSessions(okfHome);
+    const swept = skipSweepForBenchmark ? { recovered: 0, freshPending: 0 } : sweepOrphanSessions(okfHome, config);
     if (skipSweepForBenchmark) log(okfHome, 'benchmark isolation: orphan sweep 생략');
-    if (recovered > 0) log(okfHome, `sweep: 유실 세션 ${recovered}개 회수`);
-
-    recoverStagingLeftovers(okfHome);
+    if (swept.recovered > 0) log(okfHome, `sweep: 세션 ${swept.recovered}개 수집`);
 
     const dirtyResult = handleDirtyWorkingTree(okfHome, lockResult.recoveredFromStaleLock);
     if (!dirtyResult.ok) {
       updateLastBatch(okfHome, 'aborted: pre-batch dirty tree lint failed');
-      return;
+      return { acquiredLock: true, freshPending: swept.freshPending };
     }
 
     purgeRemoveCandidate(okfHome, config.remove_candidate_ttl_days);
@@ -711,7 +962,7 @@ function runBatch() {
         // no-op
       }
       updateLastBatch(okfHome, 'noop');
-      return;
+      return { acquiredLock: true, freshPending: swept.freshPending };
     }
 
     const digestPaths = generateDigests(okfHome, stagingDir, files, config.batch_digest_cap_kb);
@@ -726,7 +977,7 @@ function runBatch() {
         }
       }
       updateLastBatch(okfHome, 'error: digest generation failed');
-      return;
+      return { acquiredLock: true, freshPending: swept.freshPending };
     }
 
     // 빈 digest는 LLM에 보내지 않고 바로 처리 완료 처리한다(위 partitionEmptyDigests 참고).
@@ -767,7 +1018,7 @@ function runBatch() {
     log(okfHome, `이번 회차 처리 대상: 세션 ${selected.length}개, digest 합계 ${(totalBytes / 1024).toFixed(1)}KB`);
 
     const chunks = chunkBySize(selected, CHUNK_BYTE_LIMIT);
-    const { processedChunks, aborted } = processChunks(okfHome, chunks, pluginRootDir, config);
+    const { processedChunks, aborted } = processChunks(okfHome, chunks, pluginRootDir, config, runId);
 
     try {
       fs.rmdirSync(stagingDir);
@@ -776,9 +1027,46 @@ function runBatch() {
     }
 
     updateLastBatch(okfHome, aborted ? `partial: ${processedChunks}/${chunks.length} chunks` : 'ok');
+    return { acquiredLock: true, freshPending: swept.freshPending };
   } finally {
     releaseLock(okfHome);
   }
 }
 
-runBatch();
+function positiveIntFromEnv(name, fallback) {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// 링거(유휴 수집의 시계): 방금까지 활동한 세션이 있으면 프로세스가 남아서 유휴 도달을 기다렸다가
+// 수집한다. 세션 훅은 다시 안 울릴 수 있으므로(백그라운드 에이전트, 방치된 창) 이 대기가
+// "대화가 끝나고 sweep_min_idle_minutes가 지나면 번들에 반영된다"를 보장하는 유일한 시계다.
+// 대기 중에는 락을 잡지 않고 판정(probe)만 반복하다가, 유휴에 도달한 세션이 생겼을 때만 전체
+// 사이클을 다시 돈다 — last-batch/log가 폴링 간격마다 갈리는 것을 막는다.
+async function runLoop() {
+  const startedMs = Date.now();
+  for (;;) {
+    const cycle = runBatch();
+    if (!cycle.acquiredLock) return; // 다른 배치가 살아있다 — 링거도 그쪽 몫이다
+    if (cycle.freshPending === 0) return;
+    const okfHome = resolveOkfHome();
+    const config = readConfig(okfHome);
+    log(okfHome, `링거: 활동 직후 세션 ${cycle.freshPending}개 — 유휴 도달까지 대기 (poll ${Math.round(LINGER_POLL_MS / 1000)}s)`);
+    for (;;) {
+      if (Date.now() - startedMs >= LINGER_MAX_MS) {
+        log(okfHome, '링거: 최대 수명 도달 — 종료 (다음 세션 훅이 재기동한다)');
+        return;
+      }
+      await sleep(LINGER_POLL_MS);
+      const probe = scanOrphanSessions(okfHome, config, false);
+      if (probe.recovered > 0) break; // 유휴에 도달한 세션이 생겼다 — 전체 사이클 재실행
+      if (probe.freshPending === 0) return; // 기다리던 세션이 사라졌다(제외 판명, 정리 등)
+    }
+  }
+}
+
+await runLoop();

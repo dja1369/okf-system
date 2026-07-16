@@ -44,7 +44,7 @@
 
 ## 6. 미확정 안건 (다른 모델이 설계 시 결정 필요)
 
-- [ ] SessionEnd 훅에서 정확히 무엇을 캡처할지 — 전체 transcript 원문 그대로 vs 요약/추출본. (SessionEnd 훅은 `session_id`/`transcript_path`/`cwd` 등을 stdin JSON으로 받음, transcript_path로 전체 대화 로그 접근 가능 — 상세 스키마는 `plugin-dev:hook-development` 스킬 참고)
+- [x] ~~SessionEnd 훅에서 정확히 무엇을 캡처할지~~ — 2026-07-16 해소: 훅 캡처 자체를 폐지했다. 사용자·에이전트는 세션을 명시적으로 끝내지 않고, resume발 SessionEnd가 대화 중간 스냅샷을 "처리됨"으로 못박아 이후 내용을 잃게 했다(실측). 수집은 배치 sweep이 "마지막 활동 후 `sweep_min_idle_minutes`(기본 60분) 유휴 + 크기 성장" 기준으로 하며 전체 transcript 원문을 무손실 복사한다. 세션 훅은 배치 트리거만 남았다.
 - [ ] claude-mem, 네이티브 auto-memory와의 관계 — 완전 별도 시스템으로 갈지, 두 소스도 추가 raw input으로 흡수할지
 - [ ] `claude -p` 배치의 정확한 트리거 주기/스케줄 방식(CronCreate vs crontab) 및 주기(예: 매일 1회?)
 - [ ] OKF concept 파일들의 도메인/타입 택소노미(예: `projects/`, `decisions/`, `feedback-patterns/`, `references/` 등 카테고리 구조)

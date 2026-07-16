@@ -67,7 +67,7 @@ console.log('--- session hooks (per-process, includes node startup) ---');
 const home = sandbox('home');
 ensureBootstrap(home);
 // Keep the batch gate from spawning during SessionEnd measurements without using OKF_BATCH=1,
-// because that environment variable short-circuits the capture itself.
+// because that environment variable short-circuits the hook itself.
 fs.writeFileSync(okfPaths(home).lock, JSON.stringify({ pid: process.pid, startedEpochMs: Date.now() }));
 const fakeHome = sandbox('fakehome');
 const hookEnv = { ...process.env, OKF_HOME: home, HOME: fakeHome, USERPROFILE: fakeHome };
@@ -76,7 +76,7 @@ measureProcess('SessionStart (gate injection)', [path.join(ROOT, 'bin', 'session
   env: hookEnv,
   input: '{}',
 });
-measureProcess('SessionEnd (lossless capture)', [path.join(ROOT, 'bin', 'session-end.mjs')], {
+measureProcess('SessionEnd (batch trigger)', [path.join(ROOT, 'bin', 'session-end.mjs')], {
   env: hookEnv,
   input: JSON.stringify({ session_id: 'bench0000-0000-0000-0000-000000000000', transcript_path: SAMPLE, cwd: '/tmp/bench' }),
 });

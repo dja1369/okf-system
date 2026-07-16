@@ -19,7 +19,7 @@ repository: inspect, diff, back up, or remove it with normal tools.
 ## Commands
 
 ```text
-/okf:okf-status              capture/batch status, pending sessions, lock state
+/okf:okf-status              batch status, pending sessions, lock state
 /okf:okf-batch               force ingest now, while respecting the lock
 /okf:okf-config              inspect or edit validated settings
 /okf:okf-index               list categories, concepts, and recent changes
@@ -49,7 +49,8 @@ The main controls in `.okf/config.md` are:
 | `batch_max_digest_kb` | `600` | Total LLM-facing digest budget per batch |
 | `batch_max_sessions` | `50` | Runaway ceiling; not the primary cost control |
 | `batch_digest_cap_kb` | `150` | Per-session digest cap; raw remains lossless |
-| `capture_exclude_cwd` | `[]` | Explicit directories whose sessions are not captured |
+| `capture_exclude_cwd` | `[]` | Directories whose sessions are never collected (matched against each session's cwd) |
+| `sweep_min_idle_minutes` | `60` | Idle time after the last activity before a conversation is collected; `0` collects immediately |
 | `inject_max_lines` / `inject_max_bytes` | `120` / `9000` | Inline gate limits |
 
 Files above 512 KiB remain visible in analysis but are marked unanalyzed. Repository analysis
@@ -81,13 +82,13 @@ Run:
 node test/bench.mjs [repository]
 ```
 
-Fresh measurement on 2026-07-15, macOS arm64, Node `v26.4.0`:
+Fresh measurement on 2026-07-16, macOS arm64, Node `v26.4.0`:
 
 | Operation | Median | Min–max |
 |---|---:|---:|
-| SessionStart gate process | 57.4 ms | 56.7–58.2 ms |
-| SessionEnd lossless capture process | 43.4 ms | 41.8–43.9 ms |
-| Statusline process | 36.7 ms | 34.8–36.8 ms |
+| SessionStart gate process | 57.2 ms | 56.9–58.1 ms |
+| SessionEnd trigger process | 41.4 ms | 39.0–42.1 ms |
+| Statusline process | 35.0 ms | 35.0–35.2 ms |
 | Analyze this repository | 13.0 ms | 11.8–22.5 ms |
 | Build graph | 11.5 ms | 11.3–12.4 ms |
 | Render self-contained HTML | 0.3 ms | 0.2–0.6 ms |
@@ -116,7 +117,7 @@ JSON schema, and six-task prompt.
 |---|---|---|
 | A — no memory | No previous facts or restatement | Baseline continuity failure |
 | B — manual restatement | User repeats all prior facts | Cost of recovering correctness manually |
-| C — OKF enabled | Real capture → batch → gate | End-to-end OKF effect |
+| C — OKF enabled | Real collection → batch → gate | End-to-end OKF effect |
 | D — irrelevant OKF | Only unrelated concepts | Fixed gate/cache overhead and distraction check |
 
 Environment: Claude Code `2.1.210`, requested `sonnet`/medium and resolved Sonnet 5 plus Haiku
@@ -210,7 +211,7 @@ compatibility headers.
 
 ## Disable or remove
 
-Set `enabled: false` through `/okf:okf-config` to stop capture, gate, and batch, or uninstall:
+Set `enabled: false` through `/okf:okf-config` to stop collection, gate, and batch, or uninstall:
 
 ```sh
 claude plugin uninstall okf

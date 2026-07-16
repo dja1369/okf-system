@@ -22,21 +22,26 @@ Redémarrez Claude Code, terminez une session normale, puis exécutez :
 /okf:okf-index
 ```
 
-Le premier `SessionStart` crée `~/.claude/okf` (ou `$CLAUDE_CONFIG_DIR/okf`). Capture et batch opportuniste sont ensuite automatiques.
+Le premier `SessionStart` crée `~/.claude/okf` (ou `$CLAUDE_CONFIG_DIR/okf`). Collecte et batch opportuniste sont automatiques, et une conversation est collectée environ une heure après sa dernière activité, donc il n’est pas nécessaire de terminer une session explicitement.
 
 ## Boucle de continuité
 
 ```text
-décision session 1 -> copie raw sans perte à SessionEnd -> batch en Markdown OKF -> index session 2 -> Read du concept pertinent
+Session 1               ~1h idle                Batch en arrière-plan       Session 2
+décision            -> sweep collecte raw ->    Markdown OKF réutilisable -> index compact injecté
+(pas de fin              (copie sans perte ;         |                              |
+ explicite requise)       la croissance re-collecte) +-- historique git local       +-- Read du concept pertinent
 ```
 
 Ainsi, « déployer 10 % → 50 % → 100 %, rollback au-dessus de 0,5 % d’erreurs » peut être retrouvé sans nouvelle saisie. L’index sert de routage ; Claude doit `Read` le concept avant d’agir.
+
+Pourquoi une base sur l’idle ? Les sessions se terminent rarement de façon explicite — les agents en arrière-plan ne le font jamais — et un instantané de fin de session pris au moment du `resume` figeait autrefois une conversation en plein vol comme « traitée », perdant tout ce qui suivait. Le sweep collecte donc un transcript une fois qu’il est resté silencieux pendant `sweep_min_idle_minutes` (60 par défaut), le batch patiente jusqu’à ce que les conversations en attente atteignent l’inactivité (sondage toutes les ~5 minutes, jusqu’à 8 heures), une session déjà collectée n’est **re**-collectée que si elle a grandi depuis, et une session inchangée n’est jamais recollectée. Les hooks de session ne font que réveiller le batch.
 
 ## Commandes
 
 | Commande | Rôle |
 |---|---|
-| `/okf:okf-status` | Dernière capture/batch, sessions en attente et verrou |
+| `/okf:okf-status` | Dernier batch, sessions en attente et verrou |
 | `/okf:okf-batch` | Ingest immédiat en respectant le verrou |
 | `/okf:okf-config` | Afficher ou modifier la configuration validée |
 | `/okf:okf-index` | Catégories, titres et changements récents |
@@ -55,7 +60,7 @@ Ainsi, « déployer 10 % → 50 % → 100 %, rollback au-dessus de 0,5 % d’err
 
 **OKF ne fait pas économiser de tokens. Il récupère ce qu’une session neuve a déjà perdu.** Ces chiffres sont publiés parce qu’ils le disent sans détour.
 
-Une session de suivi doit restituer huit faits établis par une session précédente : architecture (SQLite / repository pattern), règle de code (named export uniquement), correctif d’un incident passé (`busy_timeout=5000`), préférence de réponse (coréen / concis), fichier et politique de déploiement (`src/config.mjs` / `npm run deploy:canary`) — plus un contrôle arithmétique sans rapport (7 × 8 = 56). Le bundle de C vient d’une vraie capture SessionEnd → batch isolé → gate SessionStart ; un preflight refuse de dépenser tant que C ne contient et ne route pas chaque fait, et que D n’en contient aucun.
+Une session de suivi doit restituer huit faits établis par une session précédente : architecture (SQLite / repository pattern), règle de code (named export uniquement), correctif d’un incident passé (`busy_timeout=5000`), préférence de réponse (coréen / concis), fichier et politique de déploiement (`src/config.mjs` / `npm run deploy:canary`) — plus un contrôle arithmétique sans rapport (7 × 8 = 56). Le bundle de C vient d’une vraie collecte dans `raw/` → batch isolé → gate SessionStart ; un preflight refuse de dépenser tant que C ne contient et ne route pas chaque fait, et que D n’en contient aucun.
 
 Run live du 2026-07-15 : Claude Code `2.1.210`, `sonnet`/medium (Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, cinq répétitions croisées par condition. Preflight C : 8/8 faits présents, 8/8 routés ; D : 0/8.
 
@@ -126,13 +131,13 @@ Exécution payante et opt-in, exclue de CI. Voir le [rapport valide](docs/benchm
 
 ### Overhead local — pas le résultat d’efficacité
 
-Mesure fraîche du 2026-07-15, macOS arm64, Node `v26.4.0` :
+Mesure fraîche du 2026-07-16, macOS arm64, Node `v26.4.0` :
 
 | Opération | Médiane | Plage |
 |---|---:|---:|
-| Processus SessionStart gate | 57.4 ms | 56.7–58.2 ms |
-| Processus SessionEnd capture sans perte | 43.4 ms | 41.8–43.9 ms |
-| Processus statusline | 36.7 ms | 34.8–36.8 ms |
+| Processus SessionStart gate | 57.2 ms | 56.9–58.1 ms |
+| Processus trigger SessionEnd | 41.4 ms | 39.0–42.1 ms |
+| Processus statusline | 35.0 ms | 35.0–35.2 ms |
 
 Reproduire avec `node test/bench.mjs [dépôt]`. Cela mesure le coût local, pas une économie de tokens ni la vitesse du modèle.
 
@@ -180,16 +185,17 @@ La validation a corrigé un `Error` standard Swift relié à un type nested homo
 
 ## Données et confidentialité
 
-- `SessionEnd` copie le transcript complet dans `raw/`, sans perte.
+- Le sweep sur inactivité copie le transcript complet dans `raw/` ; aucun parsing ni troncature pendant la collecte. Les hooks de session ne font que réveiller le batch.
 - Batch crée un digest plafonné et l’envoie à Anthropic via un `claude -p` séparé : seule transmission modèle/API ajoutée.
 - Il utilise `--safe-mode`, des tools limités, le prompt via stdin, lint/rollback et aucun Bash.
+- L’analyseur travaille sur une copie jetable des fichiers de connaissance dans un workspace temporaire et ne peut physiquement pas accéder à `raw/`, `.okf/` ou `.git` ; le driver ne réintègre que les fichiers `.md` réguliers (scripts et symlinks n’atteignent jamais le bundle).
 - Raw est ignoré par git ; seul le Markdown extrait est commit localement. Aucun push ni remote ajouté.
 - Répertoires POSIX `0700`, raw/state/log `0600`. Les logs persistants excluent transcript, stdout/stderr Claude, credentials et chemins raw complets.
 - Le fixture live est synthétique, sans donnée personnelle ni credential.
 
 ## Configuration et suppression
 
-Utilisez `~/.claude/okf/.okf/config.md` ou `/okf:okf-config`. Valeurs principales : `enabled: true`, `batch_interval_hours: 1`, `batch_max_digest_kb: 600`, `batch_digest_cap_kb: 150`, `remove_candidate_ttl_days: 30`, `inject_max_lines` / `inject_max_bytes` : `120` / `9000`. Les valeurs invalides reviennent à des defaults sûrs.
+Utilisez `~/.claude/okf/.okf/config.md` ou `/okf:okf-config`. Valeurs principales : `enabled: true` (interrupteur maître pour collecte, gate et batch), `batch_interval_hours: 1`, `batch_max_digest_kb: 600`, `capture_exclude_cwd` (globs d’exclusion de la collecte, évalués contre le cwd de la session), `sweep_min_idle_minutes: 60` (délai en minutes après la dernière activité avant collecte ; `0` collecte immédiatement), `batch_digest_cap_kb: 150`, `remove_candidate_ttl_days: 30`, `inject_max_lines` / `inject_max_bytes` : `120` / `9000`. Les valeurs invalides reviennent à des defaults sûrs.
 
 ```sh
 claude plugin uninstall okf

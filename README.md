@@ -24,18 +24,20 @@ Restart Claude Code, finish a normal session, then inspect the system:
 /okf:okf-index
 ```
 
-The first `SessionStart` creates `~/.claude/okf` (or `$CLAUDE_CONFIG_DIR/okf`). Normal capture and opportunistic batch ingest are automatic.
+The first `SessionStart` creates `~/.claude/okf` (or `$CLAUDE_CONFIG_DIR/okf`). Collection and opportunistic batch ingest are automatic — a conversation is collected about an hour after its last activity, so nobody has to end a session explicitly.
 
 ## The continuity loop
 
 ```text
-Session 1             SessionEnd              Background batch           Session 2
-make a decision  ->   lossless raw copy  ->   reusable OKF Markdown  ->  compact index injected
-                                                 |                            |
-                                                 +-- local git history        +-- Read relevant concept
+Session 1              ~1h idle                Background batch           Session 2
+make a decision   ->   sweep collects raw ->   reusable OKF Markdown  ->  compact index injected
+(no explicit end       (lossless copy;            |                            |
+ required)              growth re-collects)       +-- local git history        +-- Read relevant concept
 ```
 
-Example: one session records “deploy 10% → 50% → 100%, roll back above 0.5% errors.” After capture and ingest, a later session can discover that exact policy through the injected index without the user pasting it again. The index is a routing layer, not the whole memory: Claude must `Read` the relevant concept before acting.
+Example: one session records “deploy 10% → 50% → 100%, roll back above 0.5% errors.” After collection and ingest, a later session can discover that exact policy through the injected index without the user pasting it again. The index is a routing layer, not the whole memory: Claude must `Read` the relevant concept before acting.
+
+Why idle-based? Sessions rarely end explicitly — background agents never do — and an end-of-session snapshot taken on `resume` used to freeze a conversation mid-flight as “processed”, losing everything said afterwards. So the sweep collects a transcript once it has been quiet for `sweep_min_idle_minutes` (default 60), the batch process lingers until pending conversations reach idleness (polling every ~5 minutes, up to 8 hours), a collected session is collected **again** only if it grew afterwards, and an unchanged session is never re-collected. Session hooks merely wake the batch.
 
 ## Commands
 
@@ -43,7 +45,7 @@ Plugin commands always require the `okf:` namespace.
 
 | Command | Purpose |
 |---|---|
-| `/okf:okf-status` | Last capture/batch result, pending sessions, and lock state |
+| `/okf:okf-status` | Last batch result, pending sessions, and lock state |
 | `/okf:okf-batch` | Run ingest now; still respects the batch lock |
 | `/okf:okf-config` | Show or edit validated configuration |
 | `/okf:okf-index` | List categories, concept titles, and recent changes |
@@ -85,7 +87,7 @@ A follow-up session is asked for eight facts a previous session established, plu
 | File & deploy policy | `src/config.mjs` / `npm run deploy:canary` |
 | Unrelated arithmetic (control) | 7 × 8 = 56 |
 
-Five conditions, five crossed-order runs each. C's bundle is built by a **real** SessionEnd capture → isolated batch ingest → SessionStart gate — no hand-seeded concepts. A preflight refuses to spend money unless C actually contains and gate-routes every target fact and D contains none.
+Five conditions, five crossed-order runs each. C's bundle is built by a **real** collection into `raw/` → isolated batch ingest → SessionStart gate — no hand-seeded concepts. A preflight refuses to spend money unless C actually contains and gate-routes every target fact and D contains none.
 
 - **A — no memory.** The honest status quo: a fresh session, nothing restated.
 - **B_oracle — the answer key.** Pastes exactly the 8 expected values. Producing that string requires already knowing every fact OKF exists to recover, so **no user can occupy this condition**; it is an upper bound, not a baseline. Its human labour is priced at zero.
@@ -164,13 +166,13 @@ This is paid, authenticated, and intentionally excluded from smoke tests and CI.
 
 ### Local overhead (not the OKF effectiveness result)
 
-Fresh local measurement on 2026-07-15: macOS arm64, Node `v26.4.0`, median with min/max range.
+Fresh local measurement on 2026-07-16: macOS arm64, Node `v26.4.0`, median with min/max range.
 
 | Local operation | Median | Range |
 |---|---:|---:|
-| SessionStart gate process | 57.4 ms | 56.7–58.2 ms |
-| SessionEnd lossless capture process | 43.4 ms | 41.8–43.9 ms |
-| Statusline process | 36.7 ms | 34.8–36.8 ms |
+| SessionStart gate process | 57.2 ms | 56.9–58.1 ms |
+| SessionEnd trigger process | 41.4 ms | 39.0–42.1 ms |
+| Statusline process | 35.0 ms | 35.0–35.2 ms |
 
 Reproduce with `node test/bench.mjs [repository]`. These numbers measure local hook/process cost only; they do not prove token savings or faster model responses.
 
@@ -222,9 +224,10 @@ The validation found and fixed two false edges: Swift standard `Error` linking t
 
 ## Data flow and privacy
 
-- `SessionEnd` copies the full transcript into `raw/`; it is not parsed or truncated during capture.
+- The idle sweep copies the full transcript into `raw/`; it is not parsed or truncated during collection. Session hooks only wake the batch.
 - Batch creates a capped digest and sends that digest to Anthropic through a separate `claude -p` call. This is the only extra model/API transfer introduced by OKF.
 - Batch runs with `--safe-mode`, a restricted tool set, prompt over stdin, lint/rollback, and no Bash tool.
+- The analyzer works in a throwaway copy of the knowledge files in a temp workspace and physically cannot touch `raw/`, `.okf/`, or `.git`; the driver copies back regular `.md` files only (scripts and symlinks never reach the bundle).
 - Raw and processed transcripts are git-ignored. Only extracted Markdown knowledge is committed locally.
 - The plugin never pushes or adds a remote. POSIX directories are `0700`; raw/state/log files are `0600`. Windows uses account ACLs.
 - Persistent diagnostic logs exclude transcript text, Claude stdout/stderr, credentials, and full raw paths.
@@ -236,12 +239,13 @@ Edit `~/.claude/okf/.okf/config.md` or use `/okf:okf-config`. Unknown or invalid
 
 | Key | Default | Meaning |
 |---|---:|---|
-| `enabled` | `true` | Master switch for capture, gate, and batch |
+| `enabled` | `true` | Master switch for collection, gate, and batch |
 | `batch_interval_hours` | `1` | Minimum interval between opportunistic batches |
 | `batch_max_digest_kb` | `600` | Total per-batch digest budget |
 | `batch_max_sessions` | `50` | Runaway ceiling; byte budget is the cost control |
 | `batch_model` / `batch_effort` | `claude-sonnet-5` / `medium` | Batch model controls; empty uses CLI defaults |
-| `capture_exclude_cwd` | `[]` | Explicit capture opt-out globs |
+| `capture_exclude_cwd` | `[]` | Collection opt-out globs, matched against each session's cwd |
+| `sweep_min_idle_minutes` | `60` | Idle time after the last activity before a session counts as finished and is collected; `0` collects immediately |
 | `batch_digest_cap_kb` | `150` | Per-session LLM-facing digest cap; raw stays complete |
 | `remove_candidate_ttl_days` | `30` | Retention before processed raw deletion |
 | `inject_max_lines` / `inject_max_bytes` | `120` / `9000` | Inline gate limits below Claude Code’s 10,000-character threshold |

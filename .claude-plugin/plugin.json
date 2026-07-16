@@ -1,7 +1,7 @@
 {
   "name": "okf",
-  "version": "0.1.5",
-  "description": "Global OKF (Open Knowledge Format) knowledge bundle: lossless session capture, opportunistic batch ingest, mandatory index gate at session start.",
+  "version": "0.1.6",
+  "description": "Global OKF (Open Knowledge Format) knowledge bundle: idle-based lossless session collection, opportunistic batch ingest, mandatory index gate at session start.",
   "author": {
     "name": "ducksu"
   }
