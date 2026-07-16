@@ -1,0 +1,29 @@
+{
+  "target": "slim",
+  "builtAt": "2026-07-16T08:04:10.573Z",
+  "model": "sonnet",
+  "transcriptCount": 16,
+  "snapshots": [
+    {
+      "requestedLevel": 20,
+      "sessionsPlanted": 16,
+      "batchRounds": 1,
+      "conceptsReal": 8,
+      "conceptsSeed": 4,
+      "gateBytes": 4160,
+      "gateTruncated": false,
+      "cumulativeBatchCostUsd": 1.002,
+      "dir": "slim-L20",
+      "concepts": [
+        "decisions/partner-settlement/emitter-wiring.md",
+        "decisions/partner-settlement/error-handling.md",
+        "projects/partner-settlement-api.md",
+        "references/slim4/error-pipeline.md",
+        "references/slim4/http-exceptions.md",
+        "references/slim4/routing-app.md",
+        "troubleshooting/output-buffering-prepend-body-loss.md",
+        "troubleshooting/slim4-version-constant-mismatch.md"
+      ]
+    }
+  ]
+}

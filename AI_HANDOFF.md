@@ -75,48 +75,44 @@ compatibility header에 연결되는 오탐을 발견해 회귀 테스트와 함
 - `docs/USAGE.md`는 첫 capture→batch→next gate 흐름, 상태/시각화/분석/상태줄, cache 해석,
   batch 비용·손익분기, 합성 fixture와 라이브 재현 절차를 설명한다.
 
-## OKF 효과 벤치마크
+## OKF 효과 벤치마크 (v3, 2026-07-16)
 
-`test/bench-okf.mjs`는 `OKF_RUN_LIVE_BENCH=1` 없이는 유료 호출을 거부한다. 동일 모델/effort/
-도구/max-turns/JSON schema/fixture로 조건별 최소 5회, 순서 교차, 첫 회 cold·나머지 warm을 실행한다.
+현재 벤치마크는 v3다. 이전 A/B/C/D 합성 fixture 실행은 목표 사실이 어디에도 없는 디렉토리를
+baseline이 뒤지게 해 baseline이 구조적으로 0/5였고(OKF의 성질이 아니라 설계 때문), 폐기했다.
+그 결과는 인용하지 않는다. v3는 고정된 공개 저장소 두 개(Slim `80900fb3`, rust-lang/rfcs
+`f635361c`)에 대고 zero-base·answer-key·OKF·wrong-knowledge·CLAUDE.md 5조건을, 대조 n=15/통제 n=5로
+측정한다.
 
-- A: memory 없음, 재설명 없음
-- B: memory 없음, 사용자 수동 재설명
-- C: 실제 SessionEnd capture → batch ingest → SessionStart gate
-- D: 무관한 OKF concept만 주입
+`test/bench-okf.mjs`는 `OKF_RUN_LIVE_BENCH=1` 없이는 유료 호출을 거부한다. gate는 프롬프트 prepend가
+아니라 실제 `SessionStart` 훅(`additionalContext`)으로 전달하고 전달 바이트를 실행마다 검증한다.
+채점은 정답을 원자로 쪼개 원자별로 하고(측정 전 고정) v2식 이진 점수를 나란히 발행한다. 비용은
+`total_cost_usd`가 헤드라인이며 sonnet 단독 비용을 옆에 실어 CLI가 내부 작업에 쓰는 haiku(지출의
+2.3%)를 빼고 볼 수 있게 한다.
 
-아키텍처, 코딩 규칙, 실패 해결책, 응답 선호, 파일·배포 정책, 무관 산술을 자동 assertion한다.
-stream-json 원본에서 usage/cache, tool별 호출, 첫 assistant event, API/wall 시간, turn, CLI cost,
-resolved model을 보존한다. CLI가 제공하지 않는 user-only/gate-only/transcript token과 retry 수는
-`null`과 이유로 남기며 추정하지 않는다. 원본 token 항목은 분리하고 `tokenActivity` 계산식만
-별도 제공한다.
-
-batch ingest/repair usage와 비용은 응답 내용 없이 별도 telemetry에 기록한다. 토큰·실비용
-손익분기는 모두 `batch + max(0, D-A)`를 초기 비용으로 하고 `B-C`가 양수일 때만 계산한다.
-2026-07-15 Anthropic 공식 Sonnet 5 가격을 확인했지만 계산은 CLI `total_cost_usd`를 사용한다.
+v3에서 실패로부터 배워 넣은 두 가드: (1) 조건별 비주(non-primary) 모델 비용 비중이 임계값(기본
+15%)을 넘으면 결과를 쓰고 non-zero로 중단한다 — 균일하게 섞인 haiku는 교란이 아니라 정량화 대상.
+(2) Claude Code가 cwd별 프로젝트 메모리를 모든 세션에 자동 주입하는데, 지식 세션이 그 메모리에
+팀 결정을 저장하면 측정이 같은 cwd에서 zero-base에까지 새어든다 — 하니스가 측정 전 그 메모리를
+지우고, 리포트가 zero-base 오염 시나리오를 기계적으로 배제한다.
 
 ### 라이브 결과
 
-유효 실행: `2026-07-15T15:03:01.343Z`, 조건별 5회. C preflight는 목표 사실 8/8 존재와
-gate routing 8/8, D는 목표 사실 0/8이었다.
+유효 실행: `2026-07-16T08:31:48Z`, 440런. modelMixConfound 없음(haiku 2.3%), gate flake 재시도 0회.
+발행 6개 시나리오(오염된 slim_domain·slim_policy 배제):
 
-| 조건 | 연속성 성공 | 준수율 p50 | token activity p50/p95 | wall p50/p95 | 비용 p50 |
-|---|---:|---:|---:|---:|---:|
-| A no memory | 0/5 | 0% | 27,320/27,574 | 16.40/18.17초 | $0.024037 |
-| B manual restatement | 5/5 | 100% | 9,070/9,093 | 6.07/7.42초 | $0.008410 |
-| C OKF enabled | 5/5 | 100% | 22,857/22,883 | 11.33/12.80초 | $0.033189 |
-| D irrelevant OKF | 0/5 | 0% | 21,507/22,261 | 16.92/18.88초 | $0.030332 |
+- **코드로 알 수 있는 질문**: OKF는 grep 한 번짜리에서 1.2~1.7배 비싸다(slim_cheap zero $0.067 vs
+  OKF $0.114). 탐색이 비싼 slim_buried에서만 OKF가 더 싸고 도구 호출이 적다.
+- **코드에 없는 정책**(rfcs_policy): zero-base 0/15(탐색으로는 못 찾음) vs OKF 11/15, CLAUDE.md의
+  약 절반 비용. CLAUDE.md도 15/15로 답하므로 OKF는 유일한 게 아니라 더 싼 형태의 대안이다.
+- **slim_stale**: 이진 0/15로 "전멸"처럼 보이지만 critical 원자는 15/15 — 모델이 코드를 다시 읽어
+  핵심을 바로잡았고 놓친 건 커밋 SHA 같은 부수 원자뿐이다. "낡은 지식이 자신있는 오답을 만든다"는
+  예측과 반대.
 
-C는 사용자 재설명 없이 8개 사실을 5/5 모두 회수했지만 같은 정답률의 B보다 token activity
-13,787, wall 5.26초, 비용 $0.024779가 중앙값 기준 더 컸다. 따라서 토큰·응답속도 개선을
-주장할 수 없다. batch 1회는 token activity 111,381, $0.164360이었고 B−C 절감이 음수여서
-토큰·비용 손익분기점은 없다. cold는 조건별 n=1이라 별도 성능 주장에 쓰지 않는다.
-
-유효 보고서: `docs/benchmarks/okf-live-2026-07-15T15-03-01-343Z.md`; raw JSON은 같은 이름으로
-`docs/benchmarks/raw/`에 있다. 최초 `14:44:09Z` 실행은 실제 Claude history sweep 오염과
-과도한 exact 채점 때문에 Markdown에 `INVALID`로 표시해 감사용으로만 보존했다. 이를 계기로
-benchmark-only sweep 차단, C/D bundle preflight, 의미 동등 채점, deterministic regrade script를
-추가했다. 격리 preflight 실패 `15:00:53Z` 감사 JSON도 보존한다.
+반증 기준 R1~R5 전부 발동 안 함(오염 배제 후). 측정 $66.26 + 채점 $14.74.
+리포트: `docs/benchmarks/okf-benchmark-2026-07-16-v3.md`, 사전등록:
+`docs/benchmarks/pre-registration-2026-07-16-v3.md`, 번들: `docs/benchmarks/bundles/`(커밋됨),
+raw JSON: `docs/benchmarks/raw/okf-live-2026-07-16T08-31-48-458Z.json`. v2 실행의 raw(05-28·06-13)는
+v3 사전등록서가 v2 허위 진술 6건을 반박하는 증거로 보존한다.
 
 ## 마지막 검증 결과
 

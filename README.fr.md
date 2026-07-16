@@ -56,12 +56,12 @@ Pourquoi une base sur l’idle ? Les sessions se terminent rarement de façon ex
 
 ## Benchmark OKF
 
-<!-- okf-benchmark: 2026-07-16 -->
+<!-- okf-benchmark: 2026-07-16-v3 -->
 
 **OKF ne vous dispense pas d’explorer. Il stocke ce que l’exploration ne pourra jamais trouver.**
 
-Les deux moitiés de cette phrase sont mesurées ci-dessous, sur de vrais dépôts open source, et la
-moitié qui est peu flatteuse est publiée en premier.
+Les deux moitiés de cette phrase sont mesurées ci-dessous, sur de vrais dépôts open source, à n=15 par
+cellule de comparaison. La moitié qui est peu flatteuse pour OKF est publiée en premier.
 
 ### Comment la mesure a été faite
 
@@ -75,11 +75,15 @@ l’exploration coûte réellement et la baseline sans mémoire peut réellement
 
 Chaque concept de chaque bundle a été produit par le vrai pipeline — une vraie session `claude -p`
 explorant le dépôt épinglé, son vrai transcript Claude Code, un vrai batch ingest, un vrai gate.
-**Aucun concept n’a été écrit à la main**, y compris le remplissage qui crée du volume. Cela compte
-plus qu’il n’y paraît : voir [Accumulation](#accumulation--ce-que-du-remplissage-écrit-à-la-main-ne-peut-pas-montrer).
+**Aucun concept n’a été écrit à la main.** Les bundles sont commités dans ce dépôt
+([docs/benchmarks/bundles/](docs/benchmarks/bundles/)), ce qui vous permet de lire le texte exact du
+gate et le corps des concepts sur lesquels repose chaque chiffre ci-dessous, et de réfuter ce run
+comme v2 l’a été — depuis le dépôt, sans faire confiance à l’auteur.
 
 Cinq conditions. Toutes reçoivent des tools identiques (`Read`, `Glob`, `Grep`, `Bash(git log/show/diff/blame/grep)`)
-et une instruction identique, neutre vis-à-vis de la condition — aucune condition ne se voit dire de consulter le gate.
+et une instruction identique, neutre vis-à-vis de la condition — aucune condition ne se voit dire de consulter le gate. Le
+gate est délivré via le **vrai hook `SessionStart`** (`additionalContext`), et non préfixé au prompt ;
+les octets livrés sont vérifiés à chaque run.
 
 - **zero-base** — rien. Ce qu’OKF prétend remplacer.
 - **answer key** — la réponse collée dans le prompt. Produire cette chaîne exige de déjà connaître la
@@ -89,105 +93,99 @@ et une instruction identique, neutre vis-à-vis de la condition — aucune condi
   dépôt. Sépare « la connaissance a aidé » de « un gate a aidé ».
 - **CLAUDE.md** — la même connaissance accumulée collée dans un fichier plat. Le vrai titulaire en place.
 
-`total_cost_usd` est le chiffre principal ; l’activité en tokens est montrée à côté, jamais à sa
-place, parce que `cache_read` domine cette somme et se facture ~50× moins cher — les deux colonnes
-divergent en direction. L’efficacité est comparée uniquement sur les runs corrects. Un nonce par run
-neutralise le prompt caching. La notation est faite par un juge aveugle à la condition, contre une
-vérité terrain vérifiée depuis le source. **Aucun chiffre n’est moyenné entre scénarios** : un grep
-et une chaîne d’appels sur cinq fichiers sont des phénomènes différents, et les mélanger laisserait
-le choix des scénarios décider du titre.
+`total_cost_usd` est le chiffre principal ; le coût sonnet-seul est publié à côté du coût total, de
+sorte que le `claude-haiku` que le CLI résout pour le travail interne (2.3% de la dépense) peut être
+déduit et ne peut masquer aucune conclusion. L’efficacité est comparée uniquement sur les runs
+corrects. Chaque réponse est notée par **atome** — la vérité terrain est découpée en faits vérifiables
+indépendamment, gelés avant la mesure — et le score binaire façon v2 (tous les atomes corrects) est
+publié à côté. Un nonce par run neutralise le prompt caching. **Aucun chiffre n’est moyenné entre
+scénarios.**
 
-Design, prédictions et critères de réfutation ont été [pré-enregistrés](docs/benchmarks/pre-registration-2026-07-16.md)
-et commités **avant le premier appel payant**.
+Design, prédictions et critères de réfutation R1–R5 ont été
+[pré-enregistrés](docs/benchmarks/pre-registration-2026-07-16-v3.md) et commités **avant le premier
+appel payant**. Ce document consigne aussi, en détail, les six affirmations fausses ou non étayées
+qu’a faites la publication précédente (v2) de ce benchmark, et comment chacune a été détectée depuis
+ses propres données brutes.
 
 ### Là où OKF perd : tout ce que le code peut répondre
 
-Cinq scénarios dont les réponses sont dans le source ou dans l’historique git, vérifiées depuis le
-checkout épinglé et ayant chacune survécu à une tentative indépendante de réfutation.
+Cinq scénarios dont les réponses sont dans le source, dans l’historique git ou dans le bundle,
+chacune vérifiée depuis le checkout épinglé. Le coût est la médiane des runs corrects, avec sa
+dispersion.
 
 | Scénario | zero-base | OKF | verdict |
 |---|---:|---:|---|
-| `rfcs_cheap` — un grep | **$0.0256** · 4/5 | $0.0505 · 3/5 | OKF 2.0× plus cher |
-| `slim_cheap` — un grep | **$0.0198** · 4/5 | $0.0386 · 5/5 | OKF 1.9× plus cher |
-| `slim_stale` — connaissance du bundle périmée par un commit ultérieur | **$0.0345** · 5/5 | $0.0632 · 4/5 | OKF 1.8× plus cher |
-| `rfcs_buried` — trouver la justification parmi 651 documents | **$0.0326** · 4/5 | $0.0910 · 3/5 | OKF 2.8× plus cher |
-| `slim_buried` — suivre une chaîne d’appels sur cinq fichiers | $0.1669 · 2/5 · **10 tools** | **$0.0701** · 2/5 · **3 tools** | **OKF 2.4× moins cher** |
+| `rfcs_cheap` — un grep | **$0.062** · 13/15 | $0.077 · 14/15 | OKF 1.2× plus cher |
+| `slim_cheap` — un grep | **$0.067** · 14/15 | $0.114 · 15/15 | OKF 1.7× plus cher |
+| `rfcs_buried` — trouver la justification parmi 651 documents | **$0.097** · 12/15 | $0.112 · 13/15 | OKF 1.2× plus cher |
+| `slim_buried` — suivre une chaîne d’appels sur cinq fichiers | $0.277 · 13/15 · **10 tools** | **$0.232** · 9/15 · **8 tools** | OKF moins cher, moins de tools |
+| `slim_stale` — connaissance du bundle périmée par un commit ultérieur | critiques **15/15** | critiques **15/15** | égalité — voir ci-dessous |
 
-**OKF perd quatre fois sur cinq.** Il ne gagne que là où l’exploration est réellement coûteuse, et là
-il fait passer les tool calls de 10 à 3. Si un grep répond à votre question, le gate est pur
-overhead — ce n’est pas un défaut, c’est de l’arithmétique.
+**Sur les greps bon marché, OKF est du pur overhead** — 1.2–1.7× plus cher pour la même réponse, parce
+que le gate est un coût fixe dont un `grep` n’a pas besoin. Il ne devient rentable que là où
+l’exploration est réellement coûteuse : `slim_buried` suit une chaîne d’appels sur cinq fichiers, et là
+OKF est moins cher avec moins de tool calls. Ce n’est pas un défaut, c’est de l’arithmétique — si un
+grep répond à votre question, ne payez pas pour un gate.
 
-`slim_stale` mérite d’être nommé : le bundle portait une affirmation périmée (le renderer d’erreur
-HTML n’échappe pas — vrai avant le commit `f897118b`, faux au commit épinglé) et le modèle **a
-vérifié le code et l’a corrigée quand même**, 4/5. La connaissance périmée ne l’a pas rendu confiant
-à tort. La prédiction pré-enregistrée qui annonçait le contraire était fausse.
+`slim_stale` est là où la notation par atome a prouvé son utilité. Le bundle portait une affirmation
+rendue périmée par un commit ultérieur, et le score binaire affiche **0/15 pour chaque condition** — ce
+qui ressemble à une déroute totale. Ce n’en est pas une. Les atomes *critiques* (ce que la question
+demande réellement — que le renderer HTML échappe, avec quelle fonction et quels flags) sont à
+**15/15** : le modèle a lu le code et a répondu correctement au fait central. Les seuls atomes manqués
+concernent la provenance, que la question ne demandait pas (le SHA du commit qui a introduit
+l’échappement). La connaissance périmée ne l’a **pas** rendu confiant à tort — la prédiction
+pré-enregistrée qui l’annonçait était fausse, et le score binaire seul l’aurait masqué.
 
-### Là où OKF est la seule chose qui marche : la connaissance que le code ne contient pas
+### Là où l’exploration ne peut pas aider : la connaissance que le code ne contient pas
 
-Politique d’équipe et vocabulaire métier — décidés en conversation, jamais écrits dans le dépôt.
-Chaque scénario a été attaqué par un adversaire indépendant qui a fouillé l’arbre de travail, ~300
-révisions d’historique git, messages de commit, docs, config, stashes et objets dangling (zéro
-résultat), et qui **a consigné une supposition tirée de la convention avant de regarder**. Ces
-suppositions ont obtenu 0/3, 0/3 et 1/5.
-
-Chaque dépôt contient aussi un piège : greppez « emitter » et vous trouvez `ResponseEmitter` ;
-cherchez une taille de chunk et vous trouvez `4096` ; cherchez une politique MSRV dans la pile de RFC
-et les documents proposent `N-2`.
+Politique d’équipe décidée en conversation, jamais écrite dans le dépôt. La pile de RFC contient même
+un piège : cherchez-y une politique MSRV et les documents proposent `N-2` — la vraie règle de l’équipe
+est différente.
 
 | Scénario | zero-base | OKF | wrong knowledge | CLAUDE.md |
 |---|---:|---:|---:|---:|
-| `slim_policy` — quel env active les détails d’erreur, et l’exception | **0/5** ($0.0509 dépensés) | **5/5** · $0.0840 | 0/5 | 5/5 · $0.1314 |
-| `slim_domain` — ce que l’équipe entend par « 에미터 » | **0/5** · **confiant et faux 5/5** | **4/5** · $0.0624 | 0/5 | 5/5 · $0.1198 |
-| `rfcs_policy` — le délai d’attente de la « thaw rule » de l’équipe | **0/5** | 2/5 · $0.0749 | 0/5 | 0/5 |
+| `rfcs_policy` — la « thaw rule » de l’équipe : délai d’attente, cadence MSRV, deux exceptions | **0/15** | **11/15** · $0.075 | — | 15/15 · $0.144 |
 
-**Zero-base a fait 0 sur 15.** Il a dépensé l’argent et n’a rien obtenu, parce que la réponse n’est
-pas là. Sur `slim_domain` il a été **confiant et faux dans 5 runs sur 5** : il a exploré, trouvé
-`ResponseEmitter`, et répondu avec une grande confiance — alors que le « 에미터 » de l’équipe est
-`OutputBufferingMiddleware`, parce qu’ils tournent en mode worker FrankenPHP où `ResponseEmitter` est
-du code mort. L’exploration ne se contente pas d’échouer ici ; elle fabrique une réponse fausse et
-confiante à partir du piège.
+**Zero-base a fait 0 sur 15.** Il a dépensé l’argent et n’a rien obtenu, parce que la réponse n’est pas
+dans le dépôt — vérifié par un adversaire qui a fouillé l’arbre de travail, l’historique git, les
+messages de commit, les docs et la config, et n’a trouvé aucun résultat. Le piège ne l’a pas attrapé
+non plus ; il n’a tout simplement pas pu répondre.
 
-**Wrong knowledge a fait 0 sur 15 aussi.** Un gate rempli de concepts réels mais hors sujet ne
-récupère rien. Le gain vient de la connaissance, pas du fait d’avoir un gate.
+OKF a répondu à **11 sur 15**, pour environ la moitié du coût de CLAUDE.md portant les mêmes faits.
+C’est la seule chose que l’exploration ne peut pas faire et qu’une décision stockée peut faire.
+**CLAUDE.md y répond aussi** (15/15) — OKF n’est pas unique ici, c’est une forme moins chère et à
+injection bornée du même titulaire en place. Le contrôle `wrong knowledge` pour ce scénario est exclu :
+un bug de contamination de mesure (ci-dessous) lui a permis de lire la réponse, il ne peut donc pas
+servir de contrôle « un gate seul n’aide pas » dans ce run.
 
-OKF a répondu à 11 sur 15, pour 1.6–1.9× moins cher que CLAUDE.md portant les mêmes faits. Sur
-`slim_domain` il n’a lu **aucun fichier de concept** (0/5) — la seule ligne d’index a suffi, avec
-2 tool calls contre 7 pour zero-base.
+C’est un seul scénario de politique propre, pas trois. Deux autres (`slim_policy`, `slim_domain`) ont
+été mesurés puis **exclus** — voir ci-dessous.
 
-`rfcs_policy` est l’échec honnête : OKF n’a atteint que 2/5. La proposition `N-2` qui traîne dans la
-pile de documents est un piège assez fort pour détourner le modèle d’une ligne d’index correcte.
-CLAUDE.md y a marqué 0/5.
+### Ce que ce run ne peut pas vous dire
 
-### Accumulation — ce que du remplissage écrit à la main ne peut pas montrer
+- **Deux scénarios de politique ont été exclus pour cause de contamination.** Claude Code injecte
+  automatiquement la mémoire de projet par répertoire (`~/.claude/projects/<cwd>/memory/`) dans chaque
+  session. Pendant la construction de la connaissance, une session `claude -p` explorant le dépôt cible
+  a enregistré les décisions d’équipe dans cette mémoire, et comme la mesure tournait dans le même
+  répertoire de travail, la mémoire a atteint jusqu’à la condition **zero-base** — qui ne devrait avoir
+  aucune connaissance. Sur `slim_domain`, zero-base a alors « répondu » une décision d’équipe qui
+  n’existe nulle part dans le code, 15/15. Tout scénario dont les runs zero-base lisent la mémoire de
+  projet est retiré de la publication (`slim_domain`, `slim_policy`) ; le harness efface désormais cette
+  mémoire avant de mesurer, et le rapport détecte et exclut ces scénarios mécaniquement. Les scénarios
+  propres ci-dessus ont eu zéro lecture de mémoire.
+- **n=15 sur les conditions de contraste, n=5 sur les contrôles.** C’est peu. Seule une séparation
+  complète entre distributions est décrite comme une victoire.
+- **Deux dépôts, deux écosystèmes (PHP + Markdown).** Aucune prétention à la généralité sur d’autres
+  tailles ou langages. Un troisième dépôt a été conçu, puis rejeté sur le coût-par-crédibilité avant
+  toute dépense.
+- **Sessions à une seule question.** Le coût fixe du gate d’OKF est payé une fois par question plutôt
+  qu’amorti sur une vraie session à plusieurs questions, donc ce run *sous-estime* OKF.
+- **Le juge est une seule famille de LLM**, notant par atome contre une vérité terrain vérifiée depuis
+  le source.
 
-Même question (`slim_buried`), même harness, bundle grossi en ingérant plus de vraies sessions.
-
-| Concepts dans le bundle | Octets du gate | OKF | CLAUDE.md | zero-base (référence plate) |
-|---:|---:|---:|---:|---:|
-| 1 | 2,551 | $0.1291 | $0.1279 | $0.1669 |
-| 5 | 3,621 | $0.1020 | $0.1506 | $0.1669 |
-| 8 | 4,701 | $0.1425 | $0.1741 | $0.1669 |
-| 10 | 5,414 | $0.0919 | $0.2358 | $0.1669 |
-| 15 | 5,415 | **$0.0701** | $0.2249 | $0.1669 |
-| 35 | 5,415 | $0.0908 | **$0.2828** | $0.1669 |
-
-**De 1 à 35 concepts, OKF est devenu moins cher ($0.1291 → $0.0908) tandis que CLAUDE.md est devenu
-2.2× plus cher ($0.1279 → $0.2828).** Les courbes divergent.
-
-La raison est visible dans la deuxième colonne. Entre 15 et 35 concepts — 2.3× la connaissance — le
-gate a grandi d’**un octet**, parce que le batch a créé un domaine imbriqué et a fondu 14 concepts en
-une seule ligne d’index (`- [slim](/references/slim/index.md): 하위 도메인 — concept 14개`).
-CLAUDE.md porte le corps de chaque concept dans chaque prompt, il grandit donc linéairement. **Le
-gate, non.**
-
-C’est le résultat que seule de la vraie connaissance pouvait produire. Un run précédent de ce
-benchmark semait le remplissage à la main — vingt concepts rédigés à la main, tous plats, tous dans
-`decisions/` — ce qui force l’index à grandir linéairement et concluait que l’économie d’OKF empire
-avec l’accumulation. Le vrai batch n’empile pas la connaissance de cette façon. La mesure portait sur
-la fixture, pas sur le système.
-
-La précision, honnêtement : elle ne s’améliore pas avec le volume et reste bruitée (2/5–5/5). À n=5,
-rien ici ne sépare.
+Les critères de réfutation **R1–R5 ont tous été évalués mécaniquement et aucun ne s’est déclenché**
+(après exclusion des cellules contaminées) — ce run ne réfute pas l’affirmation. Ce n’est pas la même
+chose qu’une confirmation forte à n=15 ; c’est l’absence de réfutation.
 
 ### Overhead local (pas le résultat d’efficacité)
 
@@ -202,38 +200,23 @@ Mesuré le 2026-07-16, macOS arm64, Node `v26.4.0`, médiane avec min/max.
 Reproduire avec `node test/bench.mjs [dépôt]`. Coût de process local uniquement ; cela ne prouve rien
 sur les tokens ni sur la latence du modèle.
 
-### Le coût, et ce que ce run ne peut pas vous dire
+### Coût, reproduction et liens
 
-Construire la connaissance a coûté **$3.59** en vraies sessions et **$4.92** en batch ingest. Les 250
-runs mesurés ont coûté **$28.16** plus **$9.44** de notation.
+Les 440 runs mesurés ont coûté **$66.26** plus **$14.74** de notation ; la construction de la
+connaissance et des bundles a ajouté ~$3.2. Total pour ce run ≈ **$84**. Payant, authentifié, et exclu
+des smoke tests et de la CI, volontairement.
 
 ```sh
 OKF_RUN_LIVE_BENCH=1 node test/bench-knowledge.mjs --target slim --dir <repo>   # vraies sessions → transcripts
-OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 1,5,20  # vrai batch → bundles par niveau
+OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 20      # vrai batch → bundle
 OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                                    # mesure
 ```
 
-Payant, authentifié, et exclu des smoke tests et de la CI, volontairement.
-[Rapport complet](docs/benchmarks/okf-benchmark-2026-07-16.md) ·
+[Rapport complet](docs/benchmarks/okf-benchmark-2026-07-16-v3.md) ·
 [raw JSON](docs/benchmarks/raw/) ·
-[pré-enregistrement](docs/benchmarks/pre-registration-2026-07-16.md) ·
+[bundles commités](docs/benchmarks/bundles/) ·
+[pré-enregistrement](docs/benchmarks/pre-registration-2026-07-16-v3.md) ·
 [guide d’utilisation](docs/USAGE.md).
-
-Les limites, énoncées sans détour :
-
-- **n=5 par cellule.** C’est peu. Seule une séparation complète entre distributions est décrite ici comme une victoire.
-- **Le mix de modèles n’est pas épinglé.** `claude-sonnet-5` a été demandé ; le CLI a résolu
-  `claude-haiku-4-5` à côté de lui pour le travail interne. Les comparaisons de coût entre conditions
-  portent cet artefact.
-- **Deux dépôts, un langage chacun.** Aucune prétention à la généralité sur d’autres tailles ou écosystèmes.
-- **Le wall-clock n’est pas publié.** La mesure a tourné à concurrence 5 ; le coût, les tokens et les
-  tool calls n’en sont pas affectés, la latence de réponse si. Toute affirmation sur la vitesse
-  exigerait un re-run séquentiel.
-- Le texte du gate est préfixé au prompt plutôt que délivré par le chemin de production
-  `SessionStart` `additionalContext`. Même texte, livraison différente.
-- Les scénarios de politique reposent sur un humain qui rédige la politique. C’est ce qu’est une
-  politique. La défense est que la réponse est prouvablement absente du dépôt et qu’un adversaire
-  n’a pas pu la deviner.
 
 ## Langages pris en charge
 

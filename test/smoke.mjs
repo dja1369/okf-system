@@ -1145,6 +1145,21 @@ console.log('\n=== plugin contract and docs ===');
   ok('ingest 프롬프트가 기록-대상 지시문 구분을 담는다', ingestPrompt.includes('지시가 담은 사실을 기록'));
   ok('ingest 프롬프트가 타입별 추출 자문 체크리스트를 담는다', ingestPrompt.includes('무엇을 남기나'));
   ok('ingest 프롬프트가 digest 전량 Read를 요구한다', ingestPrompt.includes('digest는 전부 Read'));
+
+  // 배치 ingest 충실도 회귀 고정: 출처가 숫자를 원인에 귀속시키면 concept는 그 인과를 값과 같은
+  // 줄에 실어야 한다. 실측(v2 rfcs_policy 2/5): 소스가 "릴리스 4개"의 이유를 명시했는데도 생성된
+  // concept는 결과(4개 대기)만 남기고 기원(왜 4인가)을 버렸다. readTargetConcept가 5/5 —
+  // 모든 런이 그 파일을 열었는데 — 3/5가 "왜 4릴리즈인지 근거는 번들에 없음"이라 답했다. 숫자만
+  // 있고 근거가 없으면 미래 세션은 그 값을 방어하지 못한다.
+  //
+  // 이건 프롬프트 텍스트 단언이며 행동 단언의 **프록시**다. 행동 검증이 불가능한 이유: 지식을
+  // 실제로 쓰는 경로는 배치가 `claude -p`로 진짜 LLM을 호출하는 것뿐이고(과금), 스모크는
+  // fake-claude로 도는 무과금 오프라인 CI다 — fake-claude는 고정 응답을 낼 뿐 개념을 저술하지
+  // 않으므로 그 위에서 "인과가 살아남았다"를 단언하면 프롬프트가 아니라 픽스처를 검사하게 된다.
+  // 여기서 지킬 수 있는 것은 "규칙이 프롬프트에 살아 있는가"까지다. 인과가 실제로 보존되는지는
+  // 유료 축(test/bench-okf.mjs의 rfcs_policy, 사전등록 P5)이 측정한다.
+  ok('ingest 프롬프트가 숫자·기준값의 인과를 같은 줄에 남기라고 요구한다',
+    /원인에 귀속[\s\S]{0,60}같은 줄에 적어라/.test(ingestPrompt));
 }
 {
   const batchCommand = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-batch.md'), 'utf8');
@@ -1165,18 +1180,21 @@ console.log('\n=== plugin contract and docs ===');
   }));
   ok('all localized READMEs keep commands and benchmark conditions in sync', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
-    // 조건 이름은 번역되지만 시나리오 키는 그대로다. 다섯 조건이 전부 실려야 한다 — 특히
-    // CLAUDE.md 조건. 그게 진짜 경쟁자이고, 그걸 빼면 "OKF가 평범한 플랫 파일도 못 이긴다"는
-    // 반증 가능성 자체가 README에서 사라진다. 정답지 조건도 남아야 한다: 사용자가 점유할 수
-    // 없는 상한선이라는 사실을 명시해야 그게 baseline인 척 재등장하지 않는다.
+    // 조건 이름은 번역되지만 시나리오 키는 그대로다. CLAUDE.md 조건이 반드시 실려야 한다 —
+    // 그게 진짜 경쟁자이고, 빼면 "OKF가 평범한 플랫 파일도 못 이긴다"는 반증 가능성이 사라진다.
+    // v3에서 발행하는 6개 시나리오 키가 8종 전부에 있어야 한다(오염으로 뺀 slim_domain·
+    // slim_policy는 발행 시나리오가 아니므로 여기서 요구하지 않는다).
     return text.includes('/okf:okf-visualize')
       && /\/okf:okf-analysis\s+\[[^\]]+\]/.test(text)
       && !text.includes('/okf:okf-visualize [path]')
       && text.includes('CLAUDE.md')
-      && ['slim_buried', 'slim_cheap', 'slim_stale', 'rfcs_buried', 'rfcs_cheap',
-        'slim_policy', 'slim_domain', 'rfcs_policy'].every((key) => text.includes(key))
+      && ['slim_buried', 'slim_cheap', 'slim_stale', 'rfcs_buried', 'rfcs_cheap', 'rfcs_policy']
+        .every((key) => text.includes(key))
       && text.includes('OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs')
-      && /<!-- okf-benchmark: 2026-07-16 -->/.test(text);
+      && /<!-- okf-benchmark: 2026-07-16-v3 -->/.test(text)
+      // 옛 v2 마커(-v3 접미사 없는 것)가 남아 있으면 안 된다. 새 마커에는 -v3가 붙으므로,
+      // -v3 없는 마커 문자열이 그대로 있으면 v2 절이 덜 교체된 것이다.
+      && !/<!-- okf-benchmark: 2026-07-16 -->/.test(text);
   }));
   ok('all localized READMEs publish the same pinned OSS validation counts', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
@@ -1187,18 +1205,38 @@ console.log('\n=== plugin contract and docs ===');
   }));
   ok('all localized READMEs publish the same valid live benchmark result', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
-    // 번역이 유리한 절반만 옮기는 드리프트를 막는다. 여기 나열한 수치는 전부 OKF에 불리하거나
-    // 불리한 사실을 떠받치는 것들이다: 탐색이 싼 질문에서 OKF가 2배 비싸다는 표($0.0256 vs
-    // $0.0505), rfcs_policy의 정직한 실패(2/5), 그리고 누적 축의 양 끝($0.1291→$0.0908,
-    // $0.1279→$0.2828). 이게 영어에만 남으면 다른 언어 독자는 다른 시스템을 읽는 것이다.
-    return text.includes('<!-- okf-benchmark: 2026-07-16 -->')
-      && text.includes('$0.0256') && text.includes('$0.0505')
-      && text.includes('$0.1669') && text.includes('$0.0701')
-      && text.includes('$0.1291') && text.includes('$0.0908')
-      && text.includes('$0.1279') && text.includes('$0.2828')
-      && text.includes('5,415')
-      && text.includes('okf-benchmark-2026-07-16.md')
-      && text.includes('pre-registration-2026-07-16.md');
+    // 번역이 유리한 절반만 옮기는 드리프트를 막는다. v3에서 고정하는 수치는 OKF에 불리한
+    // 사실과 유리한 사실을 둘 다 떠받친다:
+    //  - 불리: 코드로 알 수 있는 질문에서 제로베이스가 더 싸다(slim_cheap $0.067 vs OKF $0.114).
+    //  - 유리: 코드에 없는 정책에서 제로베이스는 0/15, OKF는 11/15.
+    // 한쪽만 영어에 남으면 다른 언어 독자는 다른 시스템을 읽는 것이다.
+    return text.includes('<!-- okf-benchmark: 2026-07-16-v3 -->')
+      && text.includes('$0.067') && text.includes('$0.114') // slim_cheap: OKF가 더 비쌈(불리)
+      && text.includes('0/15') && text.includes('11/15')    // rfcs_policy: 탐색 실패 vs OKF(유리)
+      && text.includes('okf-benchmark-2026-07-16-v3.md')
+      && text.includes('pre-registration-2026-07-16-v3.md');
+  }));
+  // 이 테스트는 v3에서 재인코딩됐다. 원래는 누적 축의 양 끝($0.1291→$0.0908, $0.1279→$0.2828)과
+  // 게이트 정체(5,415)를 "OKF에 불리한 사실"로 고정했다. 그런데 그 수치들이 떠받치던 주장은
+  // 철회됐다 — 정답런 3·2·5·3·2·4개의 중앙값이라 표본이 못 받쳤고, 게이트 정체는 지식 조직화의
+  // 성질이 아니라 inject_max_lines:120 상한이었다. 철회된 주장을 계속 고정하면 테스트가
+  // 거짓을 지키는 파수꾼이 된다.
+  //
+  // 그래서 고정 대상을 "철회된 수치"에서 "철회 사실"로 옮긴다. 철회된 수치가 본문에 남는 것
+  // 자체는 정당하다 — 철회문이 무엇을 취소하는지 밝히려면 원문을 인용해야 하고, 옛 텍스트를
+  // 본 독자가 그걸 찾을 수 있어야 한다. 막아야 하는 건 "어떤 번역본은 조용히 옛 주장을
+  // 그대로 두는 것"이다. 번역 8종이 서로 다른 결론을 싣게 되는 그 드리프트가 원래 의도였다.
+  // v3 벤치마크 절은 v2를 철회 주석과 함께 덧대는 게 아니라 통째로 새로 쓴 것이다. 그래서
+  // 이 테스트의 의도는 "철회를 기록했는가"에서 "v2 좀비 내용이 어느 번역본에도 안 남았는가"로
+  // 옮긴다. v2의 철회된 수치(누적 곡선 $0.1291→$0.0908, $0.1279→$0.2828)와 "14개 concept을
+  // 한 줄로 접었다"는 서사는 v3 절에 존재해서는 안 된다 — 그 주장들은 표본이 못 받쳐 폐기됐다.
+  // 어떤 번역본만 옛 절을 덜 지우면 그 언어 독자는 폐기된 결론을 현행으로 읽는다.
+  ok('no localized README carries withdrawn v2 benchmark content', readmes.length === 8 && readmes.every((name) => {
+    const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
+    const hasWithdrawnCurve = text.includes('$0.1291') || text.includes('$0.0908') || text.includes('$0.2828');
+    const hasNestingStory = /14 ?(concepts?|개|概念|Konzepte|conceptos|conceitos)/.test(text);
+    const hasOldReportLink = /okf-benchmark-2026-07-16\.md/.test(text); // -v3 없는 옛 리포트 링크
+    return !hasWithdrawnCurve && !hasNestingStory && !hasOldReportLink;
   }));
 
   const workflow = path.join(PLUGIN_ROOT, '.github', 'workflows', 'test.yml');
@@ -1222,6 +1260,19 @@ console.log('\n=== plugin contract and docs ===');
   // sweep은 실제 ~/.claude/projects를 읽으므로 벤치 격리가 깨진다. 번들 빌더가 그 경로를 탄다.
   const bundleBuilderText = fs.readFileSync(path.join(PLUGIN_ROOT, 'test', 'bench-bundles.mjs'), 'utf8');
   ok('bundle builder explicitly disables orphan sweep for isolation', bundleBuilderText.includes("OKF_BENCH_SKIP_SWEEP: '1'"));
+  // v3에서 발견한 오염: Claude Code는 cwd별 프로젝트 메모리(~/.claude/projects/<slug>/memory)를
+  // 모든 조건에 자동 주입한다. 지식 세션이 대상 저장소를 조사하면 팀 결정을 거기 저장해버려,
+  // 측정이 같은 cwd에서 돌 때 게이트를 받지 않아야 할 제로베이스까지 답을 읽는다. 하니스는
+  // 측정 시작 전에 각 대상 cwd의 프로젝트 메모리를 지워야 한다.
+  ok('live benchmark clears per-cwd project memory before measuring (contamination guard)',
+    liveBenchText.includes('projectMemoryDir') && /projects.*memory/.test(liveBenchText)
+    && /rmSync\([^)]*mem/.test(liveBenchText));
+  // 리포트는 제로베이스가 프로젝트 메모리를 읽은 시나리오를 기계적으로 감지해 발행에서 빼야
+  // 한다(손으로 시나리오를 고르지 않는다). 이걸 못 하면 오염된 결과가 그대로 발행된다.
+  const reportText = fs.readFileSync(path.join(PLUGIN_ROOT, 'test', 'bench-report.mjs'), 'utf8');
+  ok('report mechanically excludes memory-contaminated scenarios from publication',
+    reportText.includes('readsProjectMemory') && reportText.includes('contaminatedScenarios')
+    && reportText.includes('isCellClean'));
   ok('live benchmark sanitizes user paths out of published results', liveBenchText.includes("'<HOME>'")
     && liveBenchText.includes("'<PLUGIN_ROOT>'") && liveBenchText.includes("'<TARGETS>'") && liveBenchText.includes("'<BUNDLES>'"));
   // 소스에 sanitize가 있다고 실제 산출물이 깨끗한 건 아니다. 커밋된 원시 결과를 직접 본다.

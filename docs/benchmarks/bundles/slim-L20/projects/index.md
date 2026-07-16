@@ -1,0 +1,1 @@
+- [파트너 정산 API (Slim 4 기반)](/projects/partner-settlement-api.md): Slim 4 위에서 동작하는 파트너 정산 API. local/staging/partner-sandbox/prod 네 환경을 운영하며, 에러 처리 wiring(환경별 displayErrorDetails, 예외별 예외 처리, 응답 emitter 배선)을 재정비하는 중이다.

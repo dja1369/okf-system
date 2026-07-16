@@ -70,12 +70,12 @@ Claude Code permits one `statusLine`. OKF does not install or overwrite it. Poin
 
 ## OKF benchmark
 
-<!-- okf-benchmark: 2026-07-16 -->
+<!-- okf-benchmark: 2026-07-16-v3 -->
 
 **OKF does not save you from exploring. It stores what exploring can never find.**
 
-Both halves of that sentence are measured below, on real open-source repositories, and the half that
-is unflattering is published first.
+Both halves of that sentence are measured below, on real open-source repositories, at n=15 per
+comparison cell. The half that is unflattering to OKF is published first.
 
 ### How it was measured
 
@@ -89,11 +89,15 @@ actually costs and the no-memory baseline can genuinely win:
 
 Every concept in every bundle was produced by the real pipeline — a real `claude -p` session
 exploring the pinned repo, its real Claude Code transcript, real batch ingest, real gate. **No
-concept was written by hand**, including the filler that creates volume. This matters more than it
-sounds: see [Accumulation](#accumulation-what-hand-seeded-filler-cannot-show).
+concept was written by hand.** The bundles are committed to this repository
+([docs/benchmarks/bundles/](docs/benchmarks/bundles/)), so you can read the exact gate text and
+concept bodies every number below rests on, and refute this run the way v2 was refuted — from the
+repo, without trusting the author.
 
 Five conditions. All receive identical tools (`Read`, `Glob`, `Grep`, `Bash(git log/show/diff/blame/grep)`)
-and an identical, condition-neutral instruction — no condition is told to consult the gate.
+and an identical, condition-neutral instruction — no condition is told to consult the gate. The gate
+is delivered through the **real `SessionStart` hook** (`additionalContext`), not prepended to the
+prompt; delivered bytes are verified per run.
 
 - **zero-base** — nothing. The thing OKF claims to replace.
 - **answer key** — the answer pasted in. Producing that string requires already knowing the answer, so
@@ -103,98 +107,88 @@ and an identical, condition-neutral instruction — no condition is told to cons
   "the knowledge helped" from "a gate helped".
 - **CLAUDE.md** — the same accumulated knowledge pasted into a flat file. The real incumbent.
 
-`total_cost_usd` is the headline; token activity is shown beside it, never instead of it, because
-`cache_read` dominates that sum and bills ~50× cheaper — the two columns disagree in direction.
-Efficiency is compared on correct runs only. Per-run nonce defeats prompt caching. Grading is by a
-condition-blind judge against ground truth verified from source. **No number is averaged across
-scenarios**: one grep and a five-file call chain are different phenomena, and mixing them would let
-scenario selection pick the headline.
+`total_cost_usd` is the headline; sonnet-only cost is published beside total cost, so the `claude-haiku`
+the CLI resolves for internal work (2.3% of spend) can be netted out and can't hide a conclusion.
+Efficiency is compared on correct runs only. Each answer is graded per **atom** — the ground truth is
+split into independently-checkable facts, frozen before measurement — and the v2-style binary score
+(all atoms correct) is published beside it. Per-run nonce defeats prompt caching. **No number is
+averaged across scenarios.**
 
-Design, predictions, and refutation criteria were [pre-registered](docs/benchmarks/pre-registration-2026-07-16.md)
-and committed **before the first paid call**.
+Design, predictions, and the refutation criteria R1–R5 were
+[pre-registered](docs/benchmarks/pre-registration-2026-07-16-v3.md) and committed **before the first
+paid call**. That document also records, in detail, the six false or unsupported statements the
+previous (v2) publication of this benchmark made, and how each was caught from its own raw data.
 
 ### Where OKF loses: anything the code can answer
 
-Five scenarios whose answers are in the source or in git history, verified from the pinned checkout
-and each survived an independent attempt to refute it.
+Five scenarios whose answers are in the source, in git history, or in the bundle, each verified from
+the pinned checkout. Cost is the median of correct runs, with its spread.
 
 | Scenario | zero-base | OKF | verdict |
 |---|---:|---:|---|
-| `rfcs_cheap` — one grep | **$0.0256** · 4/5 | $0.0505 · 3/5 | OKF 2.0× dearer |
-| `slim_cheap` — one grep | **$0.0198** · 4/5 | $0.0386 · 5/5 | OKF 1.9× dearer |
-| `slim_stale` — bundle knowledge outdated by a later commit | **$0.0345** · 5/5 | $0.0632 · 4/5 | OKF 1.8× dearer |
-| `rfcs_buried` — find the rationale among 651 docs | **$0.0326** · 4/5 | $0.0910 · 3/5 | OKF 2.8× dearer |
-| `slim_buried` — follow a five-file call chain | $0.1669 · 2/5 · **10 tools** | **$0.0701** · 2/5 · **3 tools** | **OKF 2.4× cheaper** |
+| `rfcs_cheap` — one grep | **$0.062** · 13/15 | $0.077 · 14/15 | OKF 1.2× dearer |
+| `slim_cheap` — one grep | **$0.067** · 14/15 | $0.114 · 15/15 | OKF 1.7× dearer |
+| `rfcs_buried` — find the rationale among 651 docs | **$0.097** · 12/15 | $0.112 · 13/15 | OKF 1.2× dearer |
+| `slim_buried` — follow a five-file call chain | $0.277 · 13/15 · **10 tools** | **$0.232** · 9/15 · **8 tools** | OKF cheaper, fewer tools |
+| `slim_stale` — bundle knowledge outdated by a later commit | critical **15/15** | critical **15/15** | tie — see below |
 
-**OKF loses four of five.** It only wins where exploration is genuinely expensive, and there it cuts
-tool calls from 10 to 3. If a grep answers your question, the gate is pure overhead — that is not a
-defect, it is arithmetic.
+**On cheap greps OKF is pure overhead** — 1.2–1.7× dearer for the same answer, because the gate is a
+fixed cost a `grep` doesn't need. It only pays off where exploration is genuinely expensive:
+`slim_buried` follows a five-file call chain, and there OKF is cheaper with fewer tool calls. That is
+not a defect, it is arithmetic — if a grep answers your question, don't pay for a gate.
 
-`slim_stale` is worth naming: the bundle carried a stale claim (the HTML error renderer does not
-escape — true before commit `f897118b`, false at the pinned commit) and the model **checked the code
-and corrected it anyway**, 4/5. Stale knowledge did not make it confidently wrong. The
-pre-registered prediction that it would was wrong.
+`slim_stale` is where per-atom grading earned its keep. The bundle carried a claim made stale by a
+later commit, and the binary score reads **0/15 for every condition** — which looks like a total
+wipeout. It is not. The *critical* atoms (what the question actually asks — that the HTML renderer
+escapes, with which function and flags) are **15/15**: the model read the code and answered the core
+fact correctly. The only atoms it missed are provenance the question never asked for (the commit SHA
+that introduced the escaping). Stale knowledge did **not** make it confidently wrong — the
+pre-registered prediction that it would was wrong, and the binary score alone would have hidden that.
 
-### Where OKF is the only thing that works: knowledge the code does not contain
+### Where exploration cannot help: knowledge the code does not contain
 
-Team policy and domain vocabulary — decided in conversation, never written to the repo. Each
-scenario was attacked by an independent adversary who searched the working tree, ~300 revisions of
-git history, commit messages, docs, config, stashes and dangling objects (zero hits), and who
-**recorded a guess from convention before looking**. Those guesses scored 0/3, 0/3 and 1/5.
-
-Each repo also contains a trap: grep for "emitter" and you find `ResponseEmitter`; look for a chunk
-size and you find `4096`; search the RFC pile for an MSRV policy and the documents propose `N-2`.
+Team policy decided in conversation, never written to the repo. The RFC pile even contains a trap:
+search it for an MSRV policy and the documents propose `N-2` — the team's actual rule is different.
 
 | Scenario | zero-base | OKF | wrong knowledge | CLAUDE.md |
 |---|---:|---:|---:|---:|
-| `slim_policy` — which env enables error details, and the carve-out | **0/5** ($0.0509 spent) | **5/5** · $0.0840 | 0/5 | 5/5 · $0.1314 |
-| `slim_domain` — what the team means by "에미터" | **0/5** · **confidently wrong 5/5** | **4/5** · $0.0624 | 0/5 | 5/5 · $0.1198 |
-| `rfcs_policy` — the team's "thaw rule" wait period | **0/5** | 2/5 · $0.0749 | 0/5 | 0/5 |
+| `rfcs_policy` — the team's "thaw rule": wait period, MSRV cadence, two carve-outs | **0/15** | **11/15** · $0.075 | — | 15/15 · $0.144 |
 
-**Zero-base went 0 for 15.** It spent the money and got nothing, because the answer is not there. On
-`slim_domain` it was **confidently wrong in 5 runs out of 5**: it explored, found `ResponseEmitter`,
-and answered with high confidence — while the team's "에미터" is `OutputBufferingMiddleware`, because
-they run FrankenPHP worker mode where `ResponseEmitter` is dead code. Exploration does not merely
-fail here; it manufactures a confident wrong answer out of the trap.
+**Zero-base went 0 for 15.** It spent the money and got nothing, because the answer is not in the
+repository — verified by an adversary who searched the working tree, git history, commit messages,
+docs and config, and found zero hits. The trap did not catch it either; it simply could not answer.
 
-**Wrong knowledge went 0 for 15 too.** A gate full of real-but-irrelevant concepts recovers nothing.
-The gain comes from the knowledge, not from having a gate.
+OKF answered **11 of 15**, at roughly half the cost of CLAUDE.md carrying the same facts. This is the
+one thing exploration cannot do and a stored decision can. **CLAUDE.md answers it too** (15/15) — OKF
+is not unique here, it is a cheaper, bounded-injection form of the same incumbent. The
+`wrong knowledge` control for this scenario is excluded: a measurement-contamination bug (below) let
+it read the answer, so it cannot serve as the "a gate alone doesn't help" control this run.
 
-OKF answered 11 of 15, at 1.6–1.9× less than CLAUDE.md carrying the same facts. On `slim_domain` it
-read **no concept file at all** (0/5) — the index line alone was enough, at 2 tool calls against
-zero-base's 7.
+This is a single clean policy scenario, not three. Two others (`slim_policy`, `slim_domain`) were
+measured and then **excluded** — see below.
 
-`rfcs_policy` is the honest failure: OKF managed only 2/5. The `N-2` proposal sitting in the document
-pile is a strong enough trap to pull the model off a correct index line. CLAUDE.md scored 0/5 there.
+### What this run cannot tell you
 
-### Accumulation: what hand-seeded filler cannot show
+- **Two policy scenarios were excluded for contamination.** Claude Code auto-injects per-directory
+  project memory (`~/.claude/projects/<cwd>/memory/`) into every session. While building knowledge,
+  a `claude -p` session exploring the target repo saved the team decisions into that memory, and
+  because measurement ran in the same working directory, the memory reached even the **zero-base**
+  condition — which should have no knowledge at all. On `slim_domain`, zero-base then "answered" a
+  team decision that exists nowhere in the code, 15/15. Any scenario whose zero-base runs read
+  project memory is dropped from publication (`slim_domain`, `slim_policy`); the harness now clears
+  that memory before measuring, and the report detects and excludes such scenarios mechanically. The
+  clean scenarios above had zero memory reads.
+- **n=15 on contrast conditions, n=5 on controls.** Small. Only complete separation between
+  distributions is described as a win.
+- **Two repositories, two ecosystems (PHP + Markdown).** No claim of generality across sizes or
+  languages. A third repository was designed, then rejected on cost-per-credibility before spending.
+- **Single-question sessions.** OKF's fixed gate cost is paid once per question rather than amortized
+  across a real multi-question session, so this run *understates* OKF.
+- **The judge is a single LLM family**, graded per atom against source-verified ground truth.
 
-Same question (`slim_buried`), same harness, bundle grown by ingesting more real sessions.
-
-| Concepts in bundle | Gate bytes | OKF | CLAUDE.md | zero-base (flat reference) |
-|---:|---:|---:|---:|---:|
-| 1 | 2,551 | $0.1291 | $0.1279 | $0.1669 |
-| 5 | 3,621 | $0.1020 | $0.1506 | $0.1669 |
-| 8 | 4,701 | $0.1425 | $0.1741 | $0.1669 |
-| 10 | 5,414 | $0.0919 | $0.2358 | $0.1669 |
-| 15 | 5,415 | **$0.0701** | $0.2249 | $0.1669 |
-| 35 | 5,415 | $0.0908 | **$0.2828** | $0.1669 |
-
-**From 1 to 35 concepts OKF got cheaper ($0.1291 → $0.0908) while CLAUDE.md got 2.2× dearer
-($0.1279 → $0.2828).** The curves diverge.
-
-The reason is visible in the second column. Between 15 and 35 concepts — 2.3× the knowledge — the
-gate grew by **one byte**, because the batch created a nested domain and collapsed 14 concepts into a
-single index line (`- [slim](/references/slim/index.md): 하위 도메인 — concept 14개`). CLAUDE.md
-carries every concept body in every prompt, so it grows linearly. **The gate does not.**
-
-This is the finding that only real knowledge could produce. A previous run of this benchmark
-seeded filler by hand — twenty authored concepts, all flat, all in `decisions/` — which forces the
-index to grow linearly and concluded that OKF's economics get worse with accumulation. The real batch
-does not stack knowledge that way. The measurement was of the fixture, not of the system.
-
-Accuracy, honestly: it does not improve with volume and stays noisy (2/5–5/5). At n=5 nothing here
-separates.
+Refutation criteria **R1–R5 were all evaluated mechanically and none fired** (after excluding the
+contaminated cells) — this run does not refute the claim. That is not the same as a strong
+confirmation at n=15; it is the absence of a refutation.
 
 ### Local overhead (not the effectiveness result)
 
@@ -209,36 +203,23 @@ Measured 2026-07-16, macOS arm64, Node `v26.4.0`, median with min/max.
 Reproduce with `node test/bench.mjs [repository]`. Local process cost only; it proves nothing about
 tokens or model latency.
 
-### Cost, and what this run cannot tell you
+### Cost, reproduction, and links
 
-Building the knowledge cost **$3.59** in real sessions and **$4.92** in batch ingest. The 250
-measured runs cost **$28.16** plus **$9.44** in grading.
+The 440 measured runs cost **$66.26** plus **$14.74** in grading; knowledge and bundle construction
+added ~$3.2. Total for this run ≈ **$84**. Paid, authenticated, and excluded from smoke tests and CI
+on purpose.
 
 ```sh
 OKF_RUN_LIVE_BENCH=1 node test/bench-knowledge.mjs --target slim --dir <repo>   # real sessions → transcripts
-OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 1,5,20  # real batch → level bundles
+OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 20      # real batch → bundle
 OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                                    # measure
 ```
 
-Paid, authenticated, and excluded from smoke tests and CI on purpose.
-[Full report](docs/benchmarks/okf-benchmark-2026-07-16.md) ·
+[Full report](docs/benchmarks/okf-benchmark-2026-07-16-v3.md) ·
 [raw JSON](docs/benchmarks/raw/) ·
-[pre-registration](docs/benchmarks/pre-registration-2026-07-16.md) ·
+[committed bundles](docs/benchmarks/bundles/) ·
+[pre-registration](docs/benchmarks/pre-registration-2026-07-16-v3.md) ·
 [usage guide](docs/USAGE.md).
-
-Limits, stated plainly:
-
-- **n=5 per cell.** Small. Only complete separation between distributions is described as a win here.
-- **The model mix is not pinned.** `claude-sonnet-5` was requested; the CLI resolved
-  `claude-haiku-4-5` alongside it for internal work. Cross-condition cost comparisons carry that
-  artifact.
-- **Two repositories, one language each.** No claim of generality across sizes or ecosystems.
-- **Wall-clock is not published.** Measurement ran at concurrency 5; cost, tokens and tool calls are
-  unaffected by that, response latency is not. Speed claims would need a sequential re-run.
-- The gate text is prepended to the prompt rather than delivered through the production
-  `SessionStart` `additionalContext` path. Same text, different delivery.
-- Policy scenarios rest on a human authoring the policy. That is what policy is. The defence is that
-  the answer is provably absent from the repo and that an adversary could not guess it.
 
 ## Language support
 

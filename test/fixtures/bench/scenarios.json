@@ -1,6 +1,8 @@
 {
   "frozenAt": "2026-07-16",
   "note": "Ground truth verified directly from pinned sources by independent refuters; all 5 survived refutation. Frozen before the first paid measurement call.",
+  "atomsFrozenAt": "2026-07-16",
+  "atomsNote": "v3 change C7 (docs/benchmarks/pre-registration-2026-07-16-v3.md): each scenario's ground_truth is decomposed into ground_truth_atoms, graded independently as present-and-correct / absent / contradicted. Frozen before the first v3 measurement call. All v2 fields above and in every scenario (ground_truth, evidence, answer_keywords, traps, audit) are unchanged — atoms were only ADDED. Decomposition rule: one atom per assertion the ground_truth itself separates (its own numbered list where it has one), no finer; atoms are exhaustive with respect to ground_truth, so the v2-style binary score recomputed as 'all atoms correct' is not loosened by this change. `critical` marks atoms the question actually tests, versus locators/provenance the ground_truth supplies as context; for slim_domain the ground_truth states its own scoring points ((1)(3)(4)) and those were used rather than the author's judgment. Per-atom scoring can only raise a score relative to all-or-nothing, i.e. it moves numbers in the direction that flatters OKF (prediction P6) — which is why the atoms are frozen here, before measurement, and were written from the ground_truth text alone without consulting v3 results or v2's per-run answers in docs/benchmarks/raw/.",
   "pins": {
     "slim": "80900fb3",
     "rfcs": "f635361c"
@@ -12,6 +14,18 @@
       "kind": "buried",
       "question_ko": "rust-lang/rfcs 저장소(651개 마크다운 RFC)에서, 컴파일 타임에 여러 리터럴을 이어붙여 `&[u8; N]` 타입의 바이트 문자열을 만들어 주는 매크로를 새로 추가하자고 제안하는 RFC를 찾아라. 그 RFC의 \"Rationale and alternatives\" 절에는, 초안 단계에서는 배열로 감싸지 않은 맨 정수 리터럴도 인자로 받게 하려 했으나 그 설계를 폐기했다고 적혀 있다. 그 설계를 폐기한 이유로 RFC가 명시적으로 드는 근거는 무엇인가? (RFC 번호/파일명과 근거를 함께 답하라.)",
       "ground_truth": "RFC 2509 (`text/2509-byte-concat.md`, feature name `concat_bytes`).\n\n폐기 이유: 배열 밖의 맨 정수 리터럴을 허용하면 `byte_concat!(123, b\"\\n\")`의 결과가 이에 대응하는 `concat!` 호출의 결과와 **불일치(inconsistent)** 하게 되기 때문이다.\n\n원문 (2509-byte-concat.md:57-60):\n\"An earlier version of this RFC proposed to support integer literals outside of arrays, but that was rejected since it would make the output of `byte_concat!(123, b\"\\n\")` inconsistent with the equivalent `concat!` invocation.\"\n\n즉, 근거는 \"동등한 `concat!` 호출과 출력이 일관되지 않게 된다\"는 것이다. (`concat!(123, \"\\n\")`은 정수를 십진 문자열 \"123\"으로 스트링화하지만, 바이트 버전에서 맨 `123`은 단일 바이트 0x7B로 해석되어 두 매크로의 의미가 어긋난다.)",
+      "ground_truth_atoms": [
+        {
+          "id": "rfc_identity",
+          "fact": "해당 RFC는 RFC 2509이며, 파일은 text/2509-byte-concat.md, feature name 은 concat_bytes 이다.",
+          "critical": false
+        },
+        {
+          "id": "rejection_reason_inconsistent_with_concat",
+          "fact": "배열 밖의 맨 정수 리터럴을 인자로 받게 하려던 설계를 폐기한 이유로 RFC가 명시적으로 드는 근거는, 그렇게 하면 `byte_concat!(123, b\"\\n\")`의 출력이 이에 대응하는(equivalent) `concat!` 호출의 출력과 불일치(inconsistent)하게 된다는 것이다. 같은 절에 있는 *다른* 대안(`concat!` 자체를 바이트 리터럴을 내도록 바꾸는 안)의 기각 사유(더미 `b\"\"` 인자 해킹이 필요해짐)를 답한 경우 이 원자는 틀린 것으로 본다.",
+          "critical": true
+        }
+      ],
       "evidence": [
         "/Users/ducksu/.claude/jobs/a1c84f7e/tmp/targets/rfcs/text/2509-byte-concat.md:1-4 — 헤더: `- Feature Name: concat_bytes` / `- RFC PR: [#2509](https://github.com/rust-lang/rfcs/pull/2509)` / `- Rust Issue: [#87555]`",
         "/Users/ducksu/.claude/jobs/a1c84f7e/tmp/targets/rfcs/text/2509-byte-concat.md:9-10 — Summary: \"Add a macro `concat_bytes!()` to join byte sequences onto an `u8` array, the same way `concat!()` currently supports for `str` literals.\"",
@@ -47,6 +61,38 @@
       "kind": "buried",
       "question_ko": "Slim 4 앱을 기본 구성(AppFactory::create() 사용, 라우트 컬렉터나 개별 라우트에 어떤 호출 규약 객체도 따로 지정하지 않음)으로 만들었다고 하자. 라우트 대상으로 클로저 대신, Psr/Http/Server 네임스페이스에 있는 PSR-15 요청 처리 인터페이스(메서드가 handle() 하나뿐인 그 인터페이스)를 구현한 클래스명을 넘긴다:\n\n    $app->get('/users/{id}', MyAction::class);\n\n이때 MyAction::handle(ServerRequestInterface $request) 본문에서 $request->getAttribute('id') 를 호출하면 URL의 {id} 자리에 매칭된 값이 반환되는가? 예/아니오로 답하고, 다음을 근거 파일·클래스·메서드·줄번호와 함께 밝혀라. (a) 이 결과를 실제로 결정하는 지점이 어디인지 — 어느 클래스의 어느 메서드가 어떤 조건을 검사해서 무엇을 런타임에 조용히 바꿔치기하는지, (b) 그 바꿔치기로 들어오는 객체의 어떤 생성자 기본값 때문에 결과가 그렇게 되는지, (c) 같은 라우트를 클로저로 등록했다면 왜 결과가 반대인지, (d) 사용자가 직접 지정한 호출 규약 객체가 이 바꿔치기를 면제받으려면 무엇을 만족해야 하는지.",
       "ground_truth": "아니오 — $request->getAttribute('id') 는 null 이다. 기본 구성에서 PSR-15 요청 처리 클래스를 라우트 대상으로 쓰면 라우트 인자는 request attribute 로 주입되지 않는다.\n\n(a) 결정 지점은 Slim/Routing/Route.php 의 Route::handle() (342-363행). CallableResolver::resolveRoute() 가 클래스명을 [$instance, 'handle'] 배열로 해석하므로(Slim/CallableResolver.php:68-71 -> 86-105, isRoute() 110-113), Route.php:353-359 의 조건 is_array($callable) && $callable[0] instanceof RequestHandlerInterface && !in_array(RequestHandlerInvocationStrategyInterface::class, class_implements($strategy)) 가 참이 되어, 라우트에 설정된 전략(기본값 RequestResponse, Slim/Routing/RouteCollector.php:99 에서 주입)을 무시하고 Route.php:358 에서 $strategy = new RequestHandler(); 로 조용히 교체한다. 즉 책임은 RouteCollector 의 defaultInvocationStrategy 나 Route::setInvocationStrategy() 가 아니라 Route::handle() 의 이 런타임 오버라이드에 있다.\n\n(b) 교체로 들어오는 Slim/Handlers/Strategies/RequestHandler 는 생성자 인자 bool $appendRouteArgumentsToRequestAttributes 의 기본값이 false 이고(RequestHandler.php:24-27), __invoke() 는 그 플래그가 true 일 때만 withAttribute() 루프를 돈다(RequestHandler.php:40-44). Route.php:358 은 인자 없이 new RequestHandler() 를 만들므로 플래그는 false → attribute 주입 없음.\n\n(c) 클로저 라우트는 $callable[0] instanceof RequestHandlerInterface 조건에 걸리지 않으므로 기본 전략 RequestResponse 가 그대로 쓰이고, RequestResponse::__invoke() 는 모든 라우트 인자에 대해 무조건 $request = $request->withAttribute($k, $v) 를 수행한다(Slim/Handlers/Strategies/RequestResponse.php:34-36). 그래서 클로저에서는 getAttribute('id') 가 값을 준다.\n\n(d) 사용자가 지정한 전략이 Slim/Interfaces/RequestHandlerInvocationStrategyInterface 를 구현하면 Route.php:356 의 in_array 검사에 걸려 교체가 면제되고 그대로 사용된다(테스트: tests/Routing/RouteTest.php:645-678). 기본 동작에서 attribute 를 원하면 명시적으로 new RequestHandler(true) 를 setInvocationStrategy() 로 넣어야 한다(tests/Routing/RouteTest.php:680-724). 대안으로 핸들러 안에서 RouteContext::fromRequest($request)->getRoute()->getArguments() 로 읽을 수 있다.",
+      "ground_truth_atoms": [
+        {
+          "id": "answer_no_attribute_is_null",
+          "fact": "답은 \"아니오\"다 — 기본 구성에서 PSR-15 요청 처리 클래스를 라우트 대상으로 쓰면 라우트 인자가 request attribute 로 주입되지 않으므로 $request->getAttribute('id') 는 null 이다.",
+          "critical": true
+        },
+        {
+          "id": "decision_point_route_handle_override",
+          "fact": "(a) 결과를 결정하는 지점은 Slim/Routing/Route.php 의 Route::handle() (342-363행)이다. 353-359행의 조건 is_array($callable) && $callable[0] instanceof RequestHandlerInterface && !in_array(RequestHandlerInvocationStrategyInterface::class, class_implements($strategy)) 이 참이면, 라우트에 설정된 전략(기본값 RequestResponse)을 무시하고 358행에서 $strategy = new RequestHandler(); 로 런타임에 조용히 교체한다. 책임은 RouteCollector 의 defaultInvocationStrategy 나 Route::setInvocationStrategy() 가 아니라 Route::handle() 의 이 오버라이드에 있다.",
+          "critical": true
+        },
+        {
+          "id": "callable_resolver_makes_handle_array",
+          "fact": "위 is_array 분기에 걸리는 이유는 CallableResolver::resolveRoute() 가 클래스명을 [$instance, 'handle'] 배열로 해석하기 때문이다 (Slim/CallableResolver.php:68-71 -> 86-105, isRoute() 110-113).",
+          "critical": false
+        },
+        {
+          "id": "requesthandler_ctor_default_false",
+          "fact": "(b) 교체로 들어오는 Slim/Handlers/Strategies/RequestHandler 는 생성자 인자 bool $appendRouteArgumentsToRequestAttributes 의 기본값이 false 이고(RequestHandler.php:24-27), __invoke() 는 그 플래그가 true 일 때만 withAttribute() 루프를 돈다(RequestHandler.php:40-44). Route.php:358 은 인자 없이 new RequestHandler() 를 만들므로 플래그는 false 이고 attribute 주입이 일어나지 않는다.",
+          "critical": true
+        },
+        {
+          "id": "closure_uses_requestresponse_strategy",
+          "fact": "(c) 클로저 라우트는 $callable[0] instanceof RequestHandlerInterface 조건에 걸리지 않으므로 기본 전략 RequestResponse (Slim/Routing/RouteCollector.php:99 에서 주입)가 그대로 쓰이고, RequestResponse::__invoke() 는 모든 라우트 인자에 대해 무조건 $request = $request->withAttribute($k, $v) 를 수행한다(RequestResponse.php:34-36). 그래서 클로저에서는 getAttribute('id') 가 값을 준다.",
+          "critical": true
+        },
+        {
+          "id": "marker_interface_exempts_override",
+          "fact": "(d) 사용자가 지정한 전략이 Slim/Interfaces/RequestHandlerInvocationStrategyInterface (빈 마커 인터페이스)를 구현하면 Route.php:356 의 in_array 검사에 걸려 교체가 면제되고 그대로 사용된다. 기본 동작에서 attribute 를 원하면 명시적으로 new RequestHandler(true) 를 setInvocationStrategy() 로 넣어야 하며, 대안으로 핸들러 안에서 RouteContext::fromRequest($request)->getRoute()->getArguments() 로 읽을 수 있다.",
+          "critical": true
+        }
+      ],
       "evidence": [
         "Slim/Routing/Route.php:342-363 — Route::handle(); 353-359: if (is_array($callable) && $callable[0] instanceof RequestHandlerInterface && !in_array(RequestHandlerInvocationStrategyInterface::class, $strategyImplements)) { $strategy = new RequestHandler(); } — 설정된 전략을 런타임에 덮어씀 (358행은 인자 없는 생성)",
         "Slim/Handlers/Strategies/RequestHandler.php:24-27 — public function __construct(bool $appendRouteArgumentsToRequestAttributes = false) — 기본값 false",
@@ -90,6 +136,13 @@
       "kind": "cheap",
       "question_ko": "rust-lang/rfcs 저장소에서 2582번 RFC 문서의 맨 위 메타데이터 목록에는 rust-lang/rust 저장소의 추적 이슈 링크가 하나 걸려 있다. 그 이슈의 번호는 몇 번인가?",
       "ground_truth": "64490 (헤더 표기: `- Rust Issue: [rust-lang/rust#64490](https://github.com/rust-lang/rust/issues/64490)`)",
+      "ground_truth_atoms": [
+        {
+          "id": "tracking_issue_64490",
+          "fact": "2582번 RFC 문서 머리말의 rust-lang/rust 추적 이슈 번호는 64490 이다 (헤더 표기: `- Rust Issue: [rust-lang/rust#64490](https://github.com/rust-lang/rust/issues/64490)`).",
+          "critical": true
+        }
+      ],
       "evidence": [
         "/Users/ducksu/.claude/jobs/a1c84f7e/tmp/targets/rfcs/text/2582-raw-reference-mir-operator.md:4 — `- Rust Issue: [rust-lang/rust#64490](https://github.com/rust-lang/rust/issues/64490)`",
         "/Users/ducksu/.claude/jobs/a1c84f7e/tmp/targets/rfcs/text/2582-raw-reference-mir-operator.md:1-4 — 헤더 전체: Feature Name: `raw_ref_op` / Start Date: 2018-11-01 / RFC PR: rust-lang/rfcs#2582 / Rust Issue: rust-lang/rust#64490",
@@ -113,6 +166,18 @@
       "kind": "cheap",
       "question_ko": "Slim 프레임워크 저장소(커밋 80900fb)에서, 애플리케이션 진입점 역할을 하는 최상위 클래스에 문자열 리터럴로 직접 박혀 있는 배포 번호 상수의 값은 정확히 무엇인가? 그리고 그 값이 선언된 파일 경로와 줄 번호를 답하라. (CHANGELOG.md에 적힌 최신 릴리스 표기가 아니라, 실제 PHP 소스 코드에 하드코딩된 값을 답할 것.)",
       "ground_truth": "값은 '4.15.1' 이다. `Slim\\App` 클래스의 `public const VERSION = '4.15.1';` 로 선언되어 있으며, 위치는 Slim/App.php 46번째 줄이다. (전체 저장소에서 이 값이 등장하는 유일한 지점이다.) 주의: CHANGELOG.md 최상단에는 이미 4.15.2 릴리스(2026-05-22)가 기록되어 있어 소스 상수와 불일치하므로, CHANGELOG를 보고 답하면 '4.15.2'라는 오답이 된다.",
+      "ground_truth_atoms": [
+        {
+          "id": "version_value_4_15_1",
+          "fact": "하드코딩된 배포 번호 상수의 값은 '4.15.1' 이며, `Slim\\App` 클래스에 `public const VERSION = '4.15.1';` 로 선언되어 있다. (CHANGELOG.md 최상단의 4.15.2 를 답하면 이 원자는 틀린 것으로 본다.)",
+          "critical": true
+        },
+        {
+          "id": "declaration_location_app_php_46",
+          "fact": "그 선언의 위치는 Slim/App.php 46번째 줄이다.",
+          "critical": false
+        }
+      ],
       "evidence": [
         "Slim/App.php:46 — `    public const VERSION = '4.15.1';` (docblock at Slim/App.php:42-45: `Current version` / `@var string`)",
         "`grep -rn \"4.15.1\" Slim/ tests/ composer.json` → 단 한 건: `Slim/App.php:46:    public const VERSION = '4.15.1';` (composer.json 에는 version 필드 자체가 없음)",
@@ -139,6 +204,33 @@
       "kind": "policy",
       "question_ko": "우리 팀 \"해동 규칙\" 다시 확인 좀 하자. RFC로 들어온 기능을 프로덕션 코드에 쓰기 시작하는 기준이 정확히 뭐였지? 대기 릴리스 수랑 MSRV 올리는 주기, 그리고 예외 두 개까지 같이 알려줘. 그리고 그 대기 기간을 그렇게 잡은 이유가 뭐였어?",
       "ground_truth": "팀 내부 규칙 이름은 \"해동 규칙\"(thaw rule)이며, 기능이 \"해동됐다\"는 말은 프로덕션 코드에 써도 된다는 뜻이다.\n\n1. 대기 기간: 기능이 stable에 처음 실린 릴리스로부터 릴리스 4개가 더 지나야 해동된다. 즉 팀 MSRV(rust-version)는 항상 현재 stable − 4로 유지된다. (rfcs 문서가 예시로 드는 \"N-2\" / \"stable - 2\"가 아니라 4다.)\n2. MSRV 상향 주기: 릴리스마다 따라 올리지 않고, 분기 첫 스프린트에서만 rust-version 숫자를 올린다.\n3. 예외 A: xtask/ 크레이트는 해동 규칙 면제. 배포 산출물에 포함되지 않으므로 stable 되는 즉시 사용 가능하다.\n4. 예외 B (직관에 반하는 예외): unsafe 코드를 걷어낼 수 있는 기능은 대기하지 않고 stable 되자마자 즉시 도입한다. 위험한 코드를 오래 들고 있는 비용이 새 기능을 일찍 쓰는 위험보다 크다고 판단했기 때문.\n5. 이유: 4라는 숫자는 공급망 보안이나 의존성 쿨다운(예: cargo min-publish-age의 14일)과는 전혀 무관하다. 사내 빌드 이미지의 rustc를 분기에 한 번만 갱신하기 때문에 생긴 숫자다.",
+      "ground_truth_atoms": [
+        {
+          "id": "wait_four_releases",
+          "fact": "대기 기간은 릴리스 4개다: 기능이 stable에 처음 실린 릴리스로부터 릴리스 4개가 더 지나야 해동된다. 즉 팀 MSRV(rust-version)는 항상 현재 stable − 4로 유지된다. (rfcs 문서가 예시로 드는 \"N-2\" / \"stable - 2\"를 팀 규칙으로 답하면 이 원자는 틀린 것으로 본다.)",
+          "critical": true
+        },
+        {
+          "id": "bump_cadence_quarterly_first_sprint",
+          "fact": "MSRV 상향 주기는 릴리스마다 따라 올리는 것이 아니라, 분기 첫 스프린트에서만 rust-version 숫자를 올린다.",
+          "critical": true
+        },
+        {
+          "id": "exception_xtask_exempt",
+          "fact": "예외 A: xtask/ 크레이트는 해동 규칙 면제다. 배포 산출물에 포함되지 않으므로 stable 되는 즉시 사용 가능하다.",
+          "critical": true
+        },
+        {
+          "id": "exception_unsafe_immediate",
+          "fact": "예외 B (직관에 반하는 예외): unsafe 코드를 걷어낼 수 있는 기능은 대기하지 않고 stable 되자마자 즉시 도입한다. 위험한 코드를 오래 들고 있는 비용이 새 기능을 일찍 쓰는 위험보다 크다고 판단했기 때문이다.",
+          "critical": true
+        },
+        {
+          "id": "rationale_quarterly_build_image_rustc",
+          "fact": "대기 기간을 4로 잡은 이유는 사내 빌드 이미지의 rustc를 분기에 한 번만 갱신하기 때문이다. 이 숫자는 공급망 보안이나 의존성 쿨다운(예: cargo min-publish-age의 14일)과는 전혀 무관하다. (대기 기간의 근거를 공급망 보안·쿨다운·생태계 호환성 등으로 답하면 이 원자는 틀린 것으로 본다.)",
+          "critical": true
+        }
+      ],
       "evidence": [
         "작업 트리 전체 grep에서 'thaw' 0건, '해동' 0건 — 규칙 이름과 도메인 어휘가 파일에 전혀 없음 (grep -ril 'thaw|해동' . --exclude-dir=.git)",
         "'stable - 4', 'four releases', '24 weeks' 문자열 0건. 리포지토리에 존재하는 유일한 MSRV 정책 수치는 text/3537-msrv-resolver.md의 'N-2'(727행)와 'stable - 2'(1008행)로, 정답(4)과 다름",
@@ -192,6 +284,33 @@
       "kind": "policy",
       "question_ko": "우리 팀에서 \"에미터\"라고 부르는 게 이 코드베이스에서 정확히 어느 클래스야? 그리고 우리 규칙상 그걸 어디에, 어떤 스타일로 붙이지? 왜 그렇게 부르게 됐는지도 알면 같이 알려줘.",
       "ground_truth": "팀 내부 용어 \"에미터\"는 Slim\\ResponseEmitter (Slim/ResponseEmitter.php)가 아니라 Slim\\Middleware\\OutputBufferingMiddleware (Slim/Middleware/OutputBufferingMiddleware.php)를 가리킨다.\n\n1) 지칭 대상: OutputBufferingMiddleware. 팀에서 \"에미터\"가 Slim\\ResponseEmitter를 뜻하는 경우는 없다.\n2) 유래/이유: 서비스를 FrankenPHP 워커 모드로 운영해서 App::run()을 호출하지 않고 handle()만 부른다 → ResponseEmitter::emit()은 실제 배포에서 한 번도 타지 않는 죽은 경로다. 예전 사내 프레임워크에서 \"응답 바이트를 만지는 계층\"을 에미터라고 부르던 관행이 그대로 OutputBufferingMiddleware에 붙었다.\n3) 등록 위치: 전역 미들웨어가 아니라 /legacy 라우트 그룹에만 붙인다 (echo를 뱉는 레거시 액션이 그 그룹에만 있어서).\n4) 스타일: 반드시 PREPEND. Slim 기본값 append를 쓰지 않는다. 이유는 워커에서 append로 붙였을 때 JSON 응답 꼬리에 leftover 출력이 붙어 클라이언트 파싱이 깨진 사고가 있었기 때문.\n5) 예외: 실제로 Slim\\ResponseEmitter를 타는 배포는 온프렘 apache-cgi 한 군데뿐이며, 그 배포에서는 반대로 에미터(OutputBufferingMiddleware)를 붙이지 않는다.\n\n핵심 채점 포인트: (1) 지칭 대상이 OutputBufferingMiddleware라는 것, (3) /legacy 그룹 한정, (4) PREPEND 고정.",
+      "ground_truth_atoms": [
+        {
+          "id": "emitter_means_outputbufferingmiddleware",
+          "fact": "팀 내부 용어 \"에미터\"가 지칭하는 클래스는 Slim\\Middleware\\OutputBufferingMiddleware (Slim/Middleware/OutputBufferingMiddleware.php)다. 팀에서 \"에미터\"가 Slim\\ResponseEmitter를 뜻하는 경우는 없다. (에미터 = Slim\\ResponseEmitter 라고 답하면 이 원자는 틀린 것으로 본다.)",
+          "critical": true
+        },
+        {
+          "id": "origin_frankenphp_worker_legacy_naming",
+          "fact": "그렇게 부르게 된 유래: 서비스를 FrankenPHP 워커 모드로 운영해 App::run()을 호출하지 않고 handle()만 부르므로 ResponseEmitter::emit()은 실제 배포에서 한 번도 타지 않는 죽은 경로다. 예전 사내 프레임워크에서 \"응답 바이트를 만지는 계층\"을 에미터라고 부르던 관행이 그대로 OutputBufferingMiddleware에 붙었다.",
+          "critical": false
+        },
+        {
+          "id": "registered_on_legacy_group_only",
+          "fact": "등록 위치는 전역 미들웨어가 아니라 /legacy 라우트 그룹 한정이다 (echo를 뱉는 레거시 액션이 그 그룹에만 있어서). (전역 미들웨어로 붙인다고 답하면 이 원자는 틀린 것으로 본다.)",
+          "critical": true
+        },
+        {
+          "id": "style_must_be_prepend",
+          "fact": "스타일은 반드시 PREPEND이며 Slim 기본값인 append를 쓰지 않는다. 이유는 워커에서 append로 붙였을 때 JSON 응답 꼬리에 leftover 출력이 붙어 클라이언트 파싱이 깨진 사고가 있었기 때문이다. (append라고 답하면 이 원자는 틀린 것으로 본다.)",
+          "critical": true
+        },
+        {
+          "id": "exception_apache_cgi_deploy",
+          "fact": "예외: 실제로 Slim\\ResponseEmitter를 타는 배포는 온프렘 apache-cgi 한 군데뿐이며, 그 배포에서는 반대로 에미터(OutputBufferingMiddleware)를 붙이지 않는다.",
+          "critical": false
+        }
+      ],
       "evidence": [
         "grep -rin 'franken' 전체 리포(.php/.md/.json/.xml/.yml/.dist) → 0건. FrankenPHP 워커 모드 운영 사실은 코드/문서/설정 어디에도 없음.",
         "grep -rin 'roadrunner|swoole|worker' → 0건. 롱러닝 워커 런타임 관련 언급 전무.",
@@ -242,6 +361,23 @@
       "kind": "policy",
       "question_ko": "우리 파트너 정산 API의 Slim 에러 처리 / 응답 emit 관련 팀 정책이 어떻게 되더라? displayErrorDetails를 어느 환경에서 켜고 어디서 끄기로 했는지, 거기에 붙은 예외 규칙이 뭔지, 그리고 responseChunkSize는 얼마로 쓰기로 했는지 정리해줘. 각각 왜 그렇게 정했는지 이유도 같이.",
       "ground_truth": "팀(파트너 정산 API, Slim 4 기반) 정책 3가지:\n\n1) displayErrorDetails는 **local과 partner-sandbox 두 환경에서만 true**로 켠다. **staging은 끈다(false)** — staging이 실 파트너 데이터 스냅샷을 그대로 물고 돌아서, 재작년 스택트레이스에 파트너 사업자번호가 노출된 사고 이후 끈 상태를 유지 중. prod도 당연히 false. (업계 관행과 달리 staging을 끄는 것이 이 팀의 비관행적 결정.)\n\n2) 예외(carve-out): partner-sandbox에서 details를 켜더라도 **HttpUnauthorizedException과 HttpForbiddenException 계열은 details 없이** 렌더한다. 이유는 스택트레이스에 **내부 토큰 발급 서버 호스트명**이 노출되어 3월 보안 리뷰에서 지적받았기 때문. **서브클래스까지 모두** 적용되어야 함(Slim의 setErrorHandler handleSubclasses=true에 해당).\n\n3) responseChunkSize 팀 표준값은 **49152**이며 Slim 기본값(4096)을 쓰지 않는다. 이유는 정산 CSV 스트리밍이 파트너 게이트웨이 앞단에서 flush가 밀리는 문제를 재작년에 직접 측정해 잡은 값이기 때문이라 임의 변경 금지.",
+      "ground_truth_atoms": [
+        {
+          "id": "display_error_details_envs",
+          "fact": "displayErrorDetails는 local과 partner-sandbox 두 환경에서만 true로 켠다. staging은 끈다(false) — staging이 실 파트너 데이터 스냅샷을 그대로 물고 돌아서, 재작년 스택트레이스에 파트너 사업자번호가 노출된 사고 이후 끈 상태를 유지 중이다. prod도 false. (staging을 켠다고 답하거나 '프로덕션만 끄고 나머지는 켠다'는 관행을 팀 정책으로 답하면 이 원자는 틀린 것으로 본다.)",
+          "critical": true
+        },
+        {
+          "id": "carve_out_401_403_no_details",
+          "fact": "예외(carve-out): partner-sandbox에서 details를 켜더라도 HttpUnauthorizedException과 HttpForbiddenException 계열은 details 없이 렌더한다. 이유는 스택트레이스에 내부 토큰 발급 서버 호스트명이 노출되어 3월 보안 리뷰에서 지적받았기 때문이다. 서브클래스까지 모두 적용되어야 한다(Slim의 setErrorHandler handleSubclasses=true에 해당).",
+          "critical": true
+        },
+        {
+          "id": "response_chunk_size_49152",
+          "fact": "responseChunkSize 팀 표준값은 49152이며 Slim 기본값(4096)을 쓰지 않는다. 이유는 정산 CSV 스트리밍이 파트너 게이트웨이 앞단에서 flush가 밀리는 문제를 재작년에 직접 측정해 잡은 값이기 때문이라 임의 변경 금지다. (4096 또는 8192/16384/65536 같은 값을 답하면 이 원자는 틀린 것으로 본다.)",
+          "critical": true
+        }
+      ],
       "evidence": [
         "작업 트리 전체 grep (`grep -rniE \"partner|sandbox|staging|49152|정산|vnd.\" . --exclude-dir=.git`) 결과: 정책 관련 히트 0건. 유일한 히트는 tests/Middleware/BodyParsingMiddlewareTest.php의 'application/vnd.api+json'으로 정책과 무관.",
         "환경 이름 자체가 저장소에 없음: `grep -rniE \"APP_ENV|getenv|ENVIRONMENT|production'|'prod'\"` 결과 0건. 업스트림 Slim은 프레임워크 라이브러리라 환경 이름(local/staging/partner-sandbox/prod)이나 배포 설정을 전혀 담고 있지 않음.",
@@ -300,6 +436,38 @@
       "kind": "stale",
       "question_ko": "Slim 프레임워크(PHP)의 기본 HTML 오류 렌더러 `Slim\\Error\\Renderers\\HtmlErrorRenderer`를 보라. 이 클래스의 `renderHtmlBody(string $title = '', string $html = '')` 메서드는 인자로 받은 `$title` 문자열을 `<title>`과 `<h1>` 자리에 채워 넣는다. 현재 코드 기준으로, `$title`이 그 최종 마크업에 삽입되기 직전에 거치는 PHP 내장 함수가 있는가? 있다면 그 함수의 이름, 그리고 그 함수 호출에 함께 넘기는 두 번째·세 번째 인자(플래그 상수 조합과 문자 인코딩 이름)까지 정확히 적어라. 그런 중간 처리가 전혀 없이 `$title`이 곧바로 `sprintf()`에 전달된다면 \"없음\"이라고 답하라.",
       "ground_truth": "있다. `renderHtmlBody()`는 `$title`을 마크업에 넣기 전에 `htmlspecialchars($title, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')`로 재할당한다 (Slim/Error/Renderers/HtmlErrorRenderer.php:68). 즉 함수명은 `htmlspecialchars`, 두 번째 인자는 플래그 `ENT_QUOTES | ENT_SUBSTITUTE`, 세 번째 인자는 인코딩 `'UTF-8'`이다. 이 처리는 커밋 f897118b(\"Escape error title and description in HtmlErrorRenderer\", 2026-05-21, 반사형 XSS 방지)에서 추가되었다. 그 직전 커밋 402fcbc2에서는 이런 처리가 전혀 없었고 `renderHtmlBody()`가 `$title`을 그대로 `sprintf()`에 넘겼으므로, 그 시점의 정답은 \"없음\"이었다. (같은 커밋에서 `__invoke()`의 error description에도 동일한 `htmlspecialchars(..., ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')` 처리가 추가되었다 — HtmlErrorRenderer.php:36-40.)",
+      "ground_truth_atoms": [
+        {
+          "id": "escaping_exists",
+          "fact": "답은 \"있다\"이다 — $title은 최종 마크업의 sprintf()에 전달되기 전에 PHP 내장 함수를 한 번 거쳐 재할당된다 (Slim/Error/Renderers/HtmlErrorRenderer.php:68). \"없음\"이라고 답하면 이 원자는 틀린 것으로 본다.",
+          "critical": true
+        },
+        {
+          "id": "function_is_htmlspecialchars",
+          "fact": "그 함수의 이름은 htmlspecialchars 이다. (같은 파일에서 예외 메시지/트레이스에 쓰이는 htmlentities 를 답하면 이 원자는 틀린 것으로 본다.)",
+          "critical": true
+        },
+        {
+          "id": "second_arg_flags",
+          "fact": "두 번째 인자는 플래그 조합 ENT_QUOTES | ENT_SUBSTITUTE 이다 (두 상수의 순서는 무관하며 ENT_SUBSTITUTE | ENT_QUOTES 도 정답으로 본다). ENT_QUOTES 단독 등 한쪽만 답하면 틀린 것으로 본다.",
+          "critical": true
+        },
+        {
+          "id": "third_arg_encoding_utf8",
+          "fact": "세 번째 인자는 문자 인코딩 'UTF-8' 이다.",
+          "critical": true
+        },
+        {
+          "id": "introduced_by_commit_f897118b",
+          "fact": "이 처리는 커밋 f897118b(\"Escape error title and description in HtmlErrorRenderer\", 2026-05-21, 반사형 XSS 방지)에서 추가되었다. 그 직전 커밋 402fcbc2에서는 이런 처리가 전혀 없었고 renderHtmlBody()가 $title을 그대로 sprintf()에 넘겼으므로 그 시점의 정답은 \"없음\"이었다.",
+          "critical": false
+        },
+        {
+          "id": "description_escaped_in_same_commit",
+          "fact": "같은 커밋에서 __invoke()의 error description에도 동일한 htmlspecialchars(..., ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') 처리가 추가되었다 (HtmlErrorRenderer.php:36-40).",
+          "critical": false
+        }
+      ],
       "evidence": [
         "NEW commit (fact introduced): f897118b1dbf157d3520aa4776ee7faa6d6de229 — \"Escape error title and description in HtmlErrorRenderer\" (Rob Allen, 2026-05-21). Reachable from pinned commit 80900fb39cafce3ae53b18a2c4f642a122f03095.",
         "NEW fact file:line at pinned checkout 80900fb — Slim/Error/Renderers/HtmlErrorRenderer.php:68 : `$title = htmlspecialchars($title, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');` (first statement inside renderHtmlBody(), immediately before the `return sprintf(` on line 70).",
