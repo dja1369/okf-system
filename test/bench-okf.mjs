@@ -67,6 +67,9 @@ const scenarios = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures',
 // 같은 번들·같은 레벨 축을 공유하지 않는다.
 const onlyKind = process.env.OKF_BENCH_ONLY_KIND || '';
 if (onlyKind) scenarios.scenarios = scenarios.scenarios.filter((s) => s.kind === onlyKind);
+// 전체 유료 실행 전에 한 시나리오만 돌려 하니스가 크래시 없이 도는지 확인할 때 쓴다.
+const onlyKey = process.env.OKF_BENCH_ONLY_KEY || '';
+if (onlyKey) scenarios.scenarios = scenarios.scenarios.filter((s) => s.key === onlyKey);
 const levelsOf = (t) => JSON.parse(fs.readFileSync(path.join(bundleRoot, `${t}-levels.json`), 'utf8'));
 
 // 모든 조건이 같은 문구를 받는다. 어떤 조건에도 "제공된 지식을 읽어라" 같은 힌트를 주지 않는다.
@@ -541,22 +544,45 @@ await Promise.all(Array.from({ length: concurrency }, measureWorker));
 const resolvedModels = [...new Set(records.flatMap((r) => r.measurement.models))].sort();
 
 // v2는 여기서 기록만 하고 지나갔다. 파일 머리에는 "조건별로 갈리면 중단한다"고 적어놓고서.
-// 다만 v2가 약속한 검사("두 모델이 보이면 중단")는 틀렸다 — haiku는 모든 조건에서 내부
-// 작업용으로 함께 해석되므로 그대로 구현했다면 모든 실행이 중단됐다. 진짜 교란은 "조건 A는
-// sonnet, 조건 B는 haiku"처럼 조건별로 모델 구성이 갈리는 경우다. 그 검사를 구현한다.
+//
+// 다만 "조건별 모델 집합이 정확히 일치할 것"을 요구하면 안 된다 — 그건 v2가 약속한 그 틀린
+// 검사다. haiku는 CLI가 내부 작업(탐색 많은 조건일수록 더)에 쓰므로 어느 조건엔 붙고 어느
+// 조건엔 안 붙는 게 정상이고, 집합 일치를 요구하면 모든 실행이 중단된다("그대로 구현했다면
+// 모두 중단").
+//
+// 진짜 교란은 haiku가 어느 조건에서 비용의 "유의미한" 비중을 차지해, 그 조건이 싸 보이는 게
+// 지식이 아니라 haiku 단가 때문일 때다. 실측(slim_domain 스모크)에서 haiku 비중은 최대 4.7%였다.
+// 그래서 임계값(기본 15%)을 넘는 조건이 있을 때만 중단한다. 그 미만이면 sonnet 단독 비용
+// (primaryModelCostUsdCorrectOnly)으로 비교하면 되고, 그건 이미 발행한다.
+const MODEL_MIX_THRESHOLD = Number(process.env.OKF_BENCH_MIX_THRESHOLD || 0.15);
 function assertNoModelMixConfound() {
   const byCondition = {};
   for (const r of records) {
-    (byCondition[r.condition] ||= new Set());
-    for (const mdl of r.measurement.models) byCondition[r.condition].add(mdl);
+    const acc = (byCondition[r.condition] ||= { primary: 0, other: 0 });
+    for (const [mdl, cst] of Object.entries(r.measurement.costByModel || {})) {
+      if (mdl === model) acc.primary += cst; else acc.other += cst;
+    }
   }
-  const sets = Object.entries(byCondition).map(([c, s]) => [c, [...s].sort().join('+')]);
-  const distinct = [...new Set(sets.map(([, s]) => s))];
-  if (distinct.length <= 1) return null;
-  return `조건별 모델 구성이 갈렸다 — 비용 비교가 모델 단가 아티팩트를 포함한다:\n${
-    sets.map(([c, s]) => `  ${c}: ${s}`).join('\n')}`;
+  const offenders = Object.entries(byCondition)
+    .map(([c, v]) => [c, v.other / (v.primary + v.other || 1)])
+    .filter(([, share]) => share > MODEL_MIX_THRESHOLD);
+  if (!offenders.length) return null;
+  return `비주(non-primary) 모델이 어느 조건 비용의 ${(MODEL_MIX_THRESHOLD * 100).toFixed(0)}%를 넘었다 — `
+    + `그 조건의 비용 비교가 모델 단가 아티팩트를 포함한다:\n${
+      offenders.map(([c, s]) => `  ${c}: 비주모델 ${(s * 100).toFixed(1)}%`).join('\n')}`;
 }
 const modelMixConfound = assertNoModelMixConfound();
+// 임계값 미만이어도 조건별 비주모델 비중은 발행한다 — 독자가 직접 판단할 수 있어야 한다.
+const nonPrimaryShareByCondition = Object.fromEntries(
+  [...new Set(records.map((r) => r.condition))].map((c) => {
+    const rows = records.filter((r) => r.condition === c);
+    let primary = 0; let other = 0;
+    for (const r of rows) for (const [mdl, cst] of Object.entries(r.measurement.costByModel || {})) {
+      if (mdl === model) primary += cst; else other += cst;
+    }
+    return [c, Number((other / (primary + other || 1)).toFixed(4))];
+  }),
+);
 const costByModelTotals = records.reduce((acc, r) => {
   for (const [mdl, cst] of Object.entries(r.measurement.costByModel || {})) acc[mdl] = Number(((acc[mdl] || 0) + cst).toFixed(4));
   return acc;
@@ -629,6 +655,8 @@ const out = {
     levelAxisRetired: 'v3는 레벨 비용 곡선을 재지 않는다(사전등록 C9). v2의 그 축은 lib/config.mjs:27 inject_max_lines:120 상한을 재고 있었다 — 설정 상수다.',
     modelMixDetected: resolvedModels.length > 1,
     modelMixConfound,
+    modelMixThreshold: MODEL_MIX_THRESHOLD,
+    nonPrimaryShareByCondition,
     costByModelTotals,
     // 게이트를 훅으로 전달하다 0바이트로 도착해 재시도한 횟수. 세지 않은 재시도는 보이지 않는
     // 표본 선택이므로 반드시 발행한다.
