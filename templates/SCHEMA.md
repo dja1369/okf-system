@@ -1,5 +1,6 @@
 ---
 type: schema
+schema_version: 1
 title: OKF 번들 작성 규정
 description: 배치 에이전트가 준수해야 하는 절대 규칙과 택소노미
 timestamp: {{INSTALL_DATE}}

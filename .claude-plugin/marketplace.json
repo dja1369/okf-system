@@ -8,7 +8,7 @@
     {
       "name": "okf",
       "source": "./",
-      "description": "Global OKF knowledge bundle: lossless capture, opportunistic batch ingest, mandatory session-start gate."
+      "description": "Global OKF knowledge bundle: idle-based lossless collection, opportunistic batch ingest, mandatory session-start gate."
     }
   ]
 }

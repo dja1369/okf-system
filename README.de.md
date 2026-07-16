@@ -22,21 +22,27 @@ Claude Code neu starten, eine normale Sitzung beenden und prüfen:
 /okf:okf-index
 ```
 
-Der erste `SessionStart` erstellt `~/.claude/okf` (oder `$CLAUDE_CONFIG_DIR/okf`). Capture und opportunistischer Batch laufen danach automatisch.
+Der erste `SessionStart` erstellt `~/.claude/okf` (oder `$CLAUDE_CONFIG_DIR/okf`). Erfassung und opportunistischer Batch laufen automatisch — eine Unterhaltung wird etwa eine Stunde nach ihrer letzten Aktivität erfasst, niemand muss eine Sitzung dafür explizit beenden.
 
 ## Kontinuitätsablauf
 
 ```text
-Entscheidung in Sitzung 1 -> verlustfreie raw-Kopie bei SessionEnd -> Batch erzeugt OKF-Markdown -> Index in Sitzung 2 -> relevanten Concept lesen
+Sitzung 1              ~1h Leerlauf              Background-Batch           Sitzung 2
+Entscheidung treffen -> Sweep sammelt raw    ->   wiederverwendbares     -> kompakter Index
+(kein explizites        (verlustfreie Kopie;      OKF-Markdown              injiziert
+ Ende nötig)             Wachstum triggert           |                         |
+                         erneute Erfassung)         +-- lokale git-Historie   +-- relevanten Concept lesen
 ```
 
 Eine Regel wie „10 % → 50 % → 100 % ausrollen, über 0,5 % Fehlern zurückrollen“ kann so ohne erneute Eingabe gefunden werden. Der Index routet nur; Claude muss vor einer Handlung das relevante Concept per `Read` öffnen.
+
+Warum idle-basiert? Sitzungen enden selten explizit — Background-Agenten tun es nie —, und ein Endsnapshot beim `resume` markierte eine Unterhaltung mitten im Fluss fälschlich als „verarbeitet“ und verlor damit alles, was danach kam. Deshalb erfasst der Sweep ein Transcript erst, nachdem es seit `sweep_min_idle_minutes` (Standard 60) ruhig war, der Batch-Prozess wartet, bis ausstehende Unterhaltungen Leerlauf erreichen (Prüfung alle ~5 Minuten, bis zu 8 Stunden), eine bereits erfasste Sitzung wird **nur bei erneutem Wachstum** wieder erfasst, und eine unveränderte Sitzung nie erneut. Session-Hooks wecken lediglich den Batch.
 
 ## Befehle
 
 | Befehl | Zweck |
 |---|---|
-| `/okf:okf-status` | Letzter Capture/Batch, wartende Sitzungen und Lock |
+| `/okf:okf-status` | Letzter Batch, wartende Sitzungen und Lock |
 | `/okf:okf-batch` | Sofortiger Ingest unter Beachtung des Locks |
 | `/okf:okf-config` | Validierte Konfiguration anzeigen/bearbeiten |
 | `/okf:okf-index` | Kategorien, Concept-Titel und letzte Änderungen |
@@ -63,7 +69,7 @@ Abgefragt werden acht Fakten einer früheren Sitzung — Architektur (SQLite / r
 - **C — OKF enabled.**
 - **D — irrelevant OKF.** Gate ohne relevanten Inhalt, trennt „das Gate half“ von „ein Gate kostet etwas“.
 
-Live-Lauf am 2026-07-15: Claude Code `2.1.210`, `sonnet`/medium (Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, fünf Läufe je Bedingung in gekreuzter Reihenfolge. Cs Bundle entsteht aus echtem SessionEnd-Capture → isoliertem Batch-Ingest → SessionStart-Gate; Preflight: C 8/8 vorhanden und 8/8 gate-geroutet, D 0/8.
+Live-Lauf am 2026-07-15: Claude Code `2.1.210`, `sonnet`/medium (Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, fünf Läufe je Bedingung in gekreuzter Reihenfolge. Cs Bundle entsteht aus echter Erfassung in `raw/` → isoliertem Batch-Ingest → SessionStart-Gate; Preflight: C 8/8 vorhanden und 8/8 gate-geroutet, D 0/8.
 
 | Bedingung | Kontinuität | Einhaltung p50 | token activity p50/p95 | wall p50/p95 | Kosten p50 |
 |---|---:|---:|---:|---:|---:|
@@ -132,13 +138,13 @@ Bezahlter Opt-in-Lauf außerhalb von CI. Siehe [gültigen Bericht](docs/benchmar
 
 ### Lokaler Overhead — nicht das Wirksamkeitsergebnis
 
-Frische Messung vom 2026-07-15, macOS arm64, Node `v26.4.0`:
+Frische Messung vom 2026-07-16, macOS arm64, Node `v26.4.0`:
 
 | Operation | Median | Bereich |
 |---|---:|---:|
-| SessionStart-Gate-Prozess | 57.4 ms | 56.7–58.2 ms |
-| SessionEnd-Capture-Prozess | 43.4 ms | 41.8–43.9 ms |
-| Statusline-Prozess | 36.7 ms | 34.8–36.8 ms |
+| SessionStart-Gate-Prozess | 57.2 ms | 56.9–58.1 ms |
+| SessionEnd-Trigger-Prozess | 41.4 ms | 39.0–42.1 ms |
+| Statusline-Prozess | 35.0 ms | 35.0–35.2 ms |
 
 Reproduzierbar mit `node test/bench.mjs [Repository]`. Dies misst lokalen Prozessaufwand, nicht Token- oder Modellverbesserungen.
 
@@ -186,16 +192,30 @@ Dabei wurden ein Swift-Standard-`Error`, das fälschlich auf einen gleichnamigen
 
 ## Daten und Privatsphäre
 
-- `SessionEnd` kopiert den vollständigen Transcript verlustfrei nach `raw/`.
+- Der Idle-Sweep kopiert den vollständigen Transcript nach `raw/`; dabei wird während der Erfassung nicht geparst oder gekürzt. Session-Hooks wecken nur den Batch.
 - Batch erstellt einen begrenzten Digest und sendet ihn per separatem `claude -p` an Anthropic; dies ist die einzige zusätzliche Modell/API-Übertragung.
 - Ausführung mit `--safe-mode`, begrenzten Tools, Prompt über stdin, Lint/Rollback und ohne Bash.
+- Der Analyzer arbeitet in einer Wegwerfkopie der Wissensdateien in einem temporären Workspace und kann physisch nicht auf `raw/`, `.okf/` oder `.git` zugreifen; der Driver kopiert nur reguläre `.md`-Dateien zurück (Skripte und Symlinks erreichen das Bundle nie).
 - Raw ist git-ignored; nur extrahiertes Markdown wird lokal committed. Kein Push oder Remote.
 - POSIX-Verzeichnisse `0700`, raw/state/log `0600`. Permanente Logs enthalten keinen Transcript, Claude stdout/stderr, Credentials oder vollständige Raw-Pfade.
 - Das Live-Fixture ist synthetisch und ohne persönliche Daten/Credentials.
 
 ## Konfiguration und Entfernung
 
-`~/.claude/okf/.okf/config.md` oder `/okf:okf-config`. Hauptwerte: `enabled: true`, `batch_interval_hours: 1`, `batch_max_digest_kb: 600`, `batch_digest_cap_kb: 150`, `remove_candidate_ttl_days: 30`, `inject_max_lines` / `inject_max_bytes`: `120` / `9000`. Ungültige Werte fallen auf sichere Defaults zurück.
+`~/.claude/okf/.okf/config.md` bearbeiten oder `/okf:okf-config` verwenden. Unbekannte oder ungültige Werte werden ignoriert und fallen auf sichere Defaults zurück.
+
+| Schlüssel | Standard | Bedeutung |
+|---|---:|---|
+| `enabled` | `true` | Hauptschalter für Erfassung, Gate und Batch |
+| `batch_interval_hours` | `1` | Mindestabstand zwischen opportunistischen Batches |
+| `batch_max_digest_kb` | `600` | Gesamtes Digest-Budget pro Batch |
+| `batch_max_sessions` | `50` | Obergrenze gegen Ausreißer; das Byte-Budget ist die eigentliche Kostenkontrolle |
+| `batch_model` / `batch_effort` | `claude-sonnet-5` / `medium` | Batch-Modell-Einstellungen; leer nutzt CLI-Defaults |
+| `capture_exclude_cwd` | `[]` | Ausschluss-Globs für die Erfassung, geprüft gegen das cwd jeder Sitzung |
+| `sweep_min_idle_minutes` | `60` | Leerlaufzeit nach der letzten Aktivität, bevor eine Sitzung erfasst wird; `0` erfasst sofort |
+| `batch_digest_cap_kb` | `150` | Digest-Obergrenze pro Sitzung für das LLM; raw bleibt vollständig |
+| `remove_candidate_ttl_days` | `30` | Aufbewahrungsdauer vor Löschung verarbeiteter raw-Daten |
+| `inject_max_lines` / `inject_max_bytes` | `120` / `9000` | Inline-Gate-Grenzen unterhalb von Claude Codes 10.000-Zeichen-Schwelle |
 
 ```sh
 claude plugin uninstall okf

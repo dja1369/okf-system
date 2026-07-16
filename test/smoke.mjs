@@ -10,21 +10,24 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { ensureBootstrap } from '../lib/bootstrap.mjs';
-import { okfPaths, isOkfTestSessionDir } from '../lib/paths.mjs';
+import { okfPaths, isOkfTestSessionDir, sanitizeForFilename } from '../lib/paths.mjs';
 import { DEFAULT_CONFIG, readConfig } from '../lib/config.mjs';
 import { runLint, formatReport } from '../lib/lint.mjs';
 import { regenerateIndex } from '../lib/index-gen.mjs';
 import { digestFile } from '../lib/digest.mjs';
-import { captureSession, sanitizeForFilename } from '../lib/capture.mjs';
 import { git } from '../lib/git.mjs';
 import { analyzeProject } from '../lib/analyze.mjs';
 import { buildGraph, renderHtml } from '../lib/viz.mjs';
-import { recordCaptureStatus } from '../lib/status.mjs';
 import { auditBenchmarkBundle, matchesBenchmarkAnswer } from '../lib/bench-audit.mjs';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE_CLAUDE = path.join(PLUGIN_ROOT, 'test', 'fixtures', process.platform === 'win32' ? 'fake-claude.cmd' : 'fake-claude.mjs');
 const SAMPLE_TRANSCRIPT = path.join(PLUGIN_ROOT, 'test', 'fixtures', 'sample-transcript.jsonl');
+
+// 배치의 링거(유휴 대기)가 테스트·자식 프로세스에서 수 분씩 잠들면 안 된다 — 여기서 낮춘 값이
+// 모든 자식(subprocess 배치, batch-gate가 spawn하는 detached 배치)에 상속된다.
+process.env.OKF_LINGER_POLL_MS ||= '100';
+process.env.OKF_LINGER_MAX_MS ||= '500';
 
 let pass = 0;
 let fail = 0;
@@ -76,7 +79,11 @@ function writeConfig(okfHome, overrides) {
 
 function runHook(scriptRelPath, { okfHome, stdin = '{}', env = {} }) {
   const home = env.HOME || isolatedHome();
-  const suppressAutoBatch = scriptRelPath === 'bin/session-start.mjs';
+  // session-start와 session-end 둘 다 maybeSpawnBatch를 부른다. 둘 다 억제해야 한다 —
+  // session-end를 억제하지 않아서 테스트마다 detached 실배치가 기동됐고, claude가 설치된
+  // 개발 머신에서는 그 배치가 진짜 LLM을 호출했다(과금). 그 분석기 세션 전사 158개가
+  // ~/.claude/projects에 남아 실번들 raw/를 오염시킨 근본 원인이었다(2026-07-16 실측).
+  const suppressAutoBatch = scriptRelPath.startsWith('bin/session-');
   const lockPath = okfPaths(okfHome).lock;
   let temporaryLock = false;
   if (suppressAutoBatch && !fs.existsSync(lockPath)) {
@@ -162,6 +169,25 @@ console.log('\n=== bootstrap ===');
 }
 
 // ---------------------------------------------------------------------------
+console.log('\n=== SCHEMA.md 템플릿 버전 동기화 ===');
+{
+  // 템플릿 개선이 기존 번들에 전파돼야 한다 — writeIfMissing만으로는 설치 시점의 SCHEMA가
+  // 영구 동결된다. 실측(실번들): 어제 추가된 "description은 답이다" 규정이 번들 SCHEMA에 없어
+  // 배치 분석기가 계속 옛 규정(예고편 예시)을 학습했다.
+  const home = bootstrapped('schema-sync');
+  fs.writeFileSync(
+    okfPaths(home).schema,
+    '---\ntype: schema\ntitle: 옛 규정\ndescription: 옛 것\ntimestamp: 2026-01-01\n---\n# 옛 본문\n'
+  );
+  ensureBootstrap(home);
+  const synced = fs.readFileSync(okfPaths(home).schema, 'utf8');
+  ok('bootstrap upgrades outdated SCHEMA.md (버전 없음=v0 → 템플릿 버전)', /^schema_version:/m.test(synced) && !synced.includes('옛 본문'));
+  fs.writeFileSync(okfPaths(home).schema, synced.replace('# 절대 규칙', '# 절대 규칙 (로컬 편집)'));
+  ensureBootstrap(home);
+  ok('bootstrap preserves same-version SCHEMA.md local edits', fs.readFileSync(okfPaths(home).schema, 'utf8').includes('(로컬 편집)'));
+}
+
+// ---------------------------------------------------------------------------
 console.log('\n=== config validation ===');
 {
   const home = bootstrapped('config-invalid');
@@ -193,109 +219,20 @@ console.log('\n=== config validation ===');
 }
 
 // ---------------------------------------------------------------------------
-console.log('\n=== capture (lib-level) ===');
+console.log('\n=== sanitizeForFilename ===');
 {
-  const home = bootstrapped('capture');
-  const cwd = '/Users/tester/my-project';
-  const r1 = captureSession({ okfHome: home, cwd, sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', transcriptPath: SAMPLE_TRANSCRIPT });
-  ok('capture reports captured:true', r1.captured === true);
-  const raw1 = fs.readFileSync(r1.dest);
-  const src = fs.readFileSync(SAMPLE_TRANSCRIPT);
-  ok('captured raw file is byte-for-byte identical to source', Buffer.compare(raw1, src) === 0);
-  if (process.platform !== 'win32') {
-    ok('captured raw transcript is owner-readable only', (fs.statSync(r1.dest).mode & 0o777) === 0o600);
-  }
-
-  // resume: same session_id, longer transcript -> must overwrite same dest, not create a 2nd file
-  const resumedPath = path.join(sandbox('resume-src'), 'resumed.jsonl');
-  fs.writeFileSync(resumedPath, fs.readFileSync(SAMPLE_TRANSCRIPT, 'utf8') + '{"type":"user","message":{"role":"user","content":"추가 대화"}}\n');
-  const r2 = captureSession({ okfHome: home, cwd, sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', transcriptPath: resumedPath });
-  ok('resume overwrites same destination path', r2.dest === r1.dest);
-  ok('raw/ still has exactly one file for this session', listRaw(home).length === 1);
-  ok('resumed content actually landed (superset)', fs.readFileSync(r2.dest, 'utf8').includes('추가 대화'));
-
-  captureSession({ okfHome: home, cwd, sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', transcriptPath: SAMPLE_TRANSCRIPT });
-  ok('out-of-order older capture cannot truncate a resumed session', fs.readFileSync(r2.dest, 'utf8').includes('추가 대화'));
-
-  const empty = sandbox('empty-transcript');
-  const emptyPath = path.join(empty, 'empty.jsonl');
-  fs.writeFileSync(emptyPath, '');
-  const r3 = captureSession({ okfHome: home, cwd, sessionId: 'bbbbbbbb-0000-0000-0000-000000000000', transcriptPath: emptyPath });
-  ok('empty transcript is skipped', r3.captured === false);
-
-  const largeSource = path.join(sandbox('large-transcript'), 'large.jsonl');
-  const largeContent = `${JSON.stringify({ type: 'user', message: { role: 'user', content: `한글-${'x'.repeat(2 * 1024 * 1024)}` } })}\n`;
-  fs.writeFileSync(largeSource, largeContent);
-  const largeResult = captureSession({ okfHome: home, cwd, sessionId: 'bbbbbbbb-1111-2222-3333-444444444444', transcriptPath: largeSource });
-  ok('large UTF-8 transcript is captured byte-for-byte', Buffer.compare(fs.readFileSync(largeSource), fs.readFileSync(largeResult.dest)) === 0);
-
+  // 훅 캡처 제거(수집을 sweep으로 일원화)로 lib/capture.mjs가 삭제되고 이 함수만 paths.mjs로
+  // 이동했다. 세션ID는 이제 사용자 입력(stdin)이 아니라 projects/ 디렉토리 나열의 basename에서
+  // 나오므로 경로 탈출 입력면 자체가 사라졌다. superset/재수집 의미론은 유휴 수집 테스트가 지킨다.
   ok('sanitizeForFilename replaces forbidden chars', sanitizeForFilename('a:b?c') === 'a_b_c');
   ok('sanitizeForFilename prefixes reserved Windows names', sanitizeForFilename('CON') === '_CON');
   ok('sanitizeForFilename is case-insensitive on reserved names', sanitizeForFilename('con') === '_con');
   ok('sanitizeForFilename falls back on empty result', sanitizeForFilename('') === 'project');
-
-  const hostileHome = bootstrapped('capture-hostile-session-id');
-  let hostileResult = null;
-  try {
-    hostileResult = captureSession({ okfHome: hostileHome, cwd, sessionId: '../../../../outside', transcriptPath: SAMPLE_TRANSCRIPT });
-  } catch {
-    // A rejected/escaped filename is a failed boundary contract, but keep the runner alive.
-  }
-  ok('capture confines untrusted session ids to raw/', hostileResult?.captured === true
-    && path.dirname(hostileResult.dest) === okfPaths(hostileHome).raw
-    && !path.basename(hostileResult.dest).includes('..'));
 }
 
 // ---------------------------------------------------------------------------
 console.log('\n=== session-end.mjs (subprocess) ===');
 {
-  const blockedStatusHome = sandbox('capture-status-blocked');
-  fs.writeFileSync(path.join(blockedStatusHome, '.okf'), 'not-a-directory');
-  let statusThrew = false;
-  try {
-    recordCaptureStatus(blockedStatusHome, { status: 'error', stage: 'test', errorCode: 'TEST' });
-  } catch {
-    statusThrew = true;
-  }
-  ok('diagnostic status write failure never interrupts capture flow', !statusThrew);
-
-  const home = bootstrapped('session-end');
-  const input = JSON.stringify({
-    session_id: 'cccccccc-1111-2222-3333-444444444444',
-    transcript_path: SAMPLE_TRANSCRIPT,
-    cwd: '/Users/tester/proj-x',
-  });
-  runHook('bin/session-end.mjs', { okfHome: home, stdin: input });
-  ok('session-end hook writes a raw file', listRaw(home).length === 1);
-  const captureStatusPath = path.join(okfPaths(home).state, 'capture-status.json');
-  ok('session-end records a privacy-safe capture status', fs.existsSync(captureStatusPath));
-  if (fs.existsSync(captureStatusPath)) {
-    const captureStatus = JSON.parse(fs.readFileSync(captureStatusPath, 'utf8'));
-    ok('capture status reports success without transcript paths', captureStatus.lastStatus === 'ok' && !JSON.stringify(captureStatus).includes(SAMPLE_TRANSCRIPT));
-    if (process.platform !== 'win32') {
-      ok('capture status file is owner-readable only', (fs.statSync(captureStatusPath).mode & 0o777) === 0o600);
-    }
-  }
-
-  const missingHome = bootstrapped('session-end-missing');
-  runHook('bin/session-end.mjs', {
-    okfHome: missingHome,
-    stdin: JSON.stringify({ session_id: 'eeeeeeee-1111-2222-3333-444444444444', transcript_path: path.join(missingHome, 'does-not-exist.jsonl'), cwd: '/Users/tester/proj-x' }),
-  });
-  const missingStatus = JSON.parse(fs.readFileSync(okfPaths(missingHome).captureStatus, 'utf8'));
-  ok('missing transcript is visible without leaking its path', missingStatus.lastStatus === 'error' && missingStatus.errorCode === 'TRANSCRIPT_UNAVAILABLE' && !JSON.stringify(missingStatus).includes('does-not-exist'));
-
-  // capture_exclude_cwd
-  const home2 = bootstrapped('session-end-exclude');
-  writeConfig(home2, { capture_exclude_cwd: ['/Users/tester/excluded/**'] });
-  const input2 = JSON.stringify({
-    session_id: 'dddddddd-1111-2222-3333-444444444444',
-    transcript_path: SAMPLE_TRANSCRIPT,
-    cwd: '/Users/tester/excluded/sub',
-  });
-  runHook('bin/session-end.mjs', { okfHome: home2, stdin: input2 });
-  ok('capture_exclude_cwd glob skips capture', listRaw(home2).length === 0);
-
   // malformed stdin must not throw / must exit cleanly (fail-open)
   let threw = false;
   try {
@@ -307,8 +244,18 @@ console.log('\n=== session-end.mjs (subprocess) ===');
 
   const hookConfig = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, 'hooks', 'hooks.json'), 'utf8'));
   const sessionEndHook = hookConfig.hooks.SessionEnd[0].hooks[0];
-  ok('SessionEnd capture runs asynchronously beyond the plugin hook budget', sessionEndHook.async === true);
-  ok('SessionEnd allows the documented ten-minute async copy window', sessionEndHook.timeout >= 600);
+  ok('SessionEnd hook stays async (세션 종료를 붙잡지 않는다)', sessionEndHook.async === true);
+  ok('SessionEnd는 배치 트리거일 뿐이라 긴 시간창이 필요 없다', sessionEndHook.timeout <= 60);
+}
+
+{
+  // 세션 종료 훅은 이제 배치 트리거일 뿐이다 — transcript 복사(수집)는 sweep(유휴 기준) 소관.
+  const home = bootstrapped('session-end-trigger-only');
+  runHook('bin/session-end.mjs', {
+    okfHome: home,
+    stdin: JSON.stringify({ session_id: 'abcd1234-1111-2222-3333-444444444444', transcript_path: SAMPLE_TRANSCRIPT, cwd: '/Users/tester/proj-x' }),
+  });
+  ok('session-end는 transcript를 복사하지 않는다(수집은 sweep 소관)', listRaw(home).length === 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -469,6 +416,7 @@ console.log('\n=== sweep: test-session exclusion ===');
     '-private-var-folders-wt-pgkft3x170g9hf7-0bz80-zw0000gn-T-okf-smoke-session-end-156czk',
     '-private-var-folders-wt-pgkft3x170g9hf7-0bz80-zw0000gn-T-okf-smoke-session-start-umtk8O',
     '-Users-ducksu--claude-jobs-6eed7ade-tmp-okf-e2e-testproj',
+    '-private-var-folders-wt-pgkft3x170g9hf7-0bz80-zw0000gn-T-okf-ingest-1752-0-Ab3dEf', // 분석기 워크스페이스(만일 전사가 남으면)
     '-Users-ducksu--claude-jobs-6eed7ade-tmp-okf-verify2-bundle',
   ];
   for (const name of excluded) ok(`sweep skips the OKF test fixture session: ${name.slice(-28)}`, isOkfTestSessionDir(name));
@@ -647,6 +595,47 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   ok('batch logs redact transcript-derived lint values', !lintLogs.includes(secret));
 }
 {
+  // 실측(E3): 번들이 ~/.claude 아래라 분석기의 Write/Edit이 "sensitive file"로 전부 차단됐는데,
+  // 배치는 결과 텍스트를 안 보고 isDirty만 확인해 "NO-OP(지식 없음)"으로 오분류했다 — 지식이
+  // 조용히 유실됐다(시스템 수명 내내 concept 0개의 근본 원인). 무변경 + NO-OP 미선언은
+  // 실패로 취급해 raw를 되돌리고 중단해야 한다.
+  const home = setupBatchSandbox('write-blocked');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'blocked' } });
+  ok('write-blocked: raw가 보존된다(재시도 대상)', listRaw(home).length === 1);
+  ok('write-blocked: 처리 완료로 오분류되지 않는다', listRemoveCandidate(home).length === 0);
+  ok('write-blocked: 실패가 상태에 드러난다', lastBatch(home).lastResult.startsWith('partial:'));
+  const blockedLogs = fs.readdirSync(okfPaths(home).logs)
+    .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8'))
+    .join('\n');
+  ok('write-blocked: 로그가 쓰기 차단 의심을 지목한다', blockedLogs.includes('쓰기') && blockedLogs.includes('NO-OP'));
+}
+{
+  // 분석기는 임시 워크스페이스의 지식 사본에서 작업하고 드라이버가 산출물을 반영한다(E5 실측:
+  // ~/.claude 아래 번들 쓰기는 allow 규칙으로도 안 풀리고 bypass는 보안상 불가). 반영은 정규
+  // .md만 — 스크립트/심링크/예약 디렉토리 침입은 번들에 닿지 않아야 한다.
+  const home = setupBatchSandbox('hostile-ws');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'hostile-workspace' } });
+  ok('워크스페이스 반영: 정상 concept은 번들에 반영된다', fs.existsSync(path.join(home, 'decisions', 'fake-test-concept.md')));
+  ok('워크스페이스 반영: .md 아닌 파일은 차단된다', !fs.existsSync(path.join(home, 'decisions', 'evil.sh')));
+  ok('워크스페이스 반영: 심링크는 차단된다', !fs.existsSync(path.join(home, 'decisions', 'link.md')));
+  ok('워크스페이스 반영: 예약 디렉토리(.okf) 침입은 차단된다', !fs.existsSync(path.join(home, '.okf', 'injected.md')));
+}
+{
+  // 분석기 호출에는 워크스페이스 한정 Write/Edit 허용 규칙을 함께 주입한다(belt-and-braces).
+  const home = setupBatchSandbox('perm-rules');
+  const argvDumpPath = path.join(sandbox('argv-perm'), 'argv.json');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_DUMP_ARGV_TO: argvDumpPath } });
+  const argv = JSON.parse(fs.readFileSync(argvDumpPath, 'utf8'));
+  const settings = JSON.parse(argv[argv.indexOf('--settings') + 1]);
+  ok(
+    '분석기에 번들 경로 한정 쓰기 허용 규칙이 주입된다',
+    Array.isArray(settings?.permissions?.allow)
+      && settings.permissions.allow.some((r) => r.startsWith('Write(//') && r.endsWith('/**)'))
+      && settings.permissions.allow.some((r) => r.startsWith('Edit(//') && r.endsWith('/**)'))
+  );
+  ok('허용 규칙은 훅 비활성화(--settings hooks:{})와 함께 온다', settings && typeof settings.hooks === 'object');
+}
+{
   // A clean process exit is not enough: Claude reports max-turn exhaustion in the JSON result.
   const home = setupBatchSandbox('max-turns');
   runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'maxturns' } });
@@ -699,7 +688,7 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   fs.copyFileSync(SAMPLE_TRANSCRIPT, orphanPath);
   // SWEEP_MIN_IDLE_MS (30min) skips anything touched too recently (still-open-session guard,
   // review regression fix) — backdate mtime so this fixture reads as a genuinely idle orphan.
-  const past = new Date(Date.now() - 60 * 60_000);
+  const past = new Date(Date.now() - 2 * 3600_000);
   fs.utimesSync(orphanPath, past, past);
   // raw/ deliberately left empty here — this is exactly the round-2 regression scenario.
   ok('sweep precondition: raw/ starts empty', listRaw(home).length === 0);
@@ -727,6 +716,114 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   );
 }
 {
+  // 큐 위생: sweep 필터(§7-8)는 "앞으로 줍지 않기"만 한다 — 필터 이전(또는 구버전 훅)이 이미
+  // raw/에 넣어버린 오염은 회차마다 유료 배치에 실렸다. 실측(2026-07-16, 실번들): raw 165개 중
+  // 158개가 okf-smoke-* 테스트 픽스처, 6개가 분석기 자기 세션(cwd=OKF_HOME)이었고, 배치 7회가
+  // 전부를 LLM에 태워 NO-OP만 받았다. 배치는 스냅샷 전에 이들을 LLM 없이 격리해야 한다.
+  const home = bootstrapped('batch-hygiene');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE });
+  const rawDir = okfPaths(home).raw;
+  fs.mkdirSync(rawDir, { recursive: true });
+  fs.copyFileSync(SAMPLE_TRANSCRIPT, path.join(rawDir, '2026-07-10---private-var-folders-ab-T-okf-smoke-old-fixture--11111111-1111-2222-3333-444444444444.jsonl'));
+  fs.writeFileSync(
+    path.join(rawDir, '2026-07-10--okf--22222222-1111-2222-3333-444444444444.jsonl'),
+    `${JSON.stringify({ type: 'user', cwd: home, message: { role: 'user', content: '배치 분석기 자신의 세션 잔재' } })}\n`
+  );
+  fs.copyFileSync(SAMPLE_TRANSCRIPT, path.join(rawDir, '2026-07-11--realproj--33333333-1111-2222-3333-444444444444.jsonl'));
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  const hygieneLogs = fs.readdirSync(okfPaths(home).logs)
+    .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8'))
+    .join('\n');
+  ok('hygiene: 격리 사실이 로그에 남는다', hygieneLogs.includes('격리'));
+  ok('hygiene: LLM에는 진짜 세션 1개만 실린다', hygieneLogs.includes('세션 1개'), hygieneLogs.split('\n').filter((l) => l.includes('처리 대상')).join(' | '));
+  ok(
+    'hygiene: 격리분도 삭제가 아니라 _remove_candidate 보관(가역)',
+    ['11111111', '22222222', '33333333'].every((id) => listRemoveCandidate(home).some((f) => f.includes(id)))
+  );
+  ok('hygiene: raw가 비워진다', listRaw(home).length === 0);
+}
+// ---------------------------------------------------------------------------
+console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가 아니라 "마지막 활동 후 N분" ===');
+{
+  // 사용자·에이전트 대부분은 세션을 명시적으로 끝내지 않는다(특히 백그라운드 에이전트).
+  // 게다가 resume발 SessionEnd 캡처는 대화 중간 스냅샷을 "처리됨"으로 못박아 이후 대화를
+  // 영영 잃게 했다(실측: 진행 중이던 12MB 세션이 절반만 ingest됨). 그래서 수집 기준은
+  // "마지막 활동 후 sweep_min_idle_minutes(기본 60분) 유휴"다.
+  ok('sweep 유휴 기본값은 60분', DEFAULT_CONFIG.sweep_min_idle_minutes === 60);
+}
+{
+  // sweep_min_idle_minutes: 0 → 유휴 대기 없이 즉시 수집(테스트/수동 flush 용)
+  const home = bootstrapped('idle-zero');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, sweep_min_idle_minutes: 0 });
+  const fakeHome = sandbox('fake-home-idle-zero');
+  const sessionId = 'b3b3b3b3-1111-2222-3333-444444444444';
+  const projectsDir = path.join(fakeHome, '.claude', 'projects', 'my-slug');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  fs.copyFileSync(SAMPLE_TRANSCRIPT, path.join(projectsDir, `${sessionId}.jsonl`)); // 방금 활동한 세션
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  ok('idle=0이면 방금 활동한 세션도 즉시 수집·처리된다', listRemoveCandidate(home).some((f) => f.includes(sessionId)));
+}
+{
+  // 세션 성장 감지: 이미 처리(archive)된 세션이라도 원본이 더 커졌으면(=대화가 이어졌으면)
+  // 다시 수집한다. 중간 캡처가 세션을 known으로 못박아 후반 대화를 잃던 버그의 회귀 방지.
+  const home = bootstrapped('regrow');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, sweep_min_idle_minutes: 0 });
+  const fakeHome = sandbox('fake-home-regrow');
+  const sessionId = 'c9c9c9c9-1111-2222-3333-444444444444';
+  const projectsDir = path.join(fakeHome, '.claude', 'projects', 'my-slug');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  const transcript = path.join(projectsDir, `${sessionId}.jsonl`);
+  fs.copyFileSync(SAMPLE_TRANSCRIPT, transcript);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  ok('성장 전: 1차 수집·처리 완료', listRemoveCandidate(home).some((f) => f.includes(sessionId)) && lastBatch(home).lastResult === 'ok');
+  // 불변식(사용자 지정): 이미 수집된 세션은 재활성화(=파일 성장) 없이는 절대 재수집되지 않는다.
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  ok('변화 없음: 같은 세션이 다시 수집되지 않는다(noop)', lastBatch(home).lastResult === 'noop' && listRemoveCandidate(home).filter((f) => f.includes(sessionId)).length === 1);
+  fs.appendFileSync(transcript, `${JSON.stringify({ type: 'user', message: { role: 'user', content: '한 시간 뒤 이어진 대화 — 반드시 다시 수집돼야 한다' } })}\n`);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  ok('성장 후: 같은 세션이 다시 수집·처리된다(중간 스냅샷이 세션을 못박지 않는다)', lastBatch(home).lastResult === 'ok' && listRaw(home).length === 0);
+  const archivedSizes = listRemoveCandidate(home)
+    .filter((f) => f.includes(sessionId))
+    .map((f) => fs.statSync(path.join(okfPaths(home).removeCandidate, f)).size);
+  ok('성장 후: 보관본이 성장분을 포함한 superset이다', archivedSizes.length > 0 && Math.max(...archivedSizes) >= fs.statSync(transcript).size);
+}
+{
+  // capture_exclude_cwd는 sweep에서 적용된다 — 수집 자체를 막는 게 사용자 의도이므로,
+  // transcript 안의 cwd 메타데이터로 판정한다.
+  const home = bootstrapped('sweep-exclude');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, capture_exclude_cwd: ['/Users/tester/excluded/**'] });
+  const fakeHome = sandbox('fake-home-sweep-exclude');
+  const sessionId = 'e7e7e7e7-1111-2222-3333-444444444444';
+  const projectsDir = path.join(fakeHome, '.claude', 'projects', 'excluded-proj');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  const excludedTranscript = path.join(projectsDir, `${sessionId}.jsonl`);
+  fs.writeFileSync(excludedTranscript, `${JSON.stringify({ type: 'user', cwd: '/Users/tester/excluded/sub', sessionId, message: { role: 'user', content: '제외 대상 대화' } })}\n`);
+  const idlePast = new Date(Date.now() - 2 * 3600_000);
+  fs.utimesSync(excludedTranscript, idlePast, idlePast); // 유휴는 지났지만 제외 경로다
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  ok(
+    'sweep이 capture_exclude_cwd 경로의 세션을 수집하지 않는다',
+    !listRaw(home).some((f) => f.includes(sessionId)) && !listRemoveCandidate(home).some((f) => f.includes(sessionId))
+  );
+}
+{
+  // 링거: 방금 활동한 세션이 있으면 배치가 남아서 유휴 도달을 기다렸다가 수집한다 —
+  // 훅이 다시 안 울려도 "대화 후 1시간"에 ingest가 일어나게 하는 유일한 시계다.
+  const home = bootstrapped('linger');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, sweep_min_idle_minutes: 0.1 }); // 6초
+  const fakeHome = sandbox('fake-home-linger');
+  const sessionId = 'f8f8f8f8-1111-2222-3333-444444444444';
+  const projectsDir = path.join(fakeHome, '.claude', 'projects', 'my-slug');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  fs.copyFileSync(SAMPLE_TRANSCRIPT, path.join(projectsDir, `${sessionId}.jsonl`)); // 방금 활동(유휴 전)
+  runBatch({
+    okfHome: home,
+    env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome, OKF_LINGER_POLL_MS: '500', OKF_LINGER_MAX_MS: '30000' },
+  });
+  ok('링거가 유휴 도달 후 수집·처리하고 종료한다', listRemoveCandidate(home).some((f) => f.includes(sessionId)) && lastBatch(home).lastResult === 'ok');
+}
+
+{
   // sweep must resolve its source directory the same way OKF_HOME does (CLAUDE_CONFIG_DIR override).
   const fakeHome = sandbox('fake-home-for-cfgdir-sweep');
   const customConfigDir = path.join(fakeHome, 'custom-claude-dir');
@@ -738,7 +835,7 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   fs.mkdirSync(projectsDir, { recursive: true });
   const cfgPath = path.join(projectsDir, `${cfgSessionId}.jsonl`);
   fs.copyFileSync(SAMPLE_TRANSCRIPT, cfgPath);
-  const past = new Date(Date.now() - 60 * 60_000);
+  const past = new Date(Date.now() - 2 * 3600_000);
   fs.utimesSync(cfgPath, past, past);
   runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome, CLAUDE_CONFIG_DIR: customConfigDir } });
   ok(
@@ -757,7 +854,7 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   fs.mkdirSync(projectsDir, { recursive: true });
   const foreignPath = path.join(projectsDir, `${foreignSessionId}.jsonl`);
   fs.copyFileSync(SAMPLE_TRANSCRIPT, foreignPath);
-  const past = new Date(Date.now() - 60 * 60_000);
+  const past = new Date(Date.now() - 2 * 3600_000);
   fs.utimesSync(foreignPath, past, past);
   const usagePath = path.join(fakeHome, 'usage.jsonl');
   runBatch({ okfHome: home, env: {
@@ -783,7 +880,7 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   fs.mkdirSync(projectsDir, { recursive: true });
   const transcript = path.join(projectsDir, `${batchSessionId}.jsonl`);
   fs.writeFileSync(transcript, `${JSON.stringify({ type: 'user', cwd: home, sessionId: batchSessionId, message: { role: 'user', content: '[OKF-BATCH] synthetic' } })}\n`);
-  const past = new Date(Date.now() - 60 * 60_000);
+  const past = new Date(Date.now() - 2 * 3600_000);
   fs.utimesSync(transcript, past, past);
   runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'noop', HOME: fakeHome, USERPROFILE: fakeHome, CLAUDE_CONFIG_DIR: configDir } });
   ok('sweep never re-ingests a registered batch Claude session', !listRemoveCandidate(home).some((f) => f.includes(batchSessionId)) && !listRaw(home).some((f) => f.includes(batchSessionId)));
@@ -801,7 +898,7 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   fs.mkdirSync(projectsDir, { recursive: true });
   const transcript = path.join(projectsDir, `${sessionId}.jsonl`);
   fs.writeFileSync(transcript, `${JSON.stringify({ type: 'user', cwd: home, sessionId, message: { role: 'user', content: 'synthetic batch prompt' } })}\n`);
-  const past = new Date(Date.now() - 60 * 60_000);
+  const past = new Date(Date.now() - 2 * 3600_000);
   fs.utimesSync(transcript, past, past);
   runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'noop', HOME: fakeHome, USERPROFILE: fakeHome, CLAUDE_CONFIG_DIR: configDir } });
   ok('sweep excludes transcripts whose cwd is the OKF home', !listRemoveCandidate(home).some((f) => f.includes(sessionId)) && !listRaw(home).some((f) => f.includes(sessionId)));
@@ -813,17 +910,12 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   writeConfig(home, { claude_bin: FAKE_CLAUDE });
   const promptDumpPath = path.join(sandbox('dollar-dump'), 'prompt.txt');
   const argvDumpPath = path.join(sandbox('dollar-argv-dump'), 'argv.json');
-  // Use captureSession() directly rather than the session-end.mjs hook — the hook's own
-  // maybeSpawnBatch would race a second, unrelated auto-spawned batch.mjs against the
-  // explicit runBatch() call below (both targeting the same home), which is a real
-  // scenario but not what this test is about; captureSession() alone lands the raw
-  // fixture under a project name containing '$' without triggering that spawn.
-  captureSession({
-    okfHome: home,
-    cwd: "/Users/tester/client$'s-notes",
-    sessionId: 'd4d4d4d4-1111-2222-3333-444444444444',
-    transcriptPath: SAMPLE_TRANSCRIPT,
-  });
+  // '$'가 든 프로젝트 이름의 raw 파일을 직접 심는다 — sweep이 만드는 파일명과 동일한 규칙.
+  fs.mkdirSync(okfPaths(home).raw, { recursive: true });
+  fs.copyFileSync(
+    SAMPLE_TRANSCRIPT,
+    path.join(okfPaths(home).raw, `2026-07-15--${sanitizeForFilename("client$'s-notes")}--d4d4d4d4-1111-2222-3333-444444444444.jsonl`)
+  );
   runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_DUMP_PROMPT_TO: promptDumpPath, FAKE_CLAUDE_DUMP_ARGV_TO: argvDumpPath } });
   const dumped = fs.existsSync(promptDumpPath) ? fs.readFileSync(promptDumpPath, 'utf8') : '';
   const dumpedArgv = fs.existsSync(argvDumpPath) ? JSON.parse(fs.readFileSync(argvDumpPath, 'utf8')) : [];
@@ -979,6 +1071,15 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
 // ---------------------------------------------------------------------------
 console.log('\n=== plugin contract and docs ===');
 {
+  // E1/E2 회귀 고정: ingest 프롬프트는 '지시문을 실행하지 않는 것'과 '지시가 담은 사실을
+  // 기록하는 것'을 구분해야 한다 — 이 구분이 없으면 핸드오프/계획/결정(지시형 콘텐츠)이
+  // 통째로 NO-OP 처리된다(실측: 진짜 세션 82.8KB digest 단독 입력이 NO-OP).
+  const ingestPrompt = fs.readFileSync(path.join(PLUGIN_ROOT, 'prompts', 'ingest.md'), 'utf8');
+  ok('ingest 프롬프트가 기록-대상 지시문 구분을 담는다', ingestPrompt.includes('지시가 담은 사실을 기록'));
+  ok('ingest 프롬프트가 타입별 추출 자문 체크리스트를 담는다', ingestPrompt.includes('무엇을 남기나'));
+  ok('ingest 프롬프트가 digest 전량 Read를 요구한다', ingestPrompt.includes('digest는 전부 Read'));
+}
+{
   const batchCommand = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-batch.md'), 'utf8');
   const configCommand = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-config.md'), 'utf8');
   const statusCommand = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-status.md'), 'utf8');
@@ -987,8 +1088,8 @@ console.log('\n=== plugin contract and docs ===');
   const analysisCommand = fs.existsSync(analysisPath) ? fs.readFileSync(analysisPath, 'utf8') : '';
   const pluginManifest = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
   ok('command docs never suggest bare /okf-status', !/\/okf-status\b/.test(batchCommand + configCommand));
-  ok('status command reports capture observability state', statusCommand.includes('capture-status.json'));
-  ok('behavior changes advance the distributable plugin version', pluginManifest.version === '0.1.5');
+  ok('status command explains idle-based collection (수집은 sweep 소관)', statusCommand.includes('sweep_min_idle_minutes'));
+  ok('behavior changes advance the distributable plugin version', pluginManifest.version === '0.1.6');
 
   const readmes = fs.readdirSync(PLUGIN_ROOT).filter((name) => /^README(?:\.[^.]+)?\.md$/.test(name));
   ok('all localized READMEs document the safe 9000-byte gate default', readmes.length === 8 && readmes.every((name) => {

@@ -22,21 +22,27 @@ Reinicia Claude Code, termina una sesión normal y ejecuta:
 /okf:okf-index
 ```
 
-El primer `SessionStart` crea `~/.claude/okf` (o `$CLAUDE_CONFIG_DIR/okf`). La captura y el batch oportunista son automáticos.
+El primer `SessionStart` crea `~/.claude/okf` (o `$CLAUDE_CONFIG_DIR/okf`). La recolección y el batch oportunista son automáticos, y una conversación se recolecta cerca de una hora después de su última actividad, así que no hace falta terminar la sesión explícitamente.
 
 ## Flujo de continuidad
 
 ```text
-decisión en sesión 1 -> copia raw sin pérdida en SessionEnd -> batch crea Markdown OKF -> índice en sesión 2 -> Read del concept relevante
+Sesión 1                ~1h idle                 Batch en segundo plano       Sesión 2
+toma una decisión  ->   el sweep recolecta   ->   Markdown OKF reutilizable  ->  índice compacto inyectado
+(sin fin explícito         raw (copia sin              |                              |
+ requerido)                 pérdida; el crecimiento     +-- historial git local        +-- Read del concept relevante
+                            re-recolecta)
 ```
 
 Por ejemplo, “desplegar 10% → 50% → 100% y revertir por encima de 0,5% de errores” puede recuperarse sin que el usuario vuelva a pegarlo. El índice enruta; Claude debe hacer `Read` del concept antes de actuar.
+
+¿Por qué basado en inactividad? Las sesiones rara vez terminan explícitamente —los agentes en segundo plano nunca lo hacen— y una instantánea de fin de sesión tomada al hacer `resume` solía congelar una conversación a medio camino como “procesada”, perdiendo todo lo dicho después. Por eso el sweep recolecta un transcript una vez que ha estado inactivo durante `sweep_min_idle_minutes` (60 por defecto), el proceso de batch persiste hasta que las conversaciones pendientes alcanzan la inactividad (sondeando cada ~5 minutos, hasta 8 horas), una sesión ya recolectada se recolecta **de nuevo** solo si creció después, y una sesión sin cambios nunca se vuelve a recolectar. Los hooks de sesión solo despiertan el batch.
 
 ## Comandos
 
 | Comando | Uso |
 |---|---|
-| `/okf:okf-status` | Última captura/batch, sesiones pendientes y lock |
+| `/okf:okf-status` | Último batch, sesiones pendientes y estado del lock |
 | `/okf:okf-batch` | Ingest inmediato respetando el lock |
 | `/okf:okf-config` | Ver o editar configuración validada |
 | `/okf:okf-index` | Categorías, títulos y cambios recientes |
@@ -55,7 +61,7 @@ Por ejemplo, “desplegar 10% → 50% → 100% y revertir por encima de 0,5% de 
 
 **OKF no ahorra tokens. Recupera lo que una sesión nueva ya ha perdido.** Publicamos las cifras porque dicen justo eso.
 
-A una sesión de follow-up se le piden ocho hechos que estableció una sesión anterior, más un control que la memoria no puede resolver: arquitectura (SQLite / repository pattern), regla de código (named export only), fix de un incidente pasado (`busy_timeout=5000`), preferencia de respuesta (coreano / conciso), política de archivo y despliegue (`src/config.mjs` / `npm run deploy:canary`) y aritmética ajena (7 × 8 = 56). El bundle de C se construye con una captura SessionEnd **real** → batch ingest aislado → gate SessionStart; nada sembrado a mano. Un preflight se niega a gastar dinero salvo que C contenga y rutee por el gate todos los hechos objetivo, y D no contenga ninguno.
+A una sesión de follow-up se le piden ocho hechos que estableció una sesión anterior, más un control que la memoria no puede resolver: arquitectura (SQLite / repository pattern), regla de código (named export only), fix de un incidente pasado (`busy_timeout=5000`), preferencia de respuesta (coreano / conciso), política de archivo y despliegue (`src/config.mjs` / `npm run deploy:canary`) y aritmética ajena (7 × 8 = 56). El bundle de C se construye con una recolección **real** hacia `raw/` → batch ingest aislado → gate SessionStart; nada sembrado a mano. Un preflight se niega a gastar dinero salvo que C contenga y rutee por el gate todos los hechos objetivo, y D no contenga ninguno.
 
 - **A — no memory.** El statu quo honesto: sesión nueva, nada repetido.
 - **B_oracle — la hoja de respuestas.** Pega los 8 valores esperados. Escribir ese texto exige saber ya todo lo que OKF existe para recuperar, así que **ningún usuario puede ocupar esta condición**: es una cota superior, no una línea base, y su trabajo humano se cotiza a cero.
@@ -132,13 +138,13 @@ Es opt-in, autenticada y de pago, fuera de CI. Véanse el [informe](docs/benchma
 
 ### Overhead local — no es el resultado de efectividad
 
-Medición nueva del 2026-07-15, macOS arm64, Node `v26.4.0`:
+Medición nueva del 2026-07-16, macOS arm64, Node `v26.4.0`:
 
 | Operación | Mediana | Rango |
 |---|---:|---:|
-| SessionStart gate | 57.4 ms | 56.7–58.2 ms |
-| SessionEnd capture sin pérdida | 43.4 ms | 41.8–43.9 ms |
-| statusline | 36.7 ms | 34.8–36.8 ms |
+| SessionStart gate | 57.2 ms | 56.9–58.1 ms |
+| SessionEnd trigger | 41.4 ms | 39.0–42.1 ms |
+| statusline | 35.0 ms | 35.0–35.2 ms |
 
 Reproduce con `node test/bench.mjs [repositorio]`. Solo mide procesos locales, no ahorro de tokens ni velocidad del modelo.
 
@@ -186,7 +192,8 @@ La validación detectó y corrigió un `Error` estándar de Swift enlazado a un 
 
 ## Datos y privacidad
 
-- `SessionEnd` copia el transcript completo a `raw/` sin pérdida.
+- El sweep de inactividad copia el transcript completo a `raw/`; no se parsea ni se trunca durante la recolección. Los hooks de sesión solo despiertan el batch.
+- El analizador trabaja sobre una copia desechable del conocimiento en un workspace temporal y no tiene acceso físico a `raw/`, `.okf/` ni `.git`; el driver solo aplica archivos `.md` canónicos (scripts y symlinks nunca llegan al bundle).
 - Batch crea un digest limitado y lo envía a Anthropic mediante otro `claude -p`; es la única transferencia de modelo/API adicional.
 - Usa `--safe-mode`, tools restringidas, prompt por stdin, lint/rollback y sin Bash.
 - Raw está ignorado por git; solo el Markdown extraído se confirma localmente. El plugin no hace push ni añade remote.
@@ -195,7 +202,7 @@ La validación detectó y corrigió un `Error` estándar de Swift enlazado a un 
 
 ## Configuración y desinstalación
 
-Usa `~/.claude/okf/.okf/config.md` o `/okf:okf-config`. Valores principales: `enabled: true`, `batch_interval_hours: 1`, `batch_max_digest_kb: 600`, `batch_digest_cap_kb: 150`, `remove_candidate_ttl_days: 30`, `inject_max_lines` / `inject_max_bytes`: `120` / `9000`. Valores inválidos vuelven a defaults seguros.
+Usa `~/.claude/okf/.okf/config.md` o `/okf:okf-config`. Valores principales: `enabled: true` (interruptor maestro para recolección, gate y batch), `batch_interval_hours: 1`, `batch_max_digest_kb: 600`, `capture_exclude_cwd: []` (globs de exclusión de recolección, evaluados contra el cwd de cada sesión), `sweep_min_idle_minutes: 60` (inactividad tras la última actividad antes de recolectar la sesión; `0` recolecta de inmediato), `batch_digest_cap_kb: 150`, `remove_candidate_ttl_days: 30`, `inject_max_lines` / `inject_max_bytes`: `120` / `9000`. Valores inválidos vuelven a defaults seguros.
 
 ```sh
 claude plugin uninstall okf

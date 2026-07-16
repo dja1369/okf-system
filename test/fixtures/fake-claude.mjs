@@ -13,12 +13,12 @@ const prompt = positionalPrompt || fs.readFileSync(0, 'utf8');
 const mode = process.env.FAKE_CLAUDE_MODE || 'success';
 const isRepairCall = prompt.includes('lint 오류 리포트');
 
-function emitResult(subtype = 'success', isError = false) {
+function emitResult(subtype = 'success', isError = false, resultText = 'done') {
   process.stdout.write(JSON.stringify({
     type: 'result',
     subtype,
     is_error: isError,
-    result: subtype === 'success' ? 'done' : undefined,
+    result: subtype === 'success' ? resultText : undefined,
     errors: subtype === 'success' ? undefined : [subtype],
     usage: {
       input_tokens: 100,
@@ -91,11 +91,31 @@ if (isRepairCall) {
   process.exit(0);
 }
 
+let resultText = 'done';
 switch (mode) {
   case 'success':
     writeConcept();
     break;
   case 'noop':
+    resultText = 'NO-OP'; // 실제 프로토콜(ingest.md): 반영할 게 없으면 정확히 NO-OP 한 줄
+    break;
+  case 'blocked':
+    // 실측(E3) 재현: 쓰기 권한이 차단되면 분석기는 성공 종료하되 아무것도 못 쓰고
+    // NO-OP도 선언하지 않는다 — 차단 사정만 설명한다.
+    resultText = '파일 쓰기가 sensitive file 권한으로 차단되어 반영하지 못했습니다';
+    break;
+  case 'hostile-workspace':
+    // 오염된 digest에 넘어간 분석기를 재현: 정상 concept 외에 스크립트·예약 디렉토리 침입·
+    // 심링크를 함께 남긴다. 드라이버는 정규 .md만 번들로 반영해야 한다.
+    writeConcept();
+    fs.writeFileSync('decisions/evil.sh', '#!/bin/sh\necho pwned\n');
+    fs.mkdirSync('.okf', { recursive: true });
+    fs.writeFileSync('.okf/injected.md', '예약 디렉토리 침입 시도');
+    try {
+      fs.symlinkSync('/etc/hosts', 'decisions/link.md');
+    } catch {
+      // 심링크 미지원 환경(권한 없는 Windows)이면 이 벡터는 원천적으로 없다
+    }
     break;
   case 'fail':
     process.exit(1);
@@ -116,5 +136,5 @@ switch (mode) {
     fs.appendFileSync('log.md', `\n## ${process.env.FAKE_CLAUDE_SECRET || 'secret'}\n- invalid heading\n`);
     break;
 }
-emitResult();
+emitResult('success', false, resultText);
 process.exit(0);

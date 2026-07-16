@@ -84,4 +84,5 @@ try {
 } catch {
   // 상태줄이 세션 UI를 깨뜨리는 일은 없어야 한다
 }
-process.exit(0);
+// process.exit()는 pipe에 쓴 stdout을 자를 수 있다 — bin/session-start.mjs 하단 주석 참조.
+process.exitCode = 0;

@@ -13,11 +13,12 @@ OKF 설정 파일 `<OKF_HOME>/.okf/config.md`를 다룬다. `<OKF_HOME>`은 `/ok
 종료하라.
 
 주요 키 의미(참고용, 그대로 사용자에게 설명해도 됨):
-- `enabled`: 캡처/배치 전체를 켜고 끄는 스위치
+- `enabled`: 수집/배치/게이트 전체를 켜고 끄는 스위치
 - `batch_interval_hours`: 배치 재실행 최소 간격(시간)
 - `batch_max_sessions`: 배치 1회 실행당 처리할 raw 세션 상한
 - `batch_model`: 배치가 사용할 모델 (비면 CLI 기본값)
-- `capture_exclude_cwd`: 캡처를 스킵할 작업 디렉토리 glob 목록
+- `capture_exclude_cwd`: 수집(sweep)에서 제외할 작업 디렉토리 glob 목록
+- `sweep_min_idle_minutes`: 마지막 활동 후 이 시간(분)이 지난 세션만 수집 — 기본 60, 0은 즉시
 - `batch_digest_cap_kb`: digest(요약본) 파일당 용량 상한 — raw 원본에는 적용 안 됨
 - `remove_candidate_ttl_days`: `_remove_candidate/`에 보관 후 자동 삭제까지의 일수
 - `inject_max_lines` / `inject_max_bytes`: 세션 시작 시 주입되는 인덱스의 줄/바이트 상한
@@ -31,7 +32,7 @@ OKF 설정 파일 `<OKF_HOME>/.okf/config.md`를 다룬다. `<OKF_HOME>`은 `/ok
 - 값의 타입을 원래 형식과 맞춰라(불리언은 `true`/`false`, 숫자는 따옴표 없이, 리스트는
   YAML 배열, 문자열은 필요시 따옴표).
 - 안전 범위를 지켜라: `batch_interval_hours`는 0~8760, `batch_max_digest_kb`는 1~102400,
-  `batch_max_sessions`는 1~1000, `batch_digest_cap_kb`는 1~10240,
+  `batch_max_sessions`는 1~1000, `batch_digest_cap_kb`는 1~10240, `sweep_min_idle_minutes`는 0~10080,
   `remove_candidate_ttl_days`는 1~3650, `inject_max_lines`는 20~1000,
   `inject_max_bytes`는 1024~9000이다. 범위를 벗어나거나 타입이 틀린 값은 다음 실행에서
   안전한 기본값으로 대체되고 상태/로그에는 키 이름과 오류 코드만 남는다.

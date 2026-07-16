@@ -251,12 +251,11 @@ function setupOkf(benchRoot, project) {
   const cHome = path.join(benchRoot, 'okf-relevant');
   ensureBootstrap(cHome); writeConfig(cHome);
   const cPaths = okfPaths(cHome);
-  fs.writeFileSync(cPaths.lock, JSON.stringify({ pid: process.pid, startedEpochMs: Date.now() }));
-  runChecked(process.execPath, [path.join(ROOT, 'bin', 'session-end.mjs')], {
-    env: { ...process.env, OKF_HOME: cHome }, cwd: project,
-    input: JSON.stringify({ session_id: crypto.randomUUID(), transcript_path: FIXTURE, cwd: project }),
-  });
-  fs.rmSync(cPaths.lock, { force: true });
+  // 세션 훅은 더 이상 캡처하지 않는다(수집은 유휴 sweep 소관) — 벤치는 sweep이 만드는 파일명
+  // 규칙 그대로 raw를 직접 심는다. sweep 자체를 돌리지 않는 이유: 실제 ~/.claude/projects를
+  // 읽어 격리가 깨진다(OKF_BENCH_SKIP_SWEEP과 같은 이유).
+  fs.mkdirSync(cPaths.raw, { recursive: true });
+  fs.copyFileSync(FIXTURE, path.join(cPaths.raw, `2026-07-15--project--${crypto.randomUUID()}.jsonl`));
   const batchUsagePath = path.join(benchRoot, 'batch-usage.jsonl');
   runChecked(process.execPath, [path.join(ROOT, 'bin', 'batch.mjs')], {
     env: {
