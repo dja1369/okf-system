@@ -20,3 +20,9 @@ docs/benchmarks/raw/partial-*.jsonl
 
 # 런타임에 생성되는 훅 settings — 커밋 안 함
 test/.bench-settings.json
+test/.bench-chain-settings.json
+
+# v4 체인 벤치마크 작업 디렉토리 — k8s 원본 클론/워크트리(공개 소스라 커밋 불필요)와
+# 체인별 OKF_HOME 빌드 산출물(최종 상태만 선별해 docs/benchmarks/에 커밋한다)
+.bench-targets/
+.bench-chain/
