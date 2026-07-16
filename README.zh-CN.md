@@ -54,114 +54,130 @@ claude plugin install okf@okf-marketplace
 
 `bin/statusline.mjs` 不联网、不分析完整图，只输出如 `OKF 12 · +3 · 2h ago` 的一行状态。Claude Code 只允许一个 `statusLine`，因此 OKF 不自动安装或覆盖它。可在现有脚本中追加 `node /path/to/okf/bin/statusline.mjs` 的输出。
 
-## OKF 效果基准
+## OKF 基准测试
 
-<!-- okf-live-benchmark: valid-2026-07-15T16-06-28Z -->
+<!-- okf-benchmark: 2026-07-16 -->
 
-**OKF 不省 token，它只是找回新会话已经丢掉的东西。** 公开下面这些数字，就是因为它们把这一点说得很直白。
+**OKF 不会让你免于探索。它存储的是探索永远找不到的东西。**
 
-### 测的是什么
+这句话的两半都在下面用真实的开源仓库测量过，而且不利于 OKF 的那一半先公布。
 
-让后续会话回答前一个会话确立的 8 项事实，外加一道记忆帮不上忙的对照题：架构（SQLite / repository pattern）、编码规则（named export only）、过往事故修复（`busy_timeout=5000`）、响应偏好（韩语 / 简洁）、文件与部署策略（`src/config.mjs` / `npm run deploy:canary`），以及无关算术对照（7 × 8 = 56）。
+### 测量方法
 
-5 个条件，各跑 5 次交叉顺序。C 的 bundle 由真实收集进 `raw/` → 隔离 batch ingest → SessionStart gate 生成，没有手工种入 concept；preflight 先确认 C 确实包含并由 gate 路由每一项目标事实、D 一项都没有，否则拒绝花钱。
+两个固定版本的公开仓库——不用合成 fixture，这样探索的成本就是探索的真实成本，无记忆基线也就真有可能赢：
 
-- **A — no memory**：诚实的现状。新会话，什么都不复述。
-- **B_oracle（答案纸）**：原样粘贴 8 个期望值。要写出这段话，你必须已经知道 OKF 想帮你找回的每一项事实——**没有用户能处在这个条件里**，它是上界而不是基线，而且它的人力成本被计为零。
-- **B_realistic**：人们实际会做的事——把可能相关的都复述一遍，因为你无法预知下个会话需要哪一条。这就是 CLAUDE.md 的习惯。
-- **C — OKF enabled**。
-- **D — irrelevant OKF**：gate 里没有相关内容，用来区分「gate 帮了忙」和「gate 本身有成本」。
+| 角色 | 仓库 | commit |
+|---|---|---|
+| 代码库 | [slimphp/Slim](https://github.com/slimphp/Slim) | `80900fb3`（125 个 PHP 文件） |
+| 文档堆 | [rust-lang/rfcs](https://github.com/rust-lang/rfcs) | `f635361c`（651 个 Markdown 文件） |
 
-### 结果
+每个 bundle 里的每一个 concept 都由真实流水线产出——真实的 `claude -p` 会话探索固定版本的仓库、真实的 Claude Code transcript、真实的 batch ingest、真实的 gate。**没有任何 concept 是手写的**，包括那些堆出体量的 filler。这一点比听起来更重要：参见下文「累积：手工种入的 filler 无法揭示的事」。
 
-2026-07-15 live 实验：Claude Code `2.1.210`，`sonnet`/medium（Sonnet 5 + Haiku 4.5），macOS arm64，Node `v26.4.0`，每条件 5 次。C preflight：事实 8/8 存在、8/8 由 gate 路由；D 为 0/8。
+五个条件。全部拿到完全相同的工具（`Read`、`Glob`、`Grep`、`Bash(git log/show/diff/blame/grep)`）和完全相同、对条件中立的指令——没有任何条件被告知要去查 gate。
 
-| 条件 | 连续性成功 | 遵循率 p50 | token activity p50/p95 | wall p50/p95 | 成本 p50 |
-|---|---:|---:|---:|---:|---:|
-| A — no memory | **0/5** | 12% | 27,246/27,518 | 13.82/18.17 s | $0.022218 |
-| B_oracle（答案纸） | 5/5 | 100% | 9,069/9,069 | 4.86/6.46 s | $0.008410 |
-| B_realistic | 5/5 | 100% | 9,069/9,069 | 5.96/6.27 s | $0.008410 |
-| **C — OKF enabled** | **5/5** | 100% | **10,395**/10,459 | 6.46/7.15 s | $0.011329 |
-| D — irrelevant OKF | 0/5 | 0% | 20,602/21,662 | 14.50/21.15 s | $0.025879 |
+- **zero-base** — 什么都没有。OKF 声称要替换掉的就是它。
+- **answer key（答案纸）** — 答案直接贴进去。要产出那段字符串，你必须已经知道答案，所以没有用户能处在这个条件里。它是一条底线，不是竞争者。
+- **OKF** — 真实的 gate 文本。
+- **wrong knowledge（错误知识）** — 尺寸匹配的 gate，装的是关于*另一个*仓库的真实 concept。用来区分「是知识帮了忙」和「是 gate 帮了忙」。
+- **CLAUDE.md** — 同样的累积知识，粘贴进一个扁平文件。真正的现任者。
 
-这些行背后的 tool call 解释了数字：A 读 2 个文件、4 轮，仍然答错；B 零次读文件、1 轮，因为答案本来就在 prompt 里；**C 零次读文件、1 轮**——只靠 gate index 就够了；D 读 1 个文件、2 轮，去翻它 gate 里从来就没有的东西。
+`total_cost_usd` 是头条指标；token activity 列在它旁边，而绝不取代它，因为 `cache_read` 主导了那个总和，且计费便宜约 50 倍——这两列在方向上互相矛盾。效率只在回答正确的运行之间比较。每次运行的 nonce 使 prompt 缓存失效。评分由对条件不知情的裁判依照从源码验证过的 ground truth 完成。**没有任何数字在场景之间取平均**：一次 grep 和一条五文件调用链是不同的现象，把它们混在一起等于让场景选择来决定头条。
 
-`p95` 要谨慎读：n=5 时 `ceil(0.95×5)−1` 就是最后一个下标，所以 p95 **就等于**最大值——那只是一次冷缓存的运行，不是尾部统计量。列出它是因为格式要求如此，不是因为它真是尾部统计量。
+设计、预测和证伪标准都已[预注册](docs/benchmarks/pre-registration-2026-07-16.md)，并在**第一次付费调用之前**提交。
 
-**先看 A 这一行。** 没有记忆的会话烧掉 27,246 token，翻了两个文件找答案，用掉四轮——结果仍是 **0/8**。这才是 OKF 真正替换掉的条件，而 C 赢过它：token 少 2.6 倍，0/8→8/8，一轮之内、零次读文件。
+### OKF 输在哪：任何代码能回答的问题
 
-**C 赢不了 B，也永远赢不了。** B 把答案直接贴进 prompt，没有任何检索能快过「本来就有」。当前 bundle 规模下 B_realistic 等于 B_oracle（还没有无关知识需要复述），所以两者都是 9,069。C 每会话多花 1,326 token、多花 $0.0029。建 bundle 的那一次 batch ingest 花掉 **133,364** token activity 和 **$0.176758**。**不存在 token 或成本的盈亏平衡点**——`perSessionTokenSaving` 为负，harness 直接报 `null`，不会编一个出来。
+五个场景，答案都在源码或 git 历史里，从固定版本的 checkout 验证过，并且每一个都经受住了一次独立的证伪尝试。
 
-与上次相比，变的是 gate 本身。C 过去要 **22,857** token、7 轮、5 次读文件，现在是 **10,395** token、1 轮、0 次读文件，recall 同样是 5/5。旧 gate 强制一次无条件 `Read`，而它 91% 的开销就是这趟往返——去取 index 早就给出的事实。参见[修复](https://github.com/dja1369/okf-system/pull/7)。
+| 场景 | zero-base | OKF | 结论 |
+|---|---:|---:|---|
+| `rfcs_cheap` — 一次 grep | **$0.0256** · 4/5 | $0.0505 · 3/5 | OKF 贵 2.0× |
+| `slim_cheap` — 一次 grep | **$0.0198** · 4/5 | $0.0386 · 5/5 | OKF 贵 1.9× |
+| `slim_stale` — bundle 里的知识被后续 commit 弄过时了 | **$0.0345** · 5/5 | $0.0632 · 4/5 | OKF 贵 1.8× |
+| `rfcs_buried` — 在 651 篇文档里找出理由 | **$0.0326** · 4/5 | $0.0910 · 3/5 | OKF 贵 2.8× |
+| `slim_buried` — 跟踪一条五文件调用链 | $0.1669 · 2/5 · **10 次工具调用** | **$0.0701** · 2/5 · **3 次工具调用** | **OKF 便宜 2.4×** |
 
-### 累积极限——实测，不是推演
+**OKF 五场输四场。** 它只在探索确实昂贵的地方赢，而在那里它把工具调用从 10 次砍到 3 次。如果一次 grep 就能回答你的问题，gate 就是纯粹的开销——这不是缺陷，这是算术。
 
-**「知识越积越省」是假的。** 它只会更贵，而且比替代方案贵得更快。同一基准、同一 bundle，加 20 个无关 concept——index 仍然全部装得下（21 行，5,548 / 9,000 字节，什么都没被截断）：
+`slim_stale` 值得点名：bundle 携带了一条过时的断言（HTML 错误渲染器不做转义——在 commit `f897118b` 之前为真，在固定的 commit 上为假），而模型**还是去查了代码并把它纠正了过来**，4/5。过时的知识没有让它自信地答错。预注册里「它会」的那条预测是错的。
 
-| 条件 | 连续性成功 | 遵循率 p50 | token activity p50/p95 | wall p50/p95 | 成本 p50 |
-|---|---:|---:|---:|---:|---:|
-| A — no memory | 0/5 | 0% | 27,316/27,717 | 13.79/18.05 s | $0.022838 |
-| B_oracle（答案纸） | 5/5 | 100% | 9,070/9,085 | 5.33/6.78 s | $0.008410 |
-| B_realistic | 5/5 | 100% | 10,406/10,406 | 5.72/9.62 s | $0.010134 |
-| **C — OKF enabled** | **5/5** | 100% | **25,384**/25,773 | 11.75/13.15 s | $0.030721 |
-| D — irrelevant OKF | 0/5 | 0% | 22,265/22,334 | 14.91/19.59 s | $0.037354 |
+### OKF 是唯一管用的东西的地方：代码里不包含的知识
 
-与 0 filler 那次相比：B_realistic 增长 **+1,337**（9,069 → 10,406），C 增长 **+14,989**（10,395 → 25,384）——**C 的劣化比 B 快约 11 倍**，每多一个 concept 多花 749 token，B 只多 67。两者仍然都答对 5/5，所以这是纯粹的成本回归，不是准确率回归。
+团队政策和领域词汇——在对话里定下来，从未写进仓库。每个场景都被一位独立对手攻击过，他搜索了工作树、约 300 个 git 历史修订、commit message、文档、配置、stash 和 dangling object（零命中），并且**在查看之前先记下了一个基于惯例的猜测**。那些猜测得分为 0/3、0/3 和 1/5。
 
-原因不是截断，是信任：
+每个仓库还各藏着一个陷阱：grep "emitter" 会找到 `ResponseEmitter`；找 chunk size 会找到 `4096`；在 RFC 堆里搜 MSRV 政策，文档提议的是 `N-2`。
 
-```
-0 filler:   C reads=0  turns=1    直接照 index 行作答
-20 filler:  C reads=3  turns=4    退回去开文件
-```
+| 场景 | zero-base | OKF | 错误知识 | CLAUDE.md |
+|---|---:|---:|---:|---:|
+| `slim_policy` — 哪个 env 启用错误详情，以及那条例外 | **0/5**（花掉 $0.0509） | **5/5** · $0.0840 | 0/5 | 5/5 · $0.1314 |
+| `slim_domain` — 团队说的「에미터」指什么 | **0/5** · **自信答错 5/5** | **4/5** · $0.0624 | 0/5 | 5/5 · $0.1198 |
+| `rfcs_policy` — 团队「解冻规则」的等待期 | **0/5** | 2/5 · $0.0749 | 0/5 | 0/5 |
 
-二十个不相关的 concept，就足以让模型不再相信 index 行、转而回文件核对——正好把 gate 修复刚干掉的那趟往返又救了回来。index 只告诉你有这么一行，不告诉你这一行就是*完整*答案；周围噪声一大，去核对就成了理性选择。**这才是真正的天花板，而它在约 21 个 concept 处就到了——远早于任何上限生效。**
+**zero-base 15 战 0 胜。** 它花了钱，什么也没得到，因为答案根本不在那儿。在 `slim_domain` 上它**5 次运行里 5 次自信地答错**：它探索、找到 `ResponseEmitter`，然后高置信度地作答——而团队的「에미터」是 `OutputBufferingMiddleware`，因为他们跑的是 FrankenPHP worker 模式，`ResponseEmitter` 在那里是死代码。探索在这里不只是失败；它从陷阱里制造出一个自信的错误答案。
 
-截断是第二堵墙，更靠外。gate 的 index 被硬性截断以守住 Claude Code 的 10,000 字符 hook 上限，而真实韩语 concept 行约 214 字节：
+**错误知识同样 15 战 0 胜。** 装满真实但不相关 concept 的 gate 什么也救不回来。收益来自知识，而不是来自「有个 gate」。
 
-| bundle 内 concept 数 | gate index 显示 |
-|---:|---:|
-| 20 | 20 |
-| 40 | 40 |
-| **55** | **43**（截断） |
-| 100 | 43（截断） |
+OKF 答对 15 题中的 11 题，成本比携带同样事实的 CLAUDE.md 低 1.6–1.9×。在 `slim_domain` 上它**一个 concept 文件都没读**（0/5）——只靠 index 行就够了，2 次工具调用，对比 zero-base 的 7 次。
 
-超过约 43 个 concept，index 开始截断，留下谁由文件名决定——不看相关性，也不看新旧。50 个 filler 的那次实验**preflight 直接失败**正是因此（`presentFacts: 8, routedFacts: 6, ready: false`）：`decisions/tech-stack.md` 排在 filler 之后被切掉，带走两项事实。各类别轮流分配，不会有类别被饿死；被截断的类别会指向自己的 `index.md`，其余仍可下钻拿到——但下钻就是一次 tool 往返，同样的成本再付一遍。
+`rfcs_policy` 是诚实的失败：OKF 只拿到 2/5。躺在文档堆里的 `N-2` 提案是个足够强的陷阱，能把模型从正确的 index 行上拽走。CLAUDE.md 在那里是 0/5。
 
-两堵墙都不是可调参数。要解决第一堵，index 必须能标出*哪些行本身就是完整答案*，让模型不开文件也敢信；这件事还没做，在做完之前，每多一个 concept，OKF 的经济性就更差一分。
+### 累积：手工种入的 filler 无法揭示的事
 
-累积实验：[raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-30-11-404Z.json)。50 filler 的 preflight 失败保留在[preflight 审计](docs/benchmarks/raw/okf-live-preflight-failed-2026-07-15T16-11-37-402Z.json)——刻意保留的负面结果。
+同一个问题（`slim_buried`）、同一套 harness，bundle 通过 ingest 更多真实会话而增长。
 
-harness 还记录决定遵循率、错误假设、额外问题、tool call、首次有效响应、API/wall time、`input_tokens`、`output_tokens`、`cache_creation_input_tokens`、`cache_read_input_tokens` 和 CLI 报告成本；raw JSON 保留独立 token 类别。注意 `tokenActivity` 把 cache read 与 output token 按 1:1 相加，而 cache read 计费便宜约 50 倍——**成本才是站得住的那一列**；且 n=5 时 harness 的 `p95` 在算术上必然等于最大值（也就是冷启动那一次，见上文 p95 说明）。CLI 无法单独提供的 user-only 或 gate-only token 保持 `null`，不会估算。
+| bundle 内 concept 数 | gate 字节数 | OKF | CLAUDE.md | zero-base（扁平参照） |
+|---:|---:|---:|---:|---:|
+| 1 | 2,551 | $0.1291 | $0.1279 | $0.1669 |
+| 5 | 3,621 | $0.1020 | $0.1506 | $0.1669 |
+| 8 | 4,701 | $0.1425 | $0.1741 | $0.1669 |
+| 10 | 5,414 | $0.0919 | $0.2358 | $0.1669 |
+| 15 | 5,415 | **$0.0701** | $0.2249 | $0.1669 |
+| 35 | 5,415 | $0.0908 | **$0.2828** | $0.1669 |
+
+**从 1 个到 35 个 concept，OKF 变得更便宜（$0.1291 → $0.0908），而 CLAUDE.md 贵了 2.2×（$0.1279 → $0.2828）。** 两条曲线在分叉。
+
+原因在第二列里看得见。在 15 到 35 个 concept 之间——2.3× 的知识量——gate 只长了**一个字节**，因为 batch 创建了一个嵌套域，把 14 个 concept 折叠成了一行 index（`- [slim](/references/slim/index.md): 하위 도메인 — concept 14개`）。CLAUDE.md 在每次 prompt 里都携带每个 concept 的正文，所以它线性增长。**gate 不会。**
+
+这就是只有真实知识才能产出的发现。这个基准的上一次运行用手工种入 filler——二十个手写 concept，全是扁平的，全在 `decisions/` 里——那会强迫 index 线性增长，并得出「OKF 的经济性随累积而恶化」的结论。真实的 batch 不会那样堆叠知识。那次测量测的是 fixture，不是系统。
+
+准确率，说实话：它不随体量提升，而且一直很吵（2/5–5/5）。在 n=5 下，这里没有任何东西能分得开。
+
+### 本地开销（不是效果基准结果）
+
+2026-07-16 测量，macOS arm64，Node `v26.4.0`，中位数附最小/最大值。
+
+| 本地操作 | 中位数 | 范围 |
+|---|---:|---:|
+| SessionStart gate 进程 | 57.3 ms | 56.1–60.0 ms |
+| SessionEnd batch 触发进程 | 40.1 ms | 39.3–40.8 ms |
+| statusline 进程 | 35.8 ms | 34.6–36.3 ms |
+
+用 `node test/bench.mjs [仓库]` 复现。只测本地进程成本；它不证明关于 token 或模型延迟的任何事。
+
+### 成本，以及这次运行无法告诉你的事
+
+构建这些知识在真实会话里花了 **$3.59**，在 batch ingest 里花了 **$4.92**。250 次测量运行花了 **$28.16**，外加 **$9.44** 的评分费用。
 
 ```sh
-OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                      # 如上文发布
-OKF_RUN_LIVE_BENCH=1 OKF_BENCH_FILLER=50 node test/bench-okf.mjs  # 累积轴
+OKF_RUN_LIVE_BENCH=1 node test/bench-knowledge.mjs --target slim --dir <repo>   # real sessions → transcripts
+OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 1,5,20  # real batch → level bundles
+OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                                    # measure
 ```
 
-该命令付费且需认证，不进入 CI。参见[报告](docs/benchmarks/okf-live-2026-07-15T16-06-28-592Z.md)、[raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-06-28-592Z.json)和[解释指南](docs/USAGE.md)。修复前的旧实验作为审计记录保留。
+付费、需认证，并且刻意排除在冒烟测试和 CI 之外。
+[完整报告](docs/benchmarks/okf-benchmark-2026-07-16.md) ·
+[raw JSON](docs/benchmarks/raw/) ·
+[预注册](docs/benchmarks/pre-registration-2026-07-16.md) ·
+[使用指南](docs/USAGE.md)。
 
-### 本地开销（不是效果基准）
+限制，直说：
 
-2026-07-16，macOS arm64，Node `v26.4.0` 的新测量：
-
-| 操作 | 中位数 | 范围 |
-|---|---:|---:|
-| SessionStart gate 进程 | 57.2 ms | 56.9–58.1 ms |
-| SessionEnd 触发进程 | 41.4 ms | 39.0–42.1 ms |
-| statusline 进程 | 35.0 ms | 35.0–35.2 ms |
-
-用 `node test/bench.mjs [仓库]` 复现。这只测本地 hook/process，不证明 token 或模型响应改善。
-
-### Batch 成本和盈亏平衡
-
-```text
-初始 OKF 成本 = batch ingest + repair + 实测无关 gate 开销
-每会话净节省 = B_realistic 中位数 - OKF 中位数
-盈亏平衡会话数 = ceil(初始 OKF 成本 / 正的每会话净节省)
-```
-
-对比基准是 **B_realistic**，不是 B_oracle。B_oracle 的复述文本里本就含有答案，等于把 OKF 存在的意义定价为零，对它算盈亏平衡毫无意义。本次实测无论跟哪个比，节省都是负的（−1,326 token、−$0.0029），因此两个盈亏平衡字段都报 `null`。这是结果本身，不是 harness 的缺口。
+- **每格 n=5。** 很小。这里只有分布之间完全分离才被称作赢。
+- **模型组合没有固定。** 请求的是 `claude-sonnet-5`；CLI 在它旁边为内部工作解析出了 `claude-haiku-4-5`。跨条件的成本比较带着这个瑕疵。
+- **两个仓库，各一种语言。** 不主张跨规模或跨生态的普适性。
+- **不公布 wall-clock。** 测量以并发 5 运行；成本、token 和工具调用不受其影响，响应延迟则会受影响。速度主张需要一次串行重跑。
+- gate 文本是前置到 prompt 里的，而不是走生产环境的 `SessionStart` `additionalContext` 路径。文本相同，投递方式不同。
+- 政策类场景依赖于由人来撰写政策。政策本来就是这么回事。辩护理由是：答案可证明地不存在于仓库中，而且一位对手也猜不出来。
 
 ## 语言支持
 
