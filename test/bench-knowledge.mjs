@@ -31,6 +31,9 @@ const concurrency = Number(arg('concurrency', '6'));
 //   concept이 되고, 나중 세션이 그걸 다시 탐색하지 않아도 되는지를 측정한다.
 // filler: 같은 저장소에 대한 다른 실제 작업. 번들 볼륨을 만든다.
 const mode = arg('mode', 'filler');
+const only = arg('only', '');
+const budget = arg('budget', '0.25');
+const turns = arg('turns', '8');
 
 if (!fs.existsSync(targetDir)) {
   console.error(`대상 디렉토리가 없습니다: ${targetDir}`);
@@ -46,7 +49,7 @@ if (process.env.OKF_RUN_LIVE_BENCH !== '1') {
 function topics() {
   if (mode === 'target') {
     const scenarios = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'bench', 'scenarios.json'), 'utf8')).scenarios;
-    return scenarios.filter((s) => s.target === target).map((s) => ({
+    return scenarios.filter((s) => s.target === target && (!only || s.key === only)).map((s) => ({
       slug: `target-${s.key}`,
       prompt: s.work_prompt_ko,
       // slim_stale의 지식은 옛 커밋에서 만든다. 인위적으로 틀린 지식을 심는 게 아니라, 코드가
@@ -96,7 +99,7 @@ function runSession(topic, cwd) {
   return new Promise((resolve) => {
     const args = ['-p', '--output-format', 'json', '--safe-mode', '--model',
       topic.atCommit ? 'sonnet' : model,
-      '--max-turns', '8', '--max-budget-usd', '0.25', '--permission-mode', 'dontAsk',
+      '--max-turns', turns, '--max-budget-usd', budget, '--permission-mode', 'dontAsk',
       '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep'];
     // OKF_BATCH=1: 이 세션들이 사용자의 진짜 번들에 배치를 트리거하지 못하게 막는다.
     const child = spawn('claude', args, {

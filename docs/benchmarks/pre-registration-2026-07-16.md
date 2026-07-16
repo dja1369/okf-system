@@ -129,6 +129,26 @@ those words.
 - `n = 5` per cell. This is small. Only differences that survive as complete separation between
   conditions are described as wins; overlapping distributions are reported as "not separated".
 
+## Amendments after registration
+
+Recorded here rather than edited in silently. An amendment log is the only thing that keeps a
+pre-registration honest once it is no longer a prediction.
+
+**A1 (before the first measurement call, after the first bundle was built) — added the
+"does the gate answer it alone?" audit.** Inspecting the L1 bundle showed that the batch had written
+a concept whose one-line `description` — the line the gate injects — *is the conclusion itself*:
+
+> "…자동 교체된 RequestHandler 전략의 appendRouteArgumentsToRequestAttributes 플래그가 기본 false라서
+> `$request->getAttribute('id')`가 null이 된다"
+
+So the agent may answer correctly without ever opening the concept file. That is genuine OKF
+behaviour, not rigging: the question was written from source before any bundle existed, and no
+concept was authored by hand. But it changes what a cheap `okf` number *means* — the saving would
+come from the index being injected, not from selectively reading. The keyword check registered in
+this document cannot detect it (the wording differs; only 3–4 of 16 keywords match), so a
+condition-blind judge is now asked, per scenario and level, whether the injected text alone suffices.
+Every affected cell is labelled in the report.
+
 ## Known limitations (stated before the result is known)
 
 - Two repositories, one language each. No claim of generality across repo sizes.

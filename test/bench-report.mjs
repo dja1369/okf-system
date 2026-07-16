@@ -72,7 +72,7 @@ for (const key of scenarioKeys) {
   const notes = [];
   if (okf) {
     notes.push(`OKF가 번들의 concept 파일을 실제로 Read한 런: ${okf.readTargetConcept}/${okf.runs}`);
-    if (okf.answerInGateIndex > 0) notes.push(`**게이트 인덱스만으로 정답 키워드 과반이 노출된 런 ${okf.answerInGateIndex}/${okf.runs}** — 이 런의 OKF는 사실상 정답지 조건이다`);
+    if (okf.gateAnswersAlone > 0) notes.push(`**주입된 게이트 텍스트만으로 이미 답이 나오는 셀이다(${okf.gateAnswersAlone}/${okf.runs}런).** 배치가 쓴 concept의 한 줄 설명이 목차가 아니라 결론 그 자체였다. 이 경우 OKF의 이득은 "필요한 것만 골라 읽어서"가 아니라 "이미 주입돼 있어서" 생긴 것이다 — 실제 OKF 동작이지만 구분해서 읽어야 한다.`);
   }
   const censored = rows.filter((r) => r.censored > 0).map((r) => `${CONDITION_LABEL[r.condition]} ${r.censored}건`);
   if (censored.length) notes.push(`턴 상한에 걸려 측정 불가(검열): ${censored.join(', ')}`);
