@@ -55,108 +55,190 @@ Warum idle-basiert? Sitzungen enden selten explizit — Background-Agenten tun e
 
 `bin/statusline.mjs` gibt ohne Netzwerk oder Graphanalyse eine Zeile wie `OKF 12 · +3 · 2h ago` aus. Claude Code erlaubt nur eine `statusLine`; OKF installiert oder überschreibt sie nicht. Die Ausgabe von `node /path/to/okf/bin/statusline.mjs` kann an ein bestehendes Skript angehängt werden.
 
-## Benchmark der OKF-Wirkung
+## OKF-Benchmark
 
-<!-- okf-live-benchmark: valid-2026-07-15T16-06-28Z -->
+<!-- okf-benchmark: 2026-07-16 -->
 
-**OKF spart keine Tokens. Es stellt wieder her, was eine frische Sitzung bereits verloren hat.**
+**OKF erspart Ihnen das Explorieren nicht. Es speichert, was Exploration niemals finden kann.**
 
-Abgefragt werden acht Fakten einer früheren Sitzung — Architektur (SQLite / repository pattern), Coding-Regel (named export only), Incident-Fix (`busy_timeout=5000`), Antwortpräferenz (Koreanisch / knapp), Datei- und Deploy-Policy (`src/config.mjs` / `npm run deploy:canary`) — plus eine Kontrollfrage ohne Gedächtnisbezug (7 × 8 = 56).
+Beide Hälften dieses Satzes werden unten gemessen, an echten Open-Source-Repositories, und die
+Hälfte, die wenig schmeichelhaft ist, wird zuerst veröffentlicht.
 
-- **A — no memory.** Status quo: frische Sitzung, nichts wiederholt.
-- **B_oracle — Lösungsschlüssel.** Fügt exakt die 8 erwarteten Werte ein; wer den String schreibt, kennt bereits jeden Fakt, den OKF wiederherstellen soll. **Kein Nutzer kann diese Bedingung einnehmen** — Obergrenze, keine Baseline, menschliche Arbeit mit null bepreist.
-- **B_realistic — was Menschen tatsächlich tun.** Wiederholt alles möglicherweise Relevante, weil man vorher nicht weiß, was die nächste Sitzung braucht (CLAUDE.md-Gewohnheit). Der reale Vergleich.
-- **C — OKF enabled.**
-- **D — irrelevant OKF.** Gate ohne relevanten Inhalt, trennt „das Gate half“ von „ein Gate kostet etwas“.
+### Wie gemessen wurde
 
-Live-Lauf am 2026-07-15: Claude Code `2.1.210`, `sonnet`/medium (Sonnet 5 + Haiku 4.5), macOS arm64, Node `v26.4.0`, fünf Läufe je Bedingung in gekreuzter Reihenfolge. Cs Bundle entsteht aus echter Erfassung in `raw/` → isoliertem Batch-Ingest → SessionStart-Gate; Preflight: C 8/8 vorhanden und 8/8 gate-geroutet, D 0/8.
+Zwei fixierte öffentliche Repositories — kein synthetisches Fixture, damit Exploration das kostet,
+was Exploration tatsächlich kostet, und die Baseline ohne Gedächtnis wirklich gewinnen kann:
 
-| Bedingung | Kontinuität | Einhaltung p50 | token activity p50/p95 | wall p50/p95 | Kosten p50 |
-|---|---:|---:|---:|---:|---:|
-| A — no memory | **0/5** | 12% | 27,246/27,518 | 13.82/18.17 s | $0.022218 |
-| B_oracle (Lösungsschlüssel) | 5/5 | 100% | 9,069/9,069 | 4.86/6.46 s | $0.008410 |
-| B_realistic | 5/5 | 100% | 9,069/9,069 | 5.96/6.27 s | $0.008410 |
-| **C — OKF enabled** | **5/5** | 100% | **10,395**/10,459 | 6.46/7.15 s | $0.011329 |
-| D — irrelevant OKF | 0/5 | 0% | 20,602/21,662 | 14.50/21.15 s | $0.025879 |
+| Rolle | Repository | Commit |
+|---|---|---|
+| Codebase | [slimphp/Slim](https://github.com/slimphp/Slim) | `80900fb3` (125 PHP-Dateien) |
+| Dokumentenhaufen | [rust-lang/rfcs](https://github.com/rust-lang/rfcs) | `f635361c` (651 Markdown-Dateien) |
 
-Die Tool-Calls dahinter erklären die Zahlen: A liest 2 Dateien über 4 Turns und scheitert trotzdem; B antwortet in 1 Turn mit 0 Reads, weil die Antworten schon im Prompt stehen; **C antwortet in 1 Turn mit 0 Reads** — der Gate-Index allein genügte; D liest 1 Datei über 2 Turns und sucht, was sein Gate nie enthielt.
+Jedes Concept in jedem Bundle wurde von der echten Pipeline erzeugt — eine echte `claude -p`-Sitzung,
+die das fixierte Repo exploriert, ihr echtes Claude-Code-Transcript, echter Batch-Ingest, echtes
+Gate. **Kein Concept wurde von Hand geschrieben**, auch nicht der Füllstoff, der Volumen erzeugt. Das
+wiegt schwerer, als es klingt: siehe [Akkumulation](#akkumulation-was-von-hand-gesetzter-füllstoff-nicht-zeigen-kann).
 
-`p95` mit Vorsicht lesen: bei n=5 ist `ceil(0.95×5)−1` der letzte Index, p95 **ist** also das Maximum — ein einzelner Cold-Cache-Lauf, keine Tail-Statistik. Er steht hier, weil das geforderte Format ihn verlangt, nicht weil er eine ist.
+Fünf Bedingungen. Alle erhalten identische Tools (`Read`, `Glob`, `Grep`, `Bash(git log/show/diff/blame/grep)`)
+und eine identische, bedingungsneutrale Anweisung — keiner Bedingung wird gesagt, sie solle das Gate
+konsultieren.
 
-**Zuerst Zeile A lesen.** Ohne Gedächtnis verbrennt die Sitzung 27,246 Tokens, liest zwei Dateien, braucht vier Turns — und liefert trotzdem **0/8**. Genau das ersetzt OKF, und C schlägt es: 2.6× weniger Tokens, 8/8, in einem Turn ohne Reads.
+- **zero-base** — nichts. Das, was OKF zu ersetzen behauptet.
+- **answer key** — die eingefügte Antwort. Diesen String zu erzeugen setzt voraus, die Antwort bereits
+  zu kennen, deshalb kann kein Nutzer diese Bedingung einnehmen. Sie ist eine Untergrenze, kein
+  Konkurrent.
+- **OKF** — der echte Gate-Text.
+- **wrong knowledge** — ein größengleiches Gate aus echten Concepts über das *andere* Repository.
+  Trennt „das Wissen half“ von „ein Gate half“.
+- **CLAUDE.md** — dasselbe angesammelte Wissen, in eine flache Datei eingefügt. Der reale
+  Platzhirsch.
 
-**C schlägt B nicht und wird es nie** — B hat die Antworten schon im Prompt. Bei dieser Bundle-Größe ist B_realistic gleich B_oracle (beide 9,069); C kostet 1,326 Tokens und $0.0029 je Sitzung mehr. Der Bundle-Aufbau kostete **133,364** token activity und **$0.176758**. **Einen Token- oder Kosten-Break-even gibt es nicht**; `perSessionTokenSaving` ist negativ, daher meldet die Harness `null`, statt einen zu erfinden.
+`total_cost_usd` ist die Schlagzeile; die Token-Aktivität steht daneben, nie an ihrer Stelle, denn
+`cache_read` dominiert diese Summe und rechnet ~50× günstiger ab — die beiden Spalten widersprechen
+sich in der Richtung. Effizienz wird nur an korrekten Läufen verglichen. Eine Nonce pro Lauf hebelt
+Prompt-Caching aus. Bewertet wird von einem bedingungsblinden Judge gegen aus dem Quelltext
+verifizierte Ground Truth. **Keine Zahl wird über Szenarien gemittelt**: ein grep und eine
+Aufrufkette über fünf Dateien sind verschiedene Phänomene, und sie zu mischen würde die
+Szenarienauswahl die Schlagzeile bestimmen lassen.
 
-Geändert hat sich das Gate: C kostete zuvor **22,857** Tokens über 7 Turns mit 5 Reads, jetzt 10,395 in 1 Turn mit 0 Reads bei identischer 5/5-Recall. 91 % des alten Overheads war ein verordneter `Read`-Round-Trip, der Fakten erneut holte, die der Index längst geliefert hatte.
+Design, Vorhersagen und Widerlegungskriterien wurden [vorregistriert](docs/benchmarks/pre-registration-2026-07-16.md)
+und **vor dem ersten bezahlten Call** committet.
 
-### Die Akkumulationsgrenze — gemessen, nicht projiziert
+### Wo OKF verliert: alles, was der Code beantworten kann
 
-**„OKF wird billiger, je mehr Wissen sich ansammelt“ ist falsch.** Es wird teurer — und zwar schneller als die Alternative. Gleicher Benchmark, gleiches Bundle, 20 unbeteiligte Concepts ergänzt; alles passt weiterhin in den Index (21 Zeilen, 5,548 von 9,000 Bytes, nichts gekürzt):
+Fünf Szenarien, deren Antworten im Quelltext oder in der git-Historie stehen, verifiziert am
+fixierten Checkout, und jedes hat einen unabhängigen Widerlegungsversuch überstanden.
 
-| Bedingung | Kontinuität | Einhaltung p50 | token activity p50/p95 | wall p50/p95 | Kosten p50 |
-|---|---:|---:|---:|---:|---:|
-| A — no memory | 0/5 | 0% | 27,316/27,717 | 13.79/18.05 s | $0.022838 |
-| B_oracle (Lösungsschlüssel) | 5/5 | 100% | 9,070/9,085 | 5.33/6.78 s | $0.008410 |
-| B_realistic | 5/5 | 100% | 10,406/10,406 | 5.72/9.62 s | $0.010134 |
-| **C — OKF enabled** | **5/5** | 100% | **25,384**/25,773 | 11.75/13.15 s | $0.030721 |
-| D — irrelevant OKF | 0/5 | 0% | 22,265/22,334 | 14.91/19.59 s | $0.037354 |
+| Szenario | zero-base | OKF | Fazit |
+|---|---:|---:|---|
+| `rfcs_cheap` — ein grep | **$0.0256** · 4/5 | $0.0505 · 3/5 | OKF 2.0× teurer |
+| `slim_cheap` — ein grep | **$0.0198** · 4/5 | $0.0386 · 5/5 | OKF 1.9× teurer |
+| `slim_stale` — Bundle-Wissen durch einen späteren Commit veraltet | **$0.0345** · 5/5 | $0.0632 · 4/5 | OKF 1.8× teurer |
+| `rfcs_buried` — die Begründung unter 651 Dokumenten finden | **$0.0326** · 4/5 | $0.0910 · 3/5 | OKF 2.8× teurer |
+| `slim_buried` — einer Aufrufkette über fünf Dateien folgen | $0.1669 · 2/5 · **10 Tools** | **$0.0701** · 2/5 · **3 Tools** | **OKF 2.4× günstiger** |
 
-Gegenüber dem 0-Filler-Lauf wuchs B_realistic um **+1,337** (9,069 → 10,406), C dagegen um **+14,989** (10,395 → 25,384). **C verschlechtert sich ~11× schneller** — 749 Tokens je zusätzlichem Concept gegen 67. Beide antworten weiterhin 5/5: eine reine Kostenregression, kein Genauigkeitsproblem.
+**OKF verliert vier von fünf.** Es gewinnt nur dort, wo Exploration wirklich teuer ist, und dort
+senkt es die Tool-Calls von 10 auf 3. Wenn ein grep Ihre Frage beantwortet, ist das Gate reiner
+Overhead — das ist kein Defekt, das ist Arithmetik.
 
-Die Ursache ist nicht Kürzung, sondern Vertrauen:
+`slim_stale` verdient eine Erwähnung: Das Bundle trug eine veraltete Behauptung (der HTML-Error-Renderer
+escaped nicht — wahr vor Commit `f897118b`, falsch am fixierten Commit) und das Modell **prüfte den
+Code und korrigierte sie trotzdem**, 4/5. Veraltetes Wissen machte es nicht selbstbewusst falsch. Die
+vorregistrierte Vorhersage, dass es das täte, war falsch.
 
-```
-0 Filler:   C reads=0  turns=1    antwortet direkt aus der Indexzeile
-20 Filler:  C reads=3  turns=4    öffnet wieder Dateien
-```
+### Wo OKF das Einzige ist, was funktioniert: Wissen, das der Code nicht enthält
 
-Zwanzig irrelevante Concepts genügten, damit das Modell der Indexzeile nicht mehr glaubt und gegen die Datei prüft — exakt der Round-Trip, den der Gate-Fix entfernt hatte. Der Index sagt, dass eine Zeile existiert; er sagt nicht, dass sie die *vollständige* Antwort ist — mit wachsendem Rauschen ist Nachprüfen die rationale Wahl. **Das ist die eigentliche Decke, und sie kommt bei ~21 Concepts — lange bevor irgendein Cap greift.**
+Team-Policy und Domänenvokabular — im Gespräch entschieden, nie ins Repo geschrieben. Jedes Szenario
+wurde von einem unabhängigen Angreifer attackiert, der den Working Tree, ~300 Revisionen
+git-Historie, Commit-Messages, Docs, Config, Stashes und dangling objects durchsuchte (null Treffer)
+und der **vor dem Nachsehen eine Vermutung aus der Konvention notierte**. Diese Vermutungen erreichten
+0/3, 0/3 und 1/5.
 
-Kürzung ist die zweite, weiter entfernte Wand. Der Index ist hart gedeckelt (10,000-Zeichen-Grenze für Hooks), echte koreanische Concept-Zeilen laufen bei ~214 Bytes:
+Jedes Repo enthält außerdem eine Falle: grep nach „emitter“ und man findet `ResponseEmitter`; sucht
+man eine Chunk-Größe, findet man `4096`; durchsucht man den RFC-Haufen nach einer MSRV-Policy,
+schlagen die Dokumente `N-2` vor.
 
-| Concepts im Bundle | Im Gate-Index gezeigt |
-|---:|---:|
-| 20 | 20 |
-| 40 | 40 |
-| **55** | **43** (gekürzt) |
-| 100 | 43 (gekürzt) |
+| Szenario | zero-base | OKF | wrong knowledge | CLAUDE.md |
+|---|---:|---:|---:|---:|
+| `slim_policy` — welches env Fehlerdetails aktiviert, und die Ausnahme | **0/5** ($0.0509 ausgegeben) | **5/5** · $0.0840 | 0/5 | 5/5 · $0.1314 |
+| `slim_domain` — was das Team mit „에미터“ meint | **0/5** · **selbstbewusst falsch 5/5** | **4/5** · $0.0624 | 0/5 | 5/5 · $0.1198 |
+| `rfcs_policy` — die Wartezeit der „thaw rule“ des Teams | **0/5** | 2/5 · $0.0749 | 0/5 | 0/5 |
 
-**Ab ca. 43 Concepts kürzt der Index**, und was überlebt, entscheidet der Dateiname — nicht Relevanz, nicht Aktualität. Genau daran **scheitert der Preflight** mit 50 Filler-Concepts (`presentFacts: 8, routedFacts: 6`): `decisions/tech-stack.md` sortierte hinter die Filler und fiel heraus. Kategorien werden Round-Robin verteilt, damit keine verhungert, und gekürzte Kategorien verweisen auf ihre eigene `index.md` — Abstieg ist aber ein Tool-Round-Trip, dieselben Kosten noch einmal.
+**Zero-base stand 0 von 15.** Es gab das Geld aus und bekam nichts, weil die Antwort nicht da ist. Bei
+`slim_domain` war es **in 5 von 5 Läufen selbstbewusst falsch**: Es explorierte, fand
+`ResponseEmitter` und antwortete mit hoher Zuversicht — während das „에미터“ des Teams
+`OutputBufferingMiddleware` ist, weil sie im FrankenPHP-Worker-Mode laufen, wo `ResponseEmitter` toter
+Code ist. Exploration scheitert hier nicht bloß; sie fabriziert aus der Falle eine selbstbewusste
+falsche Antwort.
 
-Keine der beiden Wände ist ein Tuning-Knopf. Die erste zu beheben verlangt, dass der Index signalisiert, *welche Zeilen vollständige Antworten sind*, damit das Modell ihnen ohne Dateiöffnen vertrauen kann; diese Arbeit ist nicht getan — bis dahin wird OKFs Ökonomie mit jedem weiteren Concept schlechter.
+**Wrong knowledge stand ebenfalls 0 von 15.** Ein Gate voller echter, aber irrelevanter Concepts
+holt nichts zurück. Der Gewinn kommt aus dem Wissen, nicht daraus, ein Gate zu haben.
 
-Akkumulationslauf: [Raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-30-11-404Z.json). Der 50-Filler-Preflight-Fehler bleibt als [Preflight-Audit](docs/benchmarks/raw/okf-live-preflight-failed-2026-07-15T16-11-37-402Z.json) erhalten — ein bewusst aufbewahrtes Negativergebnis.
+OKF beantwortete 11 von 15, zu 1.6–1.9× weniger als CLAUDE.md mit denselben Fakten. Bei `slim_domain`
+las es **überhaupt keine Concept-Datei** (0/5) — die Indexzeile allein genügte, bei 2 Tool-Calls
+gegen 7 von zero-base.
 
-Gemessen werden Erfolg, Einhaltung, falsche Annahmen, Rückfragen, Tool Calls, erste gültige Antwort, API/Wall-Zeit, `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` und CLI-Kosten; Tokenkategorien bleiben im Raw-JSON getrennt. `tokenActivity` addiert Cache-Reads 1:1 mit Output-Tokens, obwohl sie ~50× günstiger abrechnen — **belastbar ist die Kostenspalte**. User-only/Gate-only-Tokens bleiben ohne Schätzung `null`.
+`rfcs_policy` ist das ehrliche Scheitern: OKF schaffte nur 2/5. Der `N-2`-Vorschlag, der im
+Dokumentenhaufen liegt, ist eine starke genug Falle, um das Modell von einer korrekten Indexzeile
+wegzuziehen. CLAUDE.md erreichte dort 0/5.
+
+### Akkumulation: was von Hand gesetzter Füllstoff nicht zeigen kann
+
+Gleiche Frage (`slim_buried`), gleiche Harness, Bundle gewachsen durch Ingest weiterer echter
+Sitzungen.
+
+| Concepts im Bundle | Gate-Bytes | OKF | CLAUDE.md | zero-base (flache Referenz) |
+|---:|---:|---:|---:|---:|
+| 1 | 2,551 | $0.1291 | $0.1279 | $0.1669 |
+| 5 | 3,621 | $0.1020 | $0.1506 | $0.1669 |
+| 8 | 4,701 | $0.1425 | $0.1741 | $0.1669 |
+| 10 | 5,414 | $0.0919 | $0.2358 | $0.1669 |
+| 15 | 5,415 | **$0.0701** | $0.2249 | $0.1669 |
+| 35 | 5,415 | $0.0908 | **$0.2828** | $0.1669 |
+
+**Von 1 auf 35 Concepts wurde OKF günstiger ($0.1291 → $0.0908), während CLAUDE.md 2.2× teurer wurde
+($0.1279 → $0.2828).** Die Kurven laufen auseinander.
+
+Der Grund ist in der zweiten Spalte sichtbar. Zwischen 15 und 35 Concepts — 2.3× so viel Wissen —
+wuchs das Gate um **ein Byte**, weil der Batch eine verschachtelte Domäne anlegte und 14 Concepts zu
+einer einzigen Indexzeile zusammenfasste (`- [slim](/references/slim/index.md): 하위 도메인 — concept 14개`).
+CLAUDE.md trägt jeden Concept-Body in jedem Prompt mit, wächst also linear. **Das Gate nicht.**
+
+Das ist der Befund, den nur echtes Wissen hervorbringen konnte. Ein früherer Lauf dieses Benchmarks
+setzte Füllstoff von Hand — zwanzig verfasste Concepts, alle flach, alle in `decisions/` —, was den
+Index zwingt, linear zu wachsen, und schloss daraus, dass OKFs Ökonomie mit Akkumulation schlechter
+wird. Der echte Batch stapelt Wissen nicht so. Gemessen wurde das Fixture, nicht das System.
+
+Zur Genauigkeit, ehrlich: Sie verbessert sich nicht mit dem Volumen und bleibt verrauscht (2/5–5/5).
+Bei n=5 trennt hier nichts.
+
+### Lokaler Overhead (nicht das Wirksamkeitsergebnis)
+
+Gemessen am 2026-07-16, macOS arm64, Node `v26.4.0`, Median mit min/max.
+
+| Lokale Operation | Median | Bereich |
+|---|---:|---:|
+| SessionStart-Gate-Prozess | 57.3 ms | 56.1–60.0 ms |
+| SessionEnd-Batch-Trigger-Prozess | 40.1 ms | 39.3–40.8 ms |
+| Statusline-Prozess | 35.8 ms | 34.6–36.3 ms |
+
+Reproduzierbar mit `node test/bench.mjs [Repository]`. Nur lokale Prozesskosten; das beweist nichts
+über Tokens oder Modell-Latenz.
+
+### Kosten, und was dieser Lauf Ihnen nicht sagen kann
+
+Der Aufbau des Wissens kostete **$3.59** in echten Sitzungen und **$4.92** im Batch-Ingest. Die 250
+gemessenen Läufe kosteten **$28.16** plus **$9.44** für die Bewertung.
 
 ```sh
-OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                      # wie oben veröffentlicht
-OKF_RUN_LIVE_BENCH=1 OKF_BENCH_FILLER=50 node test/bench-okf.mjs  # Akkumulationsachse
+OKF_RUN_LIVE_BENCH=1 node test/bench-knowledge.mjs --target slim --dir <repo>   # real sessions → transcripts
+OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 1,5,20  # real batch → level bundles
+OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                                    # measure
 ```
 
-Bezahlter Opt-in-Lauf außerhalb von CI. Siehe [gültigen Bericht](docs/benchmarks/okf-live-2026-07-15T16-06-28-592Z.md), [Raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-06-28-592Z.json) und [docs/USAGE.md](docs/USAGE.md). Der frühere Lauf vor dem Fix bleibt als Audit-Trail erhalten.
+Bezahlt, authentifiziert und absichtlich von Smoke-Tests und CI ausgenommen.
+[Vollständiger Bericht](docs/benchmarks/okf-benchmark-2026-07-16.md) ·
+[Raw JSON](docs/benchmarks/raw/) ·
+[Vorregistrierung](docs/benchmarks/pre-registration-2026-07-16.md) ·
+[Nutzungsleitfaden](docs/USAGE.md).
 
-### Lokaler Overhead — nicht das Wirksamkeitsergebnis
+Grenzen, klar benannt:
 
-Frische Messung vom 2026-07-16, macOS arm64, Node `v26.4.0`:
-
-| Operation | Median | Bereich |
-|---|---:|---:|
-| SessionStart-Gate-Prozess | 57.2 ms | 56.9–58.1 ms |
-| SessionEnd-Trigger-Prozess | 41.4 ms | 39.0–42.1 ms |
-| Statusline-Prozess | 35.0 ms | 35.0–35.2 ms |
-
-Reproduzierbar mit `node test/bench.mjs [Repository]`. Dies misst lokalen Prozessaufwand, nicht Token- oder Modellverbesserungen.
-
-### Batch-Kosten und Break-even
-
-```text
-initiale OKF-Kosten = Batch-Ingest + Repair + gemessener irrelevanter Gate-Overhead
-Ersparnis je Sitzung = Median B_realistic - Median OKF
-Break-even-Sitzungen = ceil(initiale Kosten / positive Ersparnis je Sitzung)
-```
-
-Verglichen wird gegen **B_realistic**, nicht gegen B_oracle: dessen String enthält die Antworten selbst und bepreist damit genau die Arbeit mit null, für die OKF existiert. Die gemessene Ersparnis ist negativ (−1,326 Tokens, −$0.0029); dieser Lauf hat keinen Token- oder Kosten-Break-even. Das ist das Ergebnis, keine Lücke der Harness.
+- **n=5 je Zelle.** Klein. Nur vollständige Trennung zwischen Verteilungen wird hier als Gewinn
+  beschrieben.
+- **Der Modell-Mix ist nicht fixiert.** Angefordert wurde `claude-sonnet-5`; die CLI zog für interne
+  Arbeit zusätzlich `claude-haiku-4-5` heran. Kostenvergleiche zwischen Bedingungen tragen dieses
+  Artefakt mit.
+- **Zwei Repositories, je eine Sprache.** Kein Anspruch auf Allgemeingültigkeit über Größen oder
+  Ökosysteme hinweg.
+- **Wall-Clock wird nicht veröffentlicht.** Die Messung lief mit Nebenläufigkeit 5; Kosten, Tokens
+  und Tool-Calls sind davon unberührt, die Antwortlatenz nicht. Aussagen zur Geschwindigkeit
+  bräuchten einen sequenziellen Wiederholungslauf.
+- Der Gate-Text wird dem Prompt vorangestellt statt über den produktiven
+  `SessionStart`-`additionalContext`-Pfad geliefert. Gleicher Text, andere Zustellung.
+- Policy-Szenarien beruhen darauf, dass ein Mensch die Policy verfasst. Genau das ist Policy. Die
+  Verteidigung ist, dass die Antwort nachweislich nicht im Repo steht und dass ein Angreifer sie
+  nicht erraten konnte.
 
 ## Sprachunterstützung
 

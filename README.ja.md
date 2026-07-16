@@ -54,127 +54,130 @@ Session 1              ~1時間の idle           Background batch           Ses
 
 `bin/statusline.mjs` は network や graph 分析なしで `OKF 12 · +3 · 2h ago` のような一行を出力します。Claude Code の `statusLine` は一つだけなので、OKF は自動設定も上書きもしません。既存 script から `node /path/to/okf/bin/statusline.mjs` を呼び、その出力を結合してください。
 
-## OKF 効果ベンチマーク
+## OKF ベンチマーク
 
-<!-- okf-live-benchmark: valid-2026-07-15T16-06-28Z -->
+<!-- okf-benchmark: 2026-07-16 -->
 
-**OKF は token を節約しません。新しい session が既に失ったものを回収するだけです。** 以下の数値はそれを率直に示すために公開します。
+**OKF は探索を肩代わりしてくれるものではありません。探索では決して見つけられないものを保存するものです。**
 
-### 測定内容
+この一文の両側を、以下、実在の open-source repository 上で測定します。そして不利な側を先に公開します。
 
-前の session が確立した 8 つの事実と、memory では助けにならない control 質問 1 つを follow-up session に尋ねます。
+### 測定方法
 
-| 種類 | 期待値 |
-|---|---|
-| architecture | SQLite / repository pattern |
-| coding rule | named export only |
-| 過去の障害対応 | `busy_timeout=5000`（SQLITE_BUSY） |
-| 応答の好み | Korean / concise |
-| file・deploy 方針 | `src/config.mjs` / `npm run deploy:canary` |
-| 無関係な計算（control） | 7 × 8 = 56 |
+固定した公開 repository 2 つ。合成 fixture ではないので、探索には探索が実際に要するコストがかかり、memory なしの baseline が本当に勝ちうる状態です。
 
-5 条件・各 5 回（順序交差）。C の bundle は実際に `raw/` へ収集 → 隔離 batch ingest → SessionStart gate で構築し、concept の手作業投入はありません。preflight は C が対象事実を全て含んで gate routing し、D が一つも含まないことを確認するまで課金を許しません。
+| 役割 | Repository | Commit |
+|---|---|---|
+| Codebase | [slimphp/Slim](https://github.com/slimphp/Slim) | `80900fb3`（PHP file 125 個） |
+| Document pile | [rust-lang/rfcs](https://github.com/rust-lang/rfcs) | `f635361c`（Markdown file 651 個） |
 
-- **A — no memory.** 率直な現状。新しい session、restatement なし。
-- **B_oracle — 答案。** 期待値 8 個をそのまま貼ります。その文字列を作るには OKF が回収すべき事実を既に全て知っている必要があり、**どの user もこの条件を占有できません**。baseline ではなく上限で、人手のコストは 0 と値付けされています。
-- **B_realistic — 実際にやること。** 次の session が何を要るか事前に分からないので、関連しそうなもの全てを restate します。CLAUDE.md の習慣です。
-- **C — OKF enabled.**
-- **D — irrelevant OKF.** 関連 content のない gate。「gate が助けた」と「gate にはコストがある」を分離します。
+どの bundle のどの concept も、実際の pipeline が生成したものです — 固定 repo を探索する実際の `claude -p` session、その実際の Claude Code transcript、実際の batch ingest、実際の gate。**手で書いた concept は一つもありません**。volume を作り出す filler も含めてです。これは聞こえる以上に重要です。下の「蓄積」節を参照してください。
 
-### 結果
+5 条件。すべてが同一の tools（`Read`、`Glob`、`Grep`、`Bash(git log/show/diff/blame/grep)`）と、条件に対して中立な同一の指示を受け取ります。gate を参照せよと告げられる条件はありません。
 
-2026-07-15、Claude Code `2.1.210`、`sonnet`/medium（Sonnet 5 + Haiku 4.5）、macOS arm64、Node `v26.4.0`、各条件 5 回。C preflight: 事実 8/8 存在・8/8 gate routing。D: 0/8。
+- **zero-base** — 何もなし。OKF が置き換えると主張している当のもの。
+- **answer key** — 答えを貼り付けたもの。その文字列を作るには既に答えを知っている必要があるため、この条件を占有できる user は存在しません。競合相手ではなく床です。
+- **OKF** — 実際の gate text。
+- **wrong knowledge** — *もう一方の* repository に関する実在の concept で size を合わせた gate。「知識が助けた」と「gate が助けた」を分離します。
+- **CLAUDE.md** — 同じ蓄積知識を flat file に貼り付けたもの。実際の現職者。
 
-| 条件 | 継続成功 | 準拠率 p50 | token activity p50/p95 | wall p50/p95 | cost p50 |
-|---|---:|---:|---:|---:|---:|
-| A — no memory | **0/5** | 12% | 27,246/27,518 | 13.82/18.17 s | $0.022218 |
-| B_oracle（答案） | 5/5 | 100% | 9,069/9,069 | 4.86/6.46 s | $0.008410 |
-| B_realistic | 5/5 | 100% | 9,069/9,069 | 5.96/6.27 s | $0.008410 |
-| **C — OKF enabled** | **5/5** | 100% | **10,395**/10,459 | 6.46/7.15 s | $0.011329 |
-| D — irrelevant OKF | 0/5 | 0% | 20,602/21,662 | 14.50/21.15 s | $0.025879 |
+見出しの数値は `total_cost_usd` です。token activity はその代わりにではなく、常にその横に併記します。`cache_read` がその合計を支配し、課金は約 50 倍安いため、二つの列は方向が食い違うからです。効率は correct run のみで比較します。run ごとの nonce が prompt cache を無効化します。採点は、source から検証した ground truth に対し、条件を伏せた judge が行います。**どの数値も scenario をまたいで平均しません**。grep 一回と 5 file の call chain は別の現象であり、混ぜれば scenario の選び方で見出しを作れてしまいます。
 
-行の裏にある tool call が数値を説明します。A は file 2 つ・4 turn を使ってなお失敗。B は答えが既に prompt にあるので read 0・1 turn。**C も read 0・1 turn** — gate 索引だけで足りました。D は gate が一度も持たなかったものを探して file 1 つ・2 turn。
+設計・予測・反証基準は[事前登録](docs/benchmarks/pre-registration-2026-07-16.md)し、**最初の課金 call より前に** commit しました。
 
-`p95` は注意して読んでください。n=5 では `ceil(0.95×5)−1` が最後の index なので、p95 は **max そのもの** — cold cache の 1 run であり、tail 統計ではありません。要求された形式が求めるから載せているだけで、tail 統計だからではありません。
+### OKF が負ける場所: code が答えられること全部
 
-**まず A 行を読んでください。** memory がないと session は 27,246 token を燃やし、答えを探して file を 2 つ読み、4 turn かけて、それでも **0/8** です。OKF が実際に置き換えるのはこの条件で、C はこれを上回ります — token は 2.6 分の 1、8/8、file read なしの 1 turn。
+答えが source か git history にある scenario 5 つ。固定 checkout から検証し、それぞれ独立した反証の試みを生き延びました。
 
-**C は B に勝てませんし、今後も勝てません。** B は答えを prompt に直接貼るので、既に持っているものより速い retrieval はありません。この bundle size では restate すべき無関係な知識がまだなく B_realistic は B_oracle と同値で、どちらも 9,069 です。C は 1 session あたり 1,326 token・$0.0029 多くかかります。bundle 構築の batch ingest 1 回は **133,364** token activity・**$0.176758**。**token・cost の break-even は存在せず**、`perSessionTokenSaving` が負のため harness は捏造せず `null` を報告します。
+| Scenario | zero-base | OKF | 判定 |
+|---|---:|---:|---|
+| `rfcs_cheap` — grep 一回 | **$0.0256** · 4/5 | $0.0505 · 3/5 | OKF が 2.0 倍高い |
+| `slim_cheap` — grep 一回 | **$0.0198** · 4/5 | $0.0386 · 5/5 | OKF が 1.9 倍高い |
+| `slim_stale` — bundle の知識が後の commit で古くなっている | **$0.0345** · 5/5 | $0.0632 · 4/5 | OKF が 1.8 倍高い |
+| `rfcs_buried` — 651 個の doc から根拠を見つける | **$0.0326** · 4/5 | $0.0910 · 3/5 | OKF が 2.8 倍高い |
+| `slim_buried` — 5 file の call chain を追う | $0.1669 · 2/5 · **tool 10 個** | **$0.0701** · 2/5 · **tool 3 個** | **OKF が 2.4 倍安い** |
 
-前回の run から変わったのは gate 自体です。C は以前 **22,857** token・7 turn・file read 5 回でしたが、同じ 5/5 の再現率のまま **10,395** token・1 turn・read 0 になりました。旧 gate は無条件の `Read` を命じており、その overhead の 91% は index が既に届けていた事実を取り直す round-trip でした。[修正](https://github.com/dja1369/okf-system/pull/7)。
+**OKF は 5 つ中 4 つで負けます。** 探索が本当に高くつく場合にのみ勝ち、そこでは tool call を 10 から 3 へ削ります。grep で答えが出る質問なら、gate は純然たる overhead です。それは欠陥ではなく算術です。
 
-### 蓄積の限界 — 推定ではなく実測
+`slim_stale` は名指しする価値があります。bundle は古くなった主張（HTML error renderer が escape しない — commit `f897118b` より前は真、固定 commit では偽）を抱えていましたが、model は **それでも code を確認して訂正しました**、4/5 です。古い知識は model を自信満々の誤りにはしませんでした。そうなるという事前登録の予測は外れました。
 
-**「知識が貯まるほど OKF は安くなる」は偽です。** 逆に高くつき、しかも代替手段より速く悪化します。同じ benchmark・同じ bundle に無関係な concept を 20 個足した実測 — index には全て収まっています（21 行・9,000 byte 中 5,548 byte、truncate なし）：
+### OKF だけが機能する場所: code に含まれない知識
 
-| 条件 | 継続成功 | 準拠率 p50 | token activity p50/p95 | wall p50/p95 | cost p50 |
-|---|---:|---:|---:|---:|---:|
-| A — no memory | 0/5 | 0% | 27,316/27,717 | 13.79/18.05 s | $0.022838 |
-| B_oracle（答案） | 5/5 | 100% | 9,070/9,085 | 5.33/6.78 s | $0.008410 |
-| B_realistic | 5/5 | 100% | 10,406/10,406 | 5.72/9.62 s | $0.010134 |
-| **C — OKF enabled** | **5/5** | 100% | **25,384**/25,773 | 11.75/13.15 s | $0.030721 |
-| D — irrelevant OKF | 0/5 | 0% | 22,265/22,334 | 14.91/19.59 s | $0.037354 |
+チームの方針とドメイン語彙 — 会話で決まり、repo には一度も書かれなかったものです。各 scenario は独立した adversary の攻撃を受けました。adversary は working tree、git history の約 300 revision、commit message、docs、config、stash、dangling object を検索し（hit ゼロ）、しかも **見る前に慣習からの推測を記録しました**。その推測は 0/3、0/3、1/5 でした。
 
-filler 0 の run と比べると、B_realistic は **+1,337**（9,069 → 10,406）、C は **+14,989**（10,395 → 25,384） — **C の劣化は約 11 倍速い**、concept 1 個あたり 749 token 対 67 token。どちらも 5/5 で答えるので、これは accuracy ではなく純粋な cost の後退です。
+どちらの repo にも罠が仕込まれています。"emitter" を grep すれば `ResponseEmitter` が見つかり、chunk size を探せば `4096` が見つかり、RFC の山から MSRV 方針を検索すれば文書は `N-2` を提案しています。
 
-原因は truncate ではありません。信頼です：
+| Scenario | zero-base | OKF | wrong knowledge | CLAUDE.md |
+|---|---:|---:|---:|---:|
+| `slim_policy` — どの env が error 詳細を有効にするか、およびその例外 | **0/5**（$0.0509 を消費） | **5/5** · $0.0840 | 0/5 | 5/5 · $0.1314 |
+| `slim_domain` — チームが言う「에미터」とは何か | **0/5** · **自信満々の誤り 5/5** | **4/5** · $0.0624 | 0/5 | 5/5 · $0.1198 |
+| `rfcs_policy` — チームの "thaw rule" の待機期間 | **0/5** | 2/5 · $0.0749 | 0/5 | 0/5 |
 
-```
-filler 0:   C read=0  turn=1    index 行からそのまま答える
-filler 20:  C read=3  turn=4    file を開き直す
-```
+**zero-base は 15 戦 0 勝でした。** 金を使って何も得られていません。答えがそこに無いからです。`slim_domain` では **5 run 中 5 run で自信満々に間違えました**。探索し、`ResponseEmitter` を見つけ、高い確信とともに答えたのです — ところがチームの言う「에미터」は `OutputBufferingMiddleware` です。彼らは FrankenPHP の worker mode で動かしており、`ResponseEmitter` は dead code だからです。ここでは探索は単に失敗するのではありません。罠から自信満々の誤答を製造します。
 
-無関係な concept 20 個で、model は index 行を信じるのをやめ file で裏を取り始めました — gate 修正が取り除いたはずの round-trip の復活です。index は「その行がある」ことは伝えますが「その行が**完全な**答えだ」とは伝えないので、周囲の noise が増えれば確認する方が合理的になります。**これが本当の天井で、concept 約 21 個で来ます — どの cap が効くよりずっと手前です。**
+**wrong knowledge も 15 戦 0 勝でした。** 実在するが無関係な concept で満たされた gate は、何も回収しません。利得は知識から来るのであって、gate を持つことから来るのではありません。
 
-truncate はその先にある 2 枚目の壁です。gate の index は Claude Code の 10,000 文字 hook 上限に収めるため hard cap があり、実際の韓国語 concept 行は約 214 byte です：
+OKF は 15 問中 11 問に答え、同じ事実を運ぶ CLAUDE.md の 1.6〜1.9 分の 1 のコストで済ませました。`slim_domain` では **concept file を一つも読みませんでした**（0/5） — index の行だけで足り、tool call は zero-base の 7 に対して 2 でした。
 
-| bundle の concept 数 | gate index 表示数 |
-|---:|---:|
-| 20 | 20 |
-| 40 | 40 |
-| **55** | **43**（truncate） |
-| 100 | 43（truncate） |
+`rfcs_policy` は正直な失敗です。OKF は 2/5 しか取れませんでした。document pile に居座る `N-2` 提案は、model を正しい index 行から引き剥がすに足る強い罠です。CLAUDE.md はそこで 0/5 でした。
 
-concept が約 43 を超えると index は truncate され、生き残るものは file 名で決まります — 関連性でも新しさでもありません。filler 50 個の run が **preflight で落ちる**のはこれが理由です（`presentFacts: 8, routedFacts: 6, ready: false`）：`decisions/tech-stack.md` が filler の後ろに並んで切られ、事実を 2 つ道連れにしました。category は round-robin で配られどの category も枯れず、truncate された category は自分の `index.md` を指しますが、降りて行くのは tool round-trip — 同じコストがまた乗ります。
+### 蓄積 — 手で撒いた filler では示せないもの
 
-どちらの壁も調整 knob ではありません。1 枚目を直すには、index が**どの行が完全な答えか**を示し、model が file を開かずに信頼できる必要があります。その作業は済んでおらず、済むまでは concept を足すたびに OKF の経済性は悪化します。
+同じ質問（`slim_buried`）、同じ harness、実際の session をさらに ingest して育てた bundle です。
 
-蓄積 run: [raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-30-11-404Z.json)。filler 50 個の preflight 失敗は [preflight audit](docs/benchmarks/raw/okf-live-preflight-failed-2026-07-15T16-11-37-402Z.json) に保存しています — 意図的に残した negative result です。
+| bundle 内の concept 数 | Gate の byte 数 | OKF | CLAUDE.md | zero-base（flat reference） |
+|---:|---:|---:|---:|---:|
+| 1 | 2,551 | $0.1291 | $0.1279 | $0.1669 |
+| 5 | 3,621 | $0.1020 | $0.1506 | $0.1669 |
+| 8 | 4,701 | $0.1425 | $0.1741 | $0.1669 |
+| 10 | 5,414 | $0.0919 | $0.2358 | $0.1669 |
+| 15 | 5,415 | **$0.0701** | $0.2249 | $0.1669 |
+| 35 | 5,415 | $0.0908 | **$0.2828** | $0.1669 |
 
-harness は決定準拠、誤った仮定、追加質問、tool call、最初の有効応答、API/wall time、`input_tokens`、`output_tokens`、`cache_creation_input_tokens`、`cache_read_input_tokens`、CLI cost も保存します。token category は raw JSON で分離します。`tokenActivity` は cache read を output token と 1:1 で合算しますが cache read の課金は約 50 倍安いため、**擁護できる列は cost です**。また n=5 では harness の `p95` は算術的に常に max（cold run）です — 上の表の p95 はその前提で読んでください。CLI が分離して提供しない user-only/gate-only token は推測せず `null` にします。
+**concept 1 個から 35 個へ増える間に OKF は安くなり（$0.1291 → $0.0908）、CLAUDE.md は 2.2 倍高くなりました（$0.1279 → $0.2828）。** 曲線は分岐します。
+
+理由は 2 列目に見えています。concept 15 個と 35 個の間 — 知識は 2.3 倍 — で gate は **1 byte** しか増えていません。batch が入れ子のドメインを作り、14 個の concept を index の 1 行に畳んだからです（`- [slim](/references/slim/index.md): 하위 도메인 — concept 14개`）。CLAUDE.md はすべての concept 本文を毎回の prompt に載せるので線形に増えます。**gate は増えません。**
+
+これは実際の知識でなければ得られない発見です。この benchmark の以前の run は filler を手で撒いていました — 著述した concept 20 個、すべて flat、すべて `decisions/` の中。これは index を線形に増やすことを強制し、蓄積とともに OKF の経済性は悪化すると結論づけました。実際の batch は知識をそのように積みません。測っていたのは fixture であって、system ではありませんでした。
+
+正確さについては正直に。volume で改善はせず、ばらつきも残ります（2/5〜5/5）。n=5 では、ここで分離するものは何もありません。
+
+### ローカル overhead（効果の測定結果ではありません）
+
+2026-07-16 測定、macOS arm64、Node `v26.4.0`、median と min/max。
+
+| ローカル処理 | Median | Range |
+|---|---:|---:|
+| SessionStart gate process | 57.3 ms | 56.1–60.0 ms |
+| SessionEnd batch-trigger process | 40.1 ms | 39.3–40.8 ms |
+| Statusline process | 35.8 ms | 34.6–36.3 ms |
+
+`node test/bench.mjs [repository]` で再現できます。local process cost のみであり、token や model latency について何も証明しません。
+
+### コスト、そしてこの run では分からないこと
+
+知識の構築には実 session で **$3.59**、batch ingest で **$4.92** かかりました。測定した 250 run のコストは **$28.16**、採点に **$9.44** です。
 
 ```sh
-OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                      # 上記の公開値
-OKF_RUN_LIVE_BENCH=1 OKF_BENCH_FILLER=50 node test/bench-okf.mjs  # 蓄積軸
+OKF_RUN_LIVE_BENCH=1 node test/bench-knowledge.mjs --target slim --dir <repo>   # real sessions → transcripts
+OKF_RUN_LIVE_BENCH=1 node test/bench-bundles.mjs --target slim --levels 1,5,20  # real batch → level bundles
+OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs                                    # measure
 ```
 
-有料・認証必須で smoke test と CI から意図的に除外します。詳細は [report](docs/benchmarks/okf-live-2026-07-15T16-06-28-592Z.md)、[raw JSON](docs/benchmarks/raw/okf-live-2026-07-15T16-06-28-592Z.json)、[docs/USAGE.md](docs/USAGE.md) を参照してください。修正前の run は audit trail として残します。
+有料・認証必須で、smoke test と CI からは意図的に除外しています。
+[完全な report](docs/benchmarks/okf-benchmark-2026-07-16.md) ·
+[raw JSON](docs/benchmarks/raw/) ·
+[事前登録](docs/benchmarks/pre-registration-2026-07-16.md) ·
+[利用ガイド](docs/USAGE.md)。
 
-### ローカル overhead（効果ベンチマークではありません）
+限界を率直に述べます。
 
-2026-07-16、macOS arm64、Node `v26.4.0` の新しい測定です。
-
-| 処理 | median | range |
-|---|---:|---:|
-| SessionStart gate process | 57.2 ms | 56.9–58.1 ms |
-| SessionEnd trigger process | 41.4 ms | 39.0–42.1 ms |
-| statusline process | 35.0 ms | 35.0–35.2 ms |
-
-`node test/bench.mjs [repository]` で再現できます。これは local process cost であり、token や model response の改善を証明しません。
-
-### Batch cost と break-even
-
-live harness は batch ingest と repair の使用量を privacy-safe な telemetry file で記録し、実測中央値の節約が正のときだけ token・cost の break-even を計算します：
-
-```text
-initial OKF cost = batch ingest + repair + measured irrelevant-gate overhead
-per-session net saving = B_realistic median - OKF median
-break-even sessions = ceil(initial OKF cost / positive per-session net saving)
-```
-
-比較対象は B_oracle ではなく **B_realistic** です。B_oracle の restatement 文字列は答えそのものを含み、OKF がやるべき仕事をちょうど 0 と値付けするので、それとの break-even は無意味になります。実測 run ではどちらにせよ節約が負（−1,326 token、−$0.0029）なので、両方の break-even field は `null` を報告します。これは harness の欠落ではなく結果です。
-
-B−C の実測差が負のため、この run に token・cost break-even はありません。
+- **1 cell あたり n=5。** 小さいです。ここで勝ちと表現するのは、分布が完全に分離している場合のみです。
+- **model mix は固定していません。** `claude-sonnet-5` を要求しましたが、CLI は内部処理用に `claude-haiku-4-5` を併せて解決しました。条件間の cost 比較にはその artifact が乗っています。
+- **repository は 2 つ、言語は各 1 つ。** サイズやエコシステムをまたぐ一般性は主張しません。
+- **wall-clock は公開しません。** 測定は concurrency 5 で走りました。cost・token・tool call はそれに影響されませんが、response latency は影響されます。速度の主張には逐次での再 run が必要です。
+- gate text は production の `SessionStart` `additionalContext` 経路ではなく、prompt の先頭に付加しています。同じ text、異なる配送です。
+- policy scenario は人間が方針を著述することに立脚しています。方針とはそういうものです。弁明としては、答えが repo に存在しないことを証明でき、adversary もそれを推測できなかった、ということです。
 
 ## 対応言語
 

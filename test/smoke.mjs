@@ -1165,20 +1165,18 @@ console.log('\n=== plugin contract and docs ===');
   }));
   ok('all localized READMEs keep commands and benchmark conditions in sync', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
-    // B는 두 조건으로 갈렸다. B_oracle은 정답 8개를 그대로 붙이므로 그 문자열을 만들려면 이미
-    // 답을 알아야 한다 — 사용자가 점유할 수 없는 상한선이다. B_realistic이 실제 비교군이며,
-    // 손익분기도 그쪽으로 계산한다. 두 이름이 모든 번역에 함께 있어야 상한선이 baseline인 척
-    // 재등장하지 않는다.
+    // 조건 이름은 번역되지만 시나리오 키는 그대로다. 다섯 조건이 전부 실려야 한다 — 특히
+    // CLAUDE.md 조건. 그게 진짜 경쟁자이고, 그걸 빼면 "OKF가 평범한 플랫 파일도 못 이긴다"는
+    // 반증 가능성 자체가 README에서 사라진다. 정답지 조건도 남아야 한다: 사용자가 점유할 수
+    // 없는 상한선이라는 사실을 명시해야 그게 baseline인 척 재등장하지 않는다.
     return text.includes('/okf:okf-visualize')
       && /\/okf:okf-analysis\s+\[[^\]]+\]/.test(text)
       && !text.includes('/okf:okf-visualize [path]')
-      && /\bA\s+—\s+/.test(text)
-      && text.includes('B_oracle')
-      && text.includes('B_realistic')
-      && /\bC\s+—\s+/.test(text)
-      && /\bD\s+—\s+/.test(text)
+      && text.includes('CLAUDE.md')
+      && ['slim_buried', 'slim_cheap', 'slim_stale', 'rfcs_buried', 'rfcs_cheap',
+        'slim_policy', 'slim_domain', 'rfcs_policy'].every((key) => text.includes(key))
       && text.includes('OKF_RUN_LIVE_BENCH=1 node test/bench-okf.mjs')
-      && /<!-- okf-live-benchmark: [^>]+ -->/.test(text);
+      && /<!-- okf-benchmark: 2026-07-16 -->/.test(text);
   }));
   ok('all localized READMEs publish the same pinned OSS validation counts', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
@@ -1189,19 +1187,18 @@ console.log('\n=== plugin contract and docs ===');
   }));
   ok('all localized READMEs publish the same valid live benchmark result', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
-    // p95는 요청받은 비교 형식이 요구하므로 싣는다. 다만 n=5에서 ceil(0.95*5)-1 = 마지막
-    // 인덱스라 p95는 산술적으로 항상 max(= cold run 하나)이고 꼬리 통계가 아니다 — 그래서
-    // README는 표 옆에 그 한계를 함께 적는다. 열을 지워 독자 대신 판단하지 않는다.
-    return text.includes('<!-- okf-live-benchmark: valid-2026-07-15T16-06-28Z -->')
-      && text.includes('27,246') && text.includes('9,069')
-      && text.includes('10,395') && text.includes('20,602')
-      && text.includes('133,364') && text.includes('$0.176758')
-      && text.includes('okf-live-2026-07-15T16-06-28-592Z.md')
-      // 누적 측정(filler 20)도 모든 번역이 함께 실어야 한다. 이 수치가 빠지면 README는 "OKF는
-      // 토큰을 아끼지 않는다"까지만 말하고, "누적될수록 11배 빠르게 나빠진다"는 더 불리한 사실은
-      // 영어에만 남는다 — 그 방향의 드리프트가 정확히 이 테스트가 막아야 하는 것이다.
-      && text.includes('25,384') && text.includes('14,989')
-      && !text.includes('okf-live-benchmark: pending');
+    // 번역이 유리한 절반만 옮기는 드리프트를 막는다. 여기 나열한 수치는 전부 OKF에 불리하거나
+    // 불리한 사실을 떠받치는 것들이다: 탐색이 싼 질문에서 OKF가 2배 비싸다는 표($0.0256 vs
+    // $0.0505), rfcs_policy의 정직한 실패(2/5), 그리고 누적 축의 양 끝($0.1291→$0.0908,
+    // $0.1279→$0.2828). 이게 영어에만 남으면 다른 언어 독자는 다른 시스템을 읽는 것이다.
+    return text.includes('<!-- okf-benchmark: 2026-07-16 -->')
+      && text.includes('$0.0256') && text.includes('$0.0505')
+      && text.includes('$0.1669') && text.includes('$0.0701')
+      && text.includes('$0.1291') && text.includes('$0.0908')
+      && text.includes('$0.1279') && text.includes('$0.2828')
+      && text.includes('5,415')
+      && text.includes('okf-benchmark-2026-07-16.md')
+      && text.includes('pre-registration-2026-07-16.md');
   }));
 
   const workflow = path.join(PLUGIN_ROOT, '.github', 'workflows', 'test.yml');
@@ -1215,10 +1212,22 @@ console.log('\n=== plugin contract and docs ===');
   const localBenchText = fs.readFileSync(path.join(PLUGIN_ROOT, 'test', 'bench.mjs'), 'utf8');
   const benchFixture = path.join(PLUGIN_ROOT, 'test', 'fixtures', 'bench', 'session-one.jsonl');
   ok('live OKF benchmark harness exists and is opt-in', fs.existsSync(liveBench));
-  ok('live benchmark records resolved models and official pricing provenance', liveBenchText.includes('resolvedModels') && liveBenchText.includes('officialPricing'));
-  ok('live benchmark cost break-even includes measured irrelevant-gate overhead', liveBenchText.includes('gateCostOverhead') && liveBenchText.includes('initialCostUsd'));
-  ok('live benchmark explicitly disables orphan sweep for synthetic isolation', liveBenchText.includes("OKF_BENCH_SKIP_SWEEP: '1'"));
-  ok('live benchmark sanitizes user-home paths from raw events', liveBenchText.includes("'<USER_HOME>'") && liveBenchText.includes("'<PLUGIN_ROOT>'"));
+  ok('live benchmark records resolved models and cost provenance', liveBenchText.includes('resolvedModels')
+    && liveBenchText.includes('modelMixDetected') && liveBenchText.includes('costProvenance') && liveBenchText.includes('officialPricing'));
+  // 손익분기는 번들을 만든 실제 배치 비용을 반드시 포함해야 한다. 그걸 빼면 세션당 절감이
+  // 공짜처럼 보인다. 절감이 음수거나 제로베이스가 애초에 못 맞히는 시나리오에서는 숫자를
+  // 지어내지 않고 null과 이유를 남긴다.
+  ok('live benchmark break-even includes the real batch cost of building the bundle', liveBenchText.includes('bundleBatchCostUsd')
+    && liveBenchText.includes('perSessionSavingUsd') && /breakEven/.test(liveBenchText));
+  // sweep은 실제 ~/.claude/projects를 읽으므로 벤치 격리가 깨진다. 번들 빌더가 그 경로를 탄다.
+  const bundleBuilderText = fs.readFileSync(path.join(PLUGIN_ROOT, 'test', 'bench-bundles.mjs'), 'utf8');
+  ok('bundle builder explicitly disables orphan sweep for isolation', bundleBuilderText.includes("OKF_BENCH_SKIP_SWEEP: '1'"));
+  ok('live benchmark sanitizes user paths out of published results', liveBenchText.includes("'<HOME>'")
+    && liveBenchText.includes("'<PLUGIN_ROOT>'") && liveBenchText.includes("'<TARGETS>'") && liveBenchText.includes("'<BUNDLES>'"));
+  // 소스에 sanitize가 있다고 실제 산출물이 깨끗한 건 아니다. 커밋된 원시 결과를 직접 본다.
+  const rawDir = path.join(PLUGIN_ROOT, 'docs', 'benchmarks', 'raw');
+  const rawFiles = fs.existsSync(rawDir) ? fs.readdirSync(rawDir).filter((f) => f.endsWith('.json')) : [];
+  ok('published benchmark JSON leaks no user home path', rawFiles.length > 0 && rawFiles.every((f) => !fs.readFileSync(path.join(rawDir, f), 'utf8').includes(os.homedir())));
   if (fs.existsSync(liveBench)) {
     const refused = spawnSync(process.execPath, [liveBench], { cwd: PLUGIN_ROOT, encoding: 'utf8' });
     ok('live benchmark refuses accidental paid execution', refused.status !== 0 && `${refused.stdout}${refused.stderr}`.includes('OKF_RUN_LIVE_BENCH=1'));

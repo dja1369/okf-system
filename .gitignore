@@ -1,2 +1,7 @@
 .claude/
 implement.md
+
+# 벤치마크 중간 산출물: transcript(수십 MB)와 레벨별 번들 스냅샷은 커밋하지 않는다.
+# 재현은 test/bench-knowledge.mjs 로 다시 만든다(유료). 측정 결과와 시나리오는 커밋한다.
+test/fixtures/bench/transcripts/
+.bench-bundles/
