@@ -403,6 +403,31 @@ const summary = Object.fromEntries(Object.entries(byCell).map(([k, c]) => {
   }];
 }));
 
+// 손익분기. 절감이 양수인 시나리오에서만 계산한다 — 그리고 번들을 만드는 데 실제로 든 배치
+// 비용을 반드시 포함한다. 그걸 빼면 "세션당 $0.09 아낍니다"가 공짜처럼 들린다.
+// 정책 시나리오는 제로베이스가 애초에 못 맞히므로 '절감'이 정의되지 않는다 — null로 둔다.
+const breakEven = {};
+for (const scen of [...new Set(cells.map((c) => c.scenario.key))]) {
+  const z = summary[`${scen}|zero_base|-`];
+  const o = summary[`${scen}|okf|${REFERENCE_LEVEL}`];
+  const target = scenarios.scenarios.find((x) => x.key === scen)?.target;
+  const bundleBatchUsd = levelData[target]?.snapshots.find((x) => x.requestedLevel === REFERENCE_LEVEL)?.cumulativeBatchCostUsd ?? null;
+  const zc = z?.costUsdCorrectOnly?.p50 ?? null;
+  const oc = o?.costUsdCorrectOnly?.p50 ?? null;
+  const saving = zc != null && oc != null ? zc - oc : null;
+  breakEven[scen] = {
+    zeroBaseCostUsd: zc, okfCostUsd: oc, perSessionSavingUsd: saving,
+    bundleBatchCostUsd: bundleBatchUsd,
+    sessions: saving != null && saving > 0 && bundleBatchUsd != null ? Math.ceil(bundleBatchUsd / saving) : null,
+    reason: saving == null
+      ? (z && z.correct === 0
+        ? '제로베이스가 한 번도 맞히지 못했다 — 아낄 비용 자체가 없다. 이 시나리오의 지표는 절감이 아니라 능력이다.'
+        : '정답런이 없어 비교 불가')
+      : saving <= 0 ? 'OKF가 더 비싸다 — 손익분기가 존재하지 않는다' : null,
+    formula: 'ceil(번들을 만든 실제 배치 비용 / (제로베이스 정답런 비용 p50 - OKF 정답런 비용 p50))',
+  };
+}
+
 const out = {
   meta: {
     startedAt, finishedAt: new Date().toISOString(), model, resolvedModels, effort, maxTurns, runs,
@@ -418,6 +443,18 @@ const out = {
     }))])),
     judgeCostUsd: Number(judgeCost.toFixed(4)),
     gateAudit,
+    // 비용 숫자가 어디서 왔는지 밝힌다. 정가표로 재구성한 추정이 아니라 CLI가 보고한 값이다.
+    costProvenance: {
+      source: 'Claude CLI가 result 이벤트로 보고한 total_cost_usd. 정가표 기반 추정이 아니다.',
+      modelMixCaveat: resolvedModels.length > 1
+        ? `요청 모델은 ${model} 하나였으나 CLI가 ${resolvedModels.join(', ')}를 함께 해석했다. 조건 간 비용 비교에 이 아티팩트가 섞인다.`
+        : '단일 모델로 해석됨',
+      officialPricing: {
+        checkedAt: '2026-07-16',
+        urls: ['https://www.anthropic.com/news/claude-sonnet-5', 'https://www.anthropic.com/claude/haiku'],
+        note: '참고용. 이 벤치마크의 비용은 CLI 보고값이며 이 정가표로 재계산하지 않는다.',
+      },
+    },
     measurementCostUsd: Number(records.reduce((s, r) => s + (r.measurement.totalCostUsd || 0), 0).toFixed(4)),
   },
   metricDefinitions: {
@@ -429,7 +466,7 @@ const out = {
     wallMs: `프로세스 시작부터 CLI 종료까지. 측정은 동시성 ${'${concurrency}'}로 돌렸으므로 응답 속도 주장으로 읽으면 안 된다 — 비용·토큰·도구호출은 동시성과 무관하다.`,
     gateAnswersAlone: '주입된 게이트 텍스트만으로 정답을 말할 수 있다고 채점자가 판정한 셀. 그런 셀에서 OKF의 이득은 "골라 읽어서"가 아니라 "이미 주입돼서" 생긴 것이다 — 둘 다 실제 OKF 동작이지만 의미가 다르므로 구분해 보고한다.',
   },
-  summary, records,
+  summary, breakEven, records,
 };
 const rawDir = path.join(ROOT, 'docs', 'benchmarks', 'raw');
 fs.mkdirSync(rawDir, { recursive: true });
