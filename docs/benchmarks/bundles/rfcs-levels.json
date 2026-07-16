@@ -1,0 +1,22 @@
+{
+  "target": "rfcs",
+  "builtAt": "2026-07-16T08:06:53.737Z",
+  "model": "sonnet",
+  "transcriptCount": 21,
+  "snapshots": [
+    {
+      "requestedLevel": 20,
+      "sessionsPlanted": 20,
+      "batchRounds": 1,
+      "conceptsReal": 1,
+      "conceptsSeed": 4,
+      "gateBytes": 2952,
+      "gateTruncated": false,
+      "cumulativeBatchCostUsd": 0.6834,
+      "dir": "rfcs-L20",
+      "concepts": [
+        "preferences/rust-feature-thaw-policy.md"
+      ]
+    }
+  ]
+}

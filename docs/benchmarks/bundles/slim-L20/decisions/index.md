@@ -1,0 +1,1 @@
+- [partner-settlement](/decisions/partner-settlement/index.md): 하위 도메인 — concept 2개

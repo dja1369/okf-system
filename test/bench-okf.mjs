@@ -413,6 +413,25 @@ const targets = { slim: path.join(targetRoot, 'slim'), rfcs: path.join(targetRoo
 const levelData = { slim: levelsOf('slim'), rfcs: levelsOf('rfcs') };
 const snapOf = (t, level) => levelData[t].snapshots.find((s) => s.requestedLevel === level);
 
+// 측정 오염 차단(v3에서 발견·수정). Claude Code는 cwd별 프로젝트 메모리
+// (~/.claude/projects/<cwd-slug>/memory/*.md)를 모든 조건에 자동 주입한다. --setting-sources ''
+// 는 user/project/local "설정"만 배제할 뿐 이 메모리는 못 막는다. 그런데 지식 세션(claude -p)이
+// 대상 저장소를 조사하면 그 메모리에 팀 결정을 자동 저장해버려, 측정이 같은 cwd에서 돌 때
+// 게이트를 받지 않아야 할 제로베이스까지 코드에 없는 답을 읽게 된다. 측정 시작 전에 각 대상
+// cwd의 프로젝트 메모리를 지워 이 누수를 원천 차단한다.
+function projectMemoryDir(cwd) {
+  // Claude Code의 슬러그 규칙: 절대경로의 '/'를 '-'로. 앞의 '/'도 '-'가 된다.
+  const slug = path.resolve(cwd).replace(/\//g, '-');
+  return path.join(os.homedir(), '.claude', 'projects', slug, 'memory');
+}
+for (const cwd of Object.values(targets)) {
+  const mem = projectMemoryDir(cwd);
+  if (fs.existsSync(mem)) {
+    fs.rmSync(mem, { recursive: true, force: true });
+    process.stderr.write(`오염 차단: 프로젝트 메모리 제거 ${mem}\n`);
+  }
+}
+
 // 측정 셀을 만든다. 시나리오별로 따로 보고한다 — 시나리오를 가로질러 평균내면 시나리오 선택이
 // 헤드라인을 결정하게 된다(싼 grep 질문과 비싼 탐색 질문은 다른 현상이다).
 const REFERENCE_LEVEL = Number(process.env.OKF_BENCH_REF_LEVEL || 20);

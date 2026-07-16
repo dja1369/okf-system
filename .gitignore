@@ -17,3 +17,6 @@ test/fixtures/bench/transcripts/
 
 # 측정 부분 결과(중단 대비 스냅샷) — 최종 raw JSON만 커밋한다
 docs/benchmarks/raw/partial-*.jsonl
+
+# 런타임에 생성되는 훅 settings — 커밋 안 함
+test/.bench-settings.json

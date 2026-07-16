@@ -1,0 +1,4 @@
+- [What OKF (Open Knowledge Format) is](/references/okf-format.md): Google Cloud's v0.1 Draft spec — a vendor-neutral format representing knowledge as a directory of markdown files with YAML frontmatter
+- [OKF formalizes Karpathy's LLM-wiki pattern](/references/okf-llm-wiki-lineage.md): Where this system's three layers (raw/wiki/schema) and three operations (ingest/query/lint) come from
+- [How this OKF plugin actually works](/references/okf-system-architecture.md): The three stages — lossless capture, batch compression via claude -p, gate injection — and why each is designed that way
+- [slim4](/references/slim4/index.md): 하위 도메인 — concept 3개

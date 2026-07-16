@@ -1,0 +1,1 @@
+- [Rules for writing knowledge into this bundle](/preferences/okf-bundle-rules.md): The six taxonomy types, frontmatter format, and merge/link rules — standing rules that apply to both sessions and the batch

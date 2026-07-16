@@ -1,0 +1,2 @@
+- [Rules for writing knowledge into this bundle](/preferences/okf-bundle-rules.md): The six taxonomy types, frontmatter format, and merge/link rules — standing rules that apply to both sessions and the batch
+- [Rust 신규 기능/MSRV 채택 시 "해동" 대기 규칙과 예외](/preferences/rust-feature-thaw-policy.md): 기능이 stable에 실린 뒤 4번의 릴리스가 더 지나야("해동") 프로덕션 코드에 도입하고, rust-version 필드는 늘 현재 stable보다 4 낮게 유지한다 — 사내 빌드 이미지의 rustc를 분기에 한 번만 올리기 때문이지 공급망 보안이나 크레이트 쿨다운과는 무관하다. MSRV 숫자도 분기 첫 스프린트에서만 올린다. xtask/ 크레이트(배포 산출물 미포함)와 unsafe 제거가 가능해지는 기능은 이 규칙에서 예외로 stable 되는 즉시 도입한다.

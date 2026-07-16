@@ -1259,6 +1259,19 @@ console.log('\n=== plugin contract and docs ===');
   // sweep은 실제 ~/.claude/projects를 읽으므로 벤치 격리가 깨진다. 번들 빌더가 그 경로를 탄다.
   const bundleBuilderText = fs.readFileSync(path.join(PLUGIN_ROOT, 'test', 'bench-bundles.mjs'), 'utf8');
   ok('bundle builder explicitly disables orphan sweep for isolation', bundleBuilderText.includes("OKF_BENCH_SKIP_SWEEP: '1'"));
+  // v3에서 발견한 오염: Claude Code는 cwd별 프로젝트 메모리(~/.claude/projects/<slug>/memory)를
+  // 모든 조건에 자동 주입한다. 지식 세션이 대상 저장소를 조사하면 팀 결정을 거기 저장해버려,
+  // 측정이 같은 cwd에서 돌 때 게이트를 받지 않아야 할 제로베이스까지 답을 읽는다. 하니스는
+  // 측정 시작 전에 각 대상 cwd의 프로젝트 메모리를 지워야 한다.
+  ok('live benchmark clears per-cwd project memory before measuring (contamination guard)',
+    liveBenchText.includes('projectMemoryDir') && /projects.*memory/.test(liveBenchText)
+    && /rmSync\([^)]*mem/.test(liveBenchText));
+  // 리포트는 제로베이스가 프로젝트 메모리를 읽은 시나리오를 기계적으로 감지해 발행에서 빼야
+  // 한다(손으로 시나리오를 고르지 않는다). 이걸 못 하면 오염된 결과가 그대로 발행된다.
+  const reportText = fs.readFileSync(path.join(PLUGIN_ROOT, 'test', 'bench-report.mjs'), 'utf8');
+  ok('report mechanically excludes memory-contaminated scenarios from publication',
+    reportText.includes('readsProjectMemory') && reportText.includes('contaminatedScenarios')
+    && reportText.includes('isCellClean'));
   ok('live benchmark sanitizes user paths out of published results', liveBenchText.includes("'<HOME>'")
     && liveBenchText.includes("'<PLUGIN_ROOT>'") && liveBenchText.includes("'<TARGETS>'") && liveBenchText.includes("'<BUNDLES>'"));
   // 소스에 sanitize가 있다고 실제 산출물이 깨끗한 건 아니다. 커밋된 원시 결과를 직접 본다.

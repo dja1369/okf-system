@@ -58,7 +58,31 @@ const cost = (c) => c?.costUsdCorrectOnly?.p50 ?? null;
 const disp = (d) => (d && d.n != null ? `${usd(d.p50)} (n=${d.n}, ${usd(d.min)}–${usd(d.max)})` : 'n/a');
 // USD가 아닌 분포(바이트 등)용.
 const dispNum = (d, unit = '') => (d && d.n != null ? `${d.p50}${unit} (n=${d.n}, ${d.min}–${d.max}${unit})` : 'n/a');
-const scenarioKeys = [...new Set(cells.map((c) => c.scenario))].sort();
+// 측정 오염 감지(기계적, 손으로 시나리오를 고르지 않는다). Claude Code의 프로젝트 메모리
+// 기능이 지식 세션 중 팀 결정을 ~/.claude/projects/<cwd>/memory/*.md 에 자동 저장했고, 측정이
+// 같은 cwd에서 돌 때 그 메모리가 모든 조건에 자동 주입됐다 — 게이트를 받지 않아야 할
+// 제로베이스까지. 그래서 코드에 없는 팀 결정을 제로베이스가 맞히는 오염이 생겼다.
+// 판정: 어떤 시나리오의 제로베이스 런이 프로젝트 메모리 파일(/memory/*.md)을 하나라도
+// 읽었으면 그 시나리오는 오염된 것으로 보고 발행에서 제외한다. readPaths는 원시 record에만
+// 있으므로 parts[].records 에서 직접 계산한다.
+const allRecords = parts.flatMap((p) => p.records || []);
+const readsProjectMemory = (r) => (r.measurement?.readPaths || [])
+  .some((pth) => /\/memory\/[^/]+\.md$/.test(String(pth)));
+// 셀 단위 오염: (시나리오, 조건) 조합에서 메모리를 읽은 런이 하나라도 있으면 그 셀은 오염이다.
+const contaminatedCells = new Set(allRecords
+  .filter(readsProjectMemory)
+  .map((r) => `${r.scenario}|${r.condition}`));
+const isCellClean = (scen, cond) => !contaminatedCells.has(`${scen}|${cond}`);
+// 시나리오 배제는 "제로베이스가 오염됐을 때"만이다. 제로베이스는 아무 지식도 없어야 하는
+// 탐색 기준선이라, 메모리를 읽으면 "탐색으로는 못 찾는다"는 비교축 자체가 깨진다 → 발행 제외.
+// OKF/CLAUDE.md가 메모리를 읽는 건 다르다 — 그 조건들은 원래 지식을 갖는 게 정상이라(게이트·파일)
+// 메모리 읽기는 불공정이 아니라 중복이다. 통제군(wrong_knowledge)만 오염된 시나리오는 살리되,
+// 그 통제군을 쓰는 지표(R4)에서만 셀 단위로 뺀다(아래 isCellClean).
+const contaminatedScenarios = [...new Set(allRecords
+  .filter((r) => r.condition === 'zero_base' && readsProjectMemory(r))
+  .map((r) => r.scenario))].sort();
+const scenarioKeys = [...new Set(cells.map((c) => c.scenario))]
+  .filter((k) => !contaminatedScenarios.includes(k)).sort();
 const CONDITION_LABEL = {
   zero_base: '제로베이스 탐색', answer_sheet: '정답지', okf: 'OKF 지식축적',
   wrong_knowledge: '잘못된 지식축적', claude_md: 'CLAUDE.md',
@@ -117,6 +141,9 @@ for (const [t, rows] of Object.entries(meta.bundles)) {
 lines.push('', '지식은 전부 실제 파이프라인이 만들었다: 핀 고정된 공개 저장소를 실제 `claude -p` 세션이 탐색 → 그 세션의 실제 Claude Code transcript → OKF raw → 실제 배치 ingest → concept → 실제 게이트. 손으로 쓴 concept은 없다.', '');
 
 lines.push('## 시나리오별 결과', '');
+if (contaminatedScenarios.length) {
+  lines.push(`> **측정 오염으로 제외된 시나리오: ${contaminatedScenarios.join(', ')}.** 지식 세션이 대상 저장소를 조사할 때 Claude Code의 프로젝트 메모리 기능이 팀 결정을 자동 저장했고, 측정이 같은 작업 디렉토리에서 돌 때 그 메모리가 게이트를 받지 않아야 할 제로베이스 조건에까지 자동 주입됐다. 그 결과 코드에 없는 답을 제로베이스가 맞히는 오염이 생겨, 해당 시나리오는 발행에서 제외한다. 아래 표·손익분기·반증 기준은 모두 오염되지 않은 시나리오만으로 계산했다.`, '');
+}
 lines.push('시나리오를 가로질러 평균내지 않는다. grep 한 번이면 끝나는 질문과 호출 체인을 따라가야 하는 질문은 다른 현상이고, 둘을 섞으면 시나리오 선택이 헤드라인을 결정한다.', '');
 lines.push('**두 점수를 나란히 싣는다.** "정답(이진)"은 v2 방식 — 모든 원자가 맞아야 정답이다. "원자 정답"은 원자 단위 부분점수다. 원자 부분점수는 전부-아니면-전무 대비 점수를 **올리는 방향으로만** 움직인다 — 즉 제품(OKF)에 유리한 방향의 지표 변경이다. 그래서 원자 점수만 싣는 것은 자를 바꿔 이기는 것이다. 원자 분해는 측정 전에 `scenarios.json`에 고정했고, 이진 점수와 항상 함께 보고한다.', '');
 lines.push('**비용 옆에 sonnet 단독 비용도 싣는다.** haiku가 함께 해석돼도 요청 모델(sonnet) 단독 비용을 따로 실어, 모델 믹스가 이 셀의 결론을 바꾸는지 독자가 직접 확인할 수 있게 한다.', '');
@@ -155,6 +182,30 @@ for (const key of scenarioKeys) {
   if (censored.length) notes.push(`턴 상한에 걸려 측정 불가(검열): ${censored.join(', ')}`);
   const cw = rows.filter((r) => r.confidentlyWrong > 0).map((r) => `${CONDITION_LABEL[r.condition]} ${r.confidentlyWrong}/${r.runs}`);
   if (cw.length) notes.push(`**자신있게 틀림**(high confidence로 오답): ${cw.join(', ')}`);
+  // 이진 점수가 0인데 원자 정답률이 높은 셀은 "핵심은 맞혔으나 부수 원자(출처·커밋 SHA 등)를
+  // 놓쳐 전부-정답 문턱을 못 넘은" 경우다. 이걸 밝히지 않으면 "전멸"로 오독된다. critical 원자만
+  // 따로 집계해 보여준다(critical 플래그는 원시 record의 atoms.detail에 있다).
+  {
+    const critByCond = {};
+    for (const r of allRecords.filter((r) => r.scenario === key)) {
+      const det = r.grade?.atoms?.detail;
+      if (!Array.isArray(det)) continue;
+      const crit = det.filter((a) => a.critical);
+      if (!crit.length) continue;
+      const acc = (critByCond[r.condition] ||= { pass: 0, n: 0 });
+      acc.n++;
+      if (crit.every((a) => a.status === 'correct')) acc.pass++;
+    }
+    const binZeroButCritHigh = rows.some((r) => r.correct === 0
+      && critByCond[r.condition] && critByCond[r.condition].pass > critByCond[r.condition].n * 0.5);
+    if (binZeroButCritHigh) {
+      const detail = ['zero_base', 'okf', 'claude_md'].filter((c) => critByCond[c])
+        .map((c) => `${CONDITION_LABEL[c]} ${critByCond[c].pass}/${critByCond[c].n}`).join(', ');
+      notes.push(`**이진 점수(전원자)가 0이어도 핵심(critical) 원자는 대부분 맞았다: ${detail}.** `
+        + `모델은 핵심 사실을 옳게 답했고, 놓친 것은 질문이 직접 요구하지 않는 부수 원자(출처 커밋 등)다. `
+        + `"낡은 지식이 자신있는 오답을 만든다"는 예측과 반대로, 모델은 코드를 다시 읽어 핵심을 바로잡았다.`);
+    }
+  }
   if (kind === 'policy') {
     notes.push('이 시나리오의 정답은 저장소에 존재하지 않는다(적대적 검증 완료: 작업 트리·git 히스토리·문서·설정 전수 조사에서 0건). 따라서 탐색 조건의 올바른 동작은 "모른다"이며, 비용이 아니라 **정답률이 지표**다.');
     const wk = rows.find((r) => r.condition === 'wrong_knowledge');
@@ -181,7 +232,7 @@ if (!Object.keys(breakEven).length) {
   lines.push('세션당 절감(제로베이스 정답런 비용 − OKF 정답런 비용)으로 번들을 만든 실제 배치 비용을 회수하려면 몇 세션이 필요한가. 절감이 음수거나 제로베이스가 애초에 못 맞히는 시나리오에서는 숫자를 짓지 않고 null과 이유를 남긴다.', '');
   lines.push('| 시나리오 | 제로베이스 p50·n·범위 | OKF p50·n·범위 | 세션당 절감 | 번들 배치비용(인제스트) | 손익분기 세션 | 비고 |');
   lines.push('|---|---:|---:|---:|---:|---:|---|');
-  for (const scen of Object.keys(breakEven).sort()) {
+  for (const scen of Object.keys(breakEven).filter((k) => !contaminatedScenarios.includes(k)).sort()) {
     const be = breakEven[scen];
     const z = pick(scen, 'zero_base', null);
     const o = pick(scen, 'okf', meta.referenceLevel);
@@ -234,9 +285,14 @@ const verdicts = [];
   // R4(신설): 정책/도메인에서 잘못된 지식이 0보다 유의미하게 높으면(게이트만으로 맞으면) 반증 —
   // 이득이 지식이 아니라 게이트 자체라는 뜻. n=15에서 1건은 우연일 수 있으므로 2건 이상을 유의미로 본다.
   const MATERIAL = 2;
-  const cmp = policyKeys.map((k) => ({ k, w: pick(k, 'wrong_knowledge', meta.referenceLevel) })).filter((x) => x.w);
+  // wrong_knowledge 셀이 오염된 시나리오는 R4에서 뺀다 — 그 정답은 게이트가 아니라 오염된
+  // 프로젝트 메모리에서 나왔으므로 "게이트만으로 맞았다"는 R4의 전제가 성립하지 않는다.
+  const cmp = policyKeys.map((k) => ({ k, w: pick(k, 'wrong_knowledge', meta.referenceLevel) }))
+    .filter((x) => x.w && isCellClean(x.k, 'wrong_knowledge'));
   const fired = cmp.some((x) => x.w.correct >= MATERIAL);
-  const ev = cmp.map((x) => `${x.k}: 잘못된지식 ${x.w.correct}/${x.w.runs}`).join('; ') || '정책 시나리오 없음';
+  const dropped = policyKeys.filter((k) => !isCellClean(k, 'wrong_knowledge'));
+  const ev = (cmp.map((x) => `${x.k}: 잘못된지식 ${x.w.correct}/${x.w.runs}`).join('; ') || '오염되지 않은 정책 시나리오 없음')
+    + (dropped.length ? ` (오염으로 제외: ${dropped.join(', ')})` : '');
   verdicts.push(['R4', `잘못된 지식이 정책/도메인에서 유의미(정답 ≥${MATERIAL}건) — 게이트만으로 맞음`, fired, ev]);
 }
 {
