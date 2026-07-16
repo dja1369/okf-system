@@ -4,31 +4,58 @@ Written and committed **before the first paid measurement call**. Its purpose is
 un-spinnable: the predictions, the levels, the grid, and the refutation criteria are fixed here, so a
 disappointing outcome cannot be re-narrated afterwards as a success.
 
-The previous benchmark (2026-07-15) concluded that OKF did **not** save tokens versus a user who
-restates the facts by hand. This redesign was requested by the project owner, who asked for proof of
-the opposite. That is exactly the situation in which pre-registration matters.
+The benchmark already published on `main` concludes that OKF does **not** save tokens, and that its
+economics get **worse** as knowledge accumulates. This redesign was requested by the project owner,
+who asked for proof of the opposite. That is exactly the situation in which pre-registration
+matters — so the predictions below are recorded before any measurement, and the prior findings are
+inherited rather than discarded.
 
 ## Claim under test
 
 > When knowledge accumulates incrementally, an agent can consult past work instead of re-exploring
 > the codebase every session, and this is more efficient.
 
-## What the previous benchmark got wrong
+## Correction: what the previous benchmark already got right
 
-1. **Wrong comparator.** `B_manual_restatement` pastes the eight target facts into the prompt. To
-   type that string the user must already know the answer, so it is an unattainable floor, not a
-   competitor. It was reported as if OKF had lost to a realistic alternative.
-2. **The baseline could not win.** The fixture project literally contained
-   `No prior decisions are stored here`. `A_no_memory` was not "exploration"; it was a search of an
-   empty room. The realistic contest — explore the history vs. read the bundle — was never run.
-3. **Possible gate leak.** The gate index line contained `SQLite, repository pattern` and the
-   question asked for "database와 pattern". The answer was inside the injected index, so `C` may have
-   scored without ever reading a concept. That is condition `B` wearing `C`'s name.
-4. **Token activity is not cost.** v1's own numbers: A = 27,320 tokens / \$0.0349, C = 22,881 tokens /
-   \$0.0530. C looked 16% cheaper and was 52% more expensive. `cache_read_input_tokens` dominates the
-   sum and is billed at a fraction of the rate.
-5. **Mixed models in one run.** Haiku 4.5 and Sonnet 5 both resolved inside a single run, so
-   cross-condition cost differences were partly a model-mix artifact.
+An earlier draft of this document attacked five flaws in "the previous benchmark". That draft was
+written against a stale checkout, six commits behind `main`. The benchmark actually published on
+`main` (`okf-live-2026-07-15T16-06-28Z`, plus its accumulation run at `16-30-11`) had already fixed
+most of them, and the corrections are recorded here rather than deleted, because misrepresenting
+prior work in order to justify new work is precisely the failure mode this document exists to
+prevent.
+
+What the published benchmark already does, and this one keeps:
+
+- **It splits the comparator.** `B_oracle` is named as an upper bound "no user can occupy", and
+  break-even is computed against `B_realistic` — the CLAUDE.md habit — instead.
+- **It says cost is the defensible column**, noting `tokenActivity` sums cache reads 1:1 with output
+  tokens although they bill ~50× cheaper.
+- **It already found the gate-index-suffices effect**: "C answers in 1 turn with 0 reads — the gate
+  index alone was sufficient."
+- **It already measured accumulation and reported the unfavourable answer**: with 20 unrelated
+  concepts, `C` grew +14,989 token activity while `B_realistic` grew +1,337 — degrading ~11× faster,
+  because the model stops trusting the index line and reopens files (reads 0→3, turns 1→4). It states
+  flatly: *"'OKF gets cheaper as knowledge accumulates' is false."*
+- **It preserves a negative result on purpose** (the 50-filler preflight failure).
+- **It discloses the model mix** (Sonnet 5 + Haiku 4.5 resolved in one run).
+
+## The one thing that has never been measured
+
+Every run so far used a synthetic fixture whose project directory contains the sentence
+`No prior decisions are stored here`. In that fixture the target facts exist **nowhere** — not in the
+code, not in git history. So `A — no memory` scores 0/5 by construction: it is not exploring, it is
+searching an empty room. Its 27,246 tokens buy nothing.
+
+That makes the central claim untestable there. "Consulting accumulated knowledge beats re-exploring"
+requires a baseline that **can** re-explore and succeed. On a real repository the same baseline reads
+real files, follows a real call chain, and gets the right answer — for real money ($0.090, 9 turns,
+measured on Slim before this benchmark was designed). *That* is the cost OKF claims to remove, and it
+has never appeared in any published OKF number.
+
+This run replaces the fixture with two pinned public repositories and knowledge produced by the real
+pipeline, so the comparison is finally between exploring history and reading a bundle. Everything
+else above is inherited, including the unfavourable accumulation finding, which this design is built
+to reproduce or overturn on real material rather than to bury.
 
 ## Targets (real, pinned, public)
 
