@@ -624,16 +624,20 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   // 분석기 호출에는 워크스페이스 한정 Write/Edit 허용 규칙을 함께 주입한다(belt-and-braces).
   const home = setupBatchSandbox('perm-rules');
   const argvDumpPath = path.join(sandbox('argv-perm'), 'argv.json');
-  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_DUMP_ARGV_TO: argvDumpPath } });
+  const settingsDumpPath = path.join(sandbox('settings-perm'), 'settings.json');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_DUMP_ARGV_TO: argvDumpPath, FAKE_CLAUDE_DUMP_SETTINGS_TO: settingsDumpPath } });
   const argv = JSON.parse(fs.readFileSync(argvDumpPath, 'utf8'));
-  const settings = JSON.parse(argv[argv.indexOf('--settings') + 1]);
+  // Windows 회귀(CI 실측): JSON을 명령줄 인자로 실으면 cmd.exe(shell:true)가 따옴표를 벗겨
+  // JSON이 깨진다. settings는 반드시 파일 경로로 전달돼야 한다.
+  ok('settings는 명령줄 JSON이 아니라 파일 경로로 전달된다', String(argv[argv.indexOf('--settings') + 1] || '').endsWith('.analyzer-settings.json'));
+  const settings = JSON.parse(fs.readFileSync(settingsDumpPath, 'utf8'));
   ok(
-    '분석기에 번들 경로 한정 쓰기 허용 규칙이 주입된다',
+    '분석기에 워크스페이스 한정 쓰기 허용 규칙이 주입된다',
     Array.isArray(settings?.permissions?.allow)
       && settings.permissions.allow.some((r) => r.startsWith('Write(//') && r.endsWith('/**)'))
       && settings.permissions.allow.some((r) => r.startsWith('Edit(//') && r.endsWith('/**)'))
   );
-  ok('허용 규칙은 훅 비활성화(--settings hooks:{})와 함께 온다', settings && typeof settings.hooks === 'object');
+  ok('허용 규칙은 훅 비활성화(hooks:{})와 함께 온다', settings && typeof settings.hooks === 'object');
 }
 {
   // A clean process exit is not enough: Claude reports max-turn exhaustion in the JSON result.

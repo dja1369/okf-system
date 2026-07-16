@@ -535,6 +535,11 @@ function buildAnalyzerSettings(bundleDir) {
 
 function runClaude(prompt, { cwd, okfHome, timeoutMs, claudeBin, model, effort }) {
   const bin = claudeBin || 'claude';
+  // --settings를 JSON 문자열로 명령줄에 실으면 Windows(claude.cmd 대응 shell:true) 경로에서
+  // cmd.exe가 따옴표를 벗겨 JSON이 깨진다(CI 실측: "Expected property name or '}' in JSON").
+  // 파일로 쓰고 경로만 넘긴다 — 워크스페이스(cwd) 안이라 실행 후 워크스페이스와 함께 삭제된다.
+  const settingsPath = path.join(cwd, '.analyzer-settings.json');
+  fs.writeFileSync(settingsPath, buildAnalyzerSettings(cwd));
   const args = [
     // The ingest prompt contains transcript-derived project names. Keep it off the command
     // line so Windows' required shell:true path for claude.cmd cannot reinterpret &, |, %, etc.
@@ -545,7 +550,7 @@ function runClaude(prompt, { cwd, okfHome, timeoutMs, claudeBin, model, effort }
     // 차단 메커니즘이고, --disallowedTools는 보조로 병기한다(§9 item 4, 이번에 실측 완료).
     '--tools', 'Read,Glob,Grep,Write,Edit',
     '--disallowedTools', 'Bash',
-    '--settings', buildAnalyzerSettings(cwd),
+    '--settings', settingsPath,
     // 실측 발견(사후 반영, 중대): CLAUDE_CONFIG_DIR을 통째로 격리하면 keychain/OAuth 인증까지
     // 함께 격리되어 `claude -p`가 "Not logged in"으로 즉시 실패한다 — API 키 사용자만 우연히
     // 동작하고 (이 프로젝트 사용자 다수가 그럴) OAuth/구독 로그인 사용자는 배치가 원천적으로

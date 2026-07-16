@@ -81,6 +81,15 @@ timestamp: 2026-07-15
 if (process.env.FAKE_CLAUDE_DUMP_PROMPT_TO) {
   fs.writeFileSync(process.env.FAKE_CLAUDE_DUMP_PROMPT_TO, prompt);
 }
+if (process.env.FAKE_CLAUDE_DUMP_SETTINGS_TO) {
+  const settingsIdx = args.indexOf('--settings');
+  const value = settingsIdx >= 0 ? args[settingsIdx + 1] || '' : '';
+  try {
+    fs.copyFileSync(value, process.env.FAKE_CLAUDE_DUMP_SETTINGS_TO); // 파일 경로로 전달된 경우
+  } catch {
+    fs.writeFileSync(process.env.FAKE_CLAUDE_DUMP_SETTINGS_TO, value); // (회귀 감지용) 인라인 문자열
+  }
+}
 if (process.env.FAKE_CLAUDE_DUMP_ARGV_TO) {
   fs.writeFileSync(process.env.FAKE_CLAUDE_DUMP_ARGV_TO, JSON.stringify(args));
 }
