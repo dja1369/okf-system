@@ -132,6 +132,13 @@ commit, push, PR, destructive Git 명령은 실행하지 않았다.
   한 덩어리로 묶어 "좁히는 게 항상 옳다"로 일반화하면 이것을 못 잡는다.
   `@` 뒤에 도메인 모양(`.` 포함)을 요구해 산문의 `@담당자`·crontab의 `<cmd @reboot>`은
   건드리지 않는다(라이브 실측: concept 줄 23개 중 `@`를 담은 줄 0개).
+- **`/okf:okf-deprecate` 커맨드 자신이 W5 계열 결함을 갖고 있었다.** description의
+  `(status: deprecated)`가 따옴표 없는 YAML 평문 스칼라라 파싱이 깨졌고,
+  `claude plugin validate`가 "At runtime this command loads with empty metadata
+  (all frontmatter fields silently dropped)"로 잡았다 — 커맨드가 설명 없이 로드된다.
+  lint W5가 **사용자 번들에서** 잡는 것과 같은 계열이 **이 저장소 안에** 있었다.
+  조용히 깨지므로(에러 없이 메타데이터만 사라진다) 테스트가 유일한 신호다 — 커맨드·스킬
+  frontmatter가 전부 파싱되고 description을 갖는지 확인하는 단언을 붙였다.
 - **W13**(title/description의 URL): 접기로는 못 막는 맨 URL. `references/` concept가 URL을
   정당하게 인용하므로 차단이 아니라 경고다 — 게이트 규칙 1이 "그 줄을 그대로 근거로 쓰라"이므로
   외부 목적지는 드러나야 한다.
@@ -279,7 +286,7 @@ $0.216→$0.258→**$0.447**로 오히려 순증가했고, zero_base_chain도 $0
 
 ```sh
 node test/smoke.mjs
-# 598 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
+# 599 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
 
 node test/bench.mjs
 # SessionStart 57.4ms (56.7-58.2), SessionEnd 43.4ms (41.8-43.9)

@@ -1,5 +1,5 @@
 ---
-description: 무관해지거나 대체된 concept를 은퇴시킨다(status: deprecated). 파일은 지우지 않고 게이트 주입에서만 뺀다.
+description: "무관해지거나 대체된 concept를 은퇴시킨다(status: deprecated). 파일은 지우지 않고 게이트 주입에서만 뺀다."
 ---
 
 OKF 번들의 concept 하나를 은퇴시킨다. **파일은 삭제·이동하지 않는다** — `status: deprecated`를

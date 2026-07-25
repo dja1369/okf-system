@@ -4431,6 +4431,34 @@ if (process.platform !== 'win32') {
   }
 }
 
+{
+  // **플러그인 자신의 커맨드·스킬 frontmatter도 파싱돼야 한다.** 실측: `/okf:okf-deprecate`의
+  // description에 `(status: deprecated)`가 따옴표 없이 들어 있어 YAML 파싱이 깨졌고,
+  // `claude plugin validate`가 "At runtime this command loads with empty metadata
+  // (all frontmatter fields silently dropped)"로 잡았다 — 커맨드가 설명 없이 로드된다.
+  // lint W5가 사용자 번들에서 잡는 것과 **같은 계열의 결함이 이 저장소 안에** 있었다.
+  // 조용히 깨지므로(에러 없이 메타데이터만 사라진다) 테스트가 유일한 신호다.
+  const roots = [path.join(PLUGIN_ROOT, 'commands')];
+  const skillsDir = path.join(PLUGIN_ROOT, 'skills');
+  const files = [];
+  for (const dir of roots) {
+    for (const f of fs.readdirSync(dir)) if (f.endsWith('.md')) files.push(path.join(dir, f));
+  }
+  for (const d of fs.readdirSync(skillsDir)) {
+    const s = path.join(skillsDir, d, 'SKILL.md');
+    if (fs.existsSync(s)) files.push(s);
+  }
+  const broken = [];
+  for (const f of files) {
+    const { hasFrontmatter, data, parseError } = parseFrontmatter(fs.readFileSync(f, 'utf8'));
+    if (!hasFrontmatter || parseError || !data || typeof data.description !== 'string' || data.description.trim() === '') {
+      broken.push(`${path.basename(path.dirname(f))}/${path.basename(f)}${parseError ? ':parse' : ':missing-description'}`);
+    }
+  }
+  ok('플러그인 커맨드·스킬의 frontmatter가 전부 파싱되고 description을 갖는다',
+    files.length >= 7 && broken.length === 0, `files=${files.length} broken=${broken.join(',')}`);
+}
+
 // ---------------------------------------------------------------------------
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
