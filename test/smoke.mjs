@@ -20,7 +20,7 @@ import { isLockStale, releaseLock } from '../lib/lock.mjs';
 import { readInstalledAt } from '../lib/installed-at.mjs';
 import { matchGlob } from '../lib/glob.mjs';
 import { BUILTIN_EXCLUDE_CWD } from '../lib/paths.mjs';
-import { parseFrontmatter, setFrontmatterStatus } from '../lib/frontmatter.mjs';
+import { parseFrontmatter, setFrontmatterStatus, frontmatterKeyLineRe } from '../lib/frontmatter.mjs';
 import { toIsoDateTime, generatedAt, conceptStatus } from '../lib/trust.mjs';
 import { stampGenerated } from '../lib/generated-stamp.mjs';
 import { analyzeProject } from '../lib/analyze.mjs';
@@ -1763,6 +1763,32 @@ function runDeprecate(okfHome, args) {
   ok('trust: real dates including leap days still normalize',
     valid.every(([v, want]) => toIsoDateTime(v) === want),
     valid.filter(([v, want]) => toIsoDateTime(v) !== want).map(([v]) => v).join(','));
+
+  // Date.UTC는 0~99년을 1900+n으로 자동 보정한다 — 그걸 달력 검증에 쓰면 `0001-01-01` 같은
+  // 정상 날짜를 거부한다(과차단). 100년 그레고리력 규칙도 함께 고정한다.
+  const boundary = [['0001-01-01', '0001-01-01T00:00:00Z'], ['0050-01-01', '0050-01-01T00:00:00Z'],
+    ['0099-12-31', '0099-12-31T00:00:00Z'], ['9999-12-31', '9999-12-31T00:00:00Z'],
+    ['2000-02-29', '2000-02-29T00:00:00Z']];
+  const leapRejects = ['1900-02-29', '2100-02-29', '0100-02-29'];
+  ok('trust: two-digit and boundary years are not rejected by the calendar check',
+    boundary.every(([v, want]) => toIsoDateTime(v) === want)
+    && leapRejects.every((v) => toIsoDateTime(v) === null),
+    boundary.filter(([v, want]) => toIsoDateTime(v) !== want).map(([v]) => v).join(','));
+}
+{
+  // frontmatterKeyLineRe는 exported API이고 key를 정규식에 **보간**한다. 메타문자가 들어오면
+  // `a(b`는 즉시 throw하고 `a|b`는 조용히 다른 정규식이 된다 — 조용한 쪽이 더 나쁘다.
+  const unsafe = ['a(b', 'a|b', 'a.b', 'a*b', '', '1abc', null, undefined, 42];
+  const accepted = unsafe.filter((k) => {
+    try { frontmatterKeyLineRe(k); return true; } catch { return false; }
+  });
+  ok('frontmatterKeyLineRe refuses keys that are not safe to interpolate',
+    accepted.length === 0, `accepted=${JSON.stringify(accepted)}`);
+  // 그리고 정상 키에서는 접두 충돌·들여쓴 하위 키를 잡지 않아야 한다.
+  ok('frontmatterKeyLineRe matches only the exact top-level key',
+    frontmatterKeyLineRe('status').test('status : x')
+    && !frontmatterKeyLineRe('status').test('statusline: x')
+    && !frontmatterKeyLineRe('by').test('  by: "x"'));
 }
 {
   // 회차당 소액을 4자리로 반올림하면 누계가 영원히 0이 되어 상한이 결코 발동하지 않는다.
