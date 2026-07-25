@@ -4522,6 +4522,54 @@ if (process.platform !== 'win32') {
     !kept.includes('command-name') && !kept.includes('/plan'), JSON.stringify(kept));
   ok('하네스 태그만 있던 턴은 여전히 빈 문자열이다(폐기 대상)',
     stripBoilerplate('<command-name>/clear</command-name>') === '');
+  // 언랩이 여는 **새 유실 경로**(삭제 방식에는 없던 것): 인자 안의 닫히지 않은 태그가 밖으로
+  // 나가 뒤이은 진짜 닫는 태그와 짝지어지면 그 사이의 진짜 대화가 통째로 사라진다.
+  const strayTag = stripBoilerplate(
+    '<command-args>진짜 문장 <system-reminder></command-args> 그 뒤 진짜 대화 <system-reminder>하네스</system-reminder> 끝');
+  ok('인자 안의 홀태그가 뒤따르는 진짜 대화를 삼키지 않는다',
+    strayTag.includes('그 뒤 진짜 대화') && strayTag.includes('끝') && !strayTag.includes('하네스'),
+    JSON.stringify(strayTag));
+  ok('인자 안의 완결된 하네스 블록은 여전히 제거된다',
+    !stripBoilerplate('<command-args>진짜 문장 <system-reminder>x</system-reminder> 더</command-args>').includes('x'),
+    JSON.stringify(stripBoilerplate('<command-args>진짜 문장 <system-reminder>x</system-reminder> 더</command-args>')));
+}
+{
+  // formatReport의 **errors 분기** 접기는 무커버였다(warnings 분기만 단언에 걸렸다).
+  // 지금 E3a의 개행 주입을 막는 것이 정확히 그 줄이다. 에러 소견으로 갈라야 잡힌다.
+  const home = bootstrapped('lint-error-branch-fold');
+  fs.writeFileSync(okfPaths(home).rootIndex,
+    '---\nokf_version: "0.2"\nx_tool_state: "열고 안 닫음\nx_secret: AKIAIOSFODNN7EXAMPLE\n---\n# OKF Knowledge Bundle\n');
+  const report = runLint(home);
+  const text = formatReport(report);
+  ok('E3a도 루트 프론트매터 원문을 리포트에 싣지 않는다',
+    !text.includes('AKIAIOSFODNN7EXAMPLE') && report.errors.some((e) => e.rule === 'E3a'),
+    text.slice(0, 300));
+  // `formatReport`의 계약은 **한 소견 = 한 줄**이고, 그건 errors/warnings 양쪽에 걸린다.
+  // E 규칙은 지금 전부 값을 안 싣거나(E2·E3b) 사유 줄만 싣도록 정제돼서(E1·E3a) 실번들로는
+  // errors 분기를 갈라낼 수 없다 — mutation에서 그 분기만 지운 mutant가 살아남는 이유다.
+  // 접기는 **출력 지점 하나에서 앞으로 생길 규칙까지 덮는** 것이 목적이므로, 규칙에 의존하지
+  // 않고 계약 자체를 단위로 고정한다. 규칙 레지스트리(lib/lint.mjs 상단)는 신규 규칙을 W로
+  // 제한하지만 기존 E 4종이 있고, 누군가 값을 싣는 E를 추가하면 이 줄이 유일한 방어다.
+  const synthetic = formatReport({
+    errors: [{ file: 'x.md', rule: 'E9', message: '값\n주입된 줄이다' }],
+    warnings: [{ file: 'y.md', rule: 'W9', message: '값\n또 하나' }],
+  });
+  ok('formatReport는 소견 하나를 한 줄로 낸다(errors·warnings 양쪽)',
+    synthetic.split('\n').length === 2, JSON.stringify(synthetic));
+}
+{
+  // 내부 링크 예외는 description 전용이다. title에 허용하면 생성 줄이
+  // `- [see [a](/x.md)](/decisions/f.md)`가 되어 **그 concept 자신의 링크가 깨진다**
+  // (CommonMark는 링크 텍스트 안의 링크를 허용하지 않는다). 위조가 아니라 자해다.
+  const home = sandbox('gate-title-nested-link');
+  fs.mkdirSync(path.join(home, 'decisions'), { recursive: true });
+  fs.mkdirSync(okfPaths(home).state, { recursive: true });
+  fs.writeFileSync(path.join(home, 'decisions', 'f.md'),
+    '---\ntype: decision\ntitle: "see [a](/decisions/a.md) 결정"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(home);
+  const line = readIfExists(path.join(home, 'decisions', 'index.md')).trim();
+  ok('title의 링크는 접혀서 concept 자신의 링크가 깨지지 않는다',
+    /^- \[[^[\]]*\]\(\/decisions\/f\.md\):/.test(line), JSON.stringify(line));
 }
 {
   // 게이트의 log 절단이 문장 한가운데서 끊기고 복구 경로를 안 줬다(감사 실측: 라이브 최신
