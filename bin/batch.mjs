@@ -13,6 +13,7 @@ import { matchGlob } from '../lib/glob.mjs';
 import { acquireLock, releaseLock } from '../lib/lock.mjs';
 import { ensurePrivateDir, securePrivateFile, writePrivateJsonAtomic } from '../lib/permissions.mjs';
 import { safeErrorCode } from '../lib/status.mjs';
+import { stampGenerated } from '../lib/generated-stamp.mjs';
 
 const SWEEP_LOOKBACK_DAYS = 7; // §7-8: 이보다 오래된 orphan transcript는 sweep 대상에서 제외
 // 유휴 판정은 config(sweep_min_idle_minutes, 기본 60분)로 옮겼다 — "마지막 활동 후 N분"이
@@ -658,6 +659,31 @@ function buildAnalyzerSettings(bundleDir) {
   });
 }
 
+// 실제로 답한 모델을 고른다(출력 토큰 최다, 동점은 이름 오름차순으로 갈라 결정성 보장).
+// config.batch_model로 대신 채우지 마라 — 그건 '오늘의 요청값'이지 '실제로 답한 모델'이 아니다.
+function pickModelFromUsage(modelUsage) {
+  if (!modelUsage || typeof modelUsage !== 'object') return '';
+  const entries = Object.entries(modelUsage).filter(([k]) => typeof k === 'string' && k !== '');
+  if (entries.length === 0) return '';
+  entries.sort((a, b) => (Number(b[1]?.outputTokens) || 0) - (Number(a[1]?.outputTokens) || 0)
+    || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return entries[0][0];
+}
+
+const SAFE_ACTOR_MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
+// OKF v0.2 actor 규약: `<producer>/<version>`. 화이트리스트를 통과 못 하면 unknown이다 —
+// 모르는 것을 아는 척 적는 것이 §5.3 신뢰 등급 전체를 무의미하게 만든다.
+function actorFor(model) {
+  const m = typeof model === 'string' ? model.trim() : '';
+  return SAFE_ACTOR_MODEL_RE.test(m) ? `okf-system/${m}` : 'okf-system/unknown';
+}
+
+// 이 파일의 날짜 라벨은 예외 없이 localDateString()(로컬)이다. generated.at만은 OKF SPEC
+// §5.2가 ISO8601을 요구하므로 UTC다 — 의도된 예외이니 통일하려 들지 마라.
+function isoSecondsUtc(d = new Date()) {
+  return `${d.toISOString().slice(0, 19)}Z`;
+}
+
 // Claude CLI가 --output-format json으로 **이미 무료로** 돌려주는 지출 메타데이터를 호출자에게
 // 전달한다. 예전엔 runClaude가 이 값을 손에 쥐고도 {ok, output}만 반환하며 버렸다(T11.1).
 // costUsd는 null과 0을 구분한다 — 0 = 안 썼다, null = 얼마 썼는지 모른다.
@@ -774,7 +800,7 @@ function runClaude(prompt, { cwd, okfHome, timeoutMs, claudeBin, model, effort }
       error.code = 'CLAUDE_INVALID_JSON';
       // spend는 JSON.parse 성공 이후 스코프에서만 유효하다 — 여기서 `...spend`를 쓰면 TDZ다.
       // 호출은 났으므로 costUsd: null(= 얼마 썼는지 모른다)로 표시한다.
-      return { ok: false, error, costUsd: null, usage: {}, numTurns: null };
+      return { ok: false, error, costUsd: null, usage: {}, numTurns: null, model: '' };
     }
     try {
       // cwd는 이제 임시 워크스페이스다 — 레지스트리는 반드시 번들(.okf)에 남아야 다음 sweep이 본다.
@@ -810,11 +836,11 @@ function runClaude(prompt, { cwd, okfHome, timeoutMs, claudeBin, model, effort }
       error.code = 'CLAUDE_INCOMPLETE';
       // 지불 후 실패다 — 파싱은 됐으므로 금액을 안다. 이 경로가 비용 기록에서 빠지면
       // "지불한 것은 전부 남는다"가 거짓이 된다(실측: 35회 중 최소 10회가 지불 후 롤백).
-      return { ok: false, error, ...spend };
+      return { ok: false, error, ...spend, model: pickModelFromUsage(result?.modelUsage) };
     }
-    return { ok: true, output: result.result ?? '', ...spend };
+    return { ok: true, output: result.result ?? '', ...spend, model: pickModelFromUsage(result?.modelUsage) };
   } catch (err) {
-    return { ok: false, error: err, costUsd: null, usage: {}, numTurns: null };
+    return { ok: false, error: err, costUsd: null, usage: {}, numTurns: null, model: '' };
   }
 }
 
@@ -943,9 +969,10 @@ function buildAnalyzerWorkspace(okfHome, runId, chunkIndex, chunk) {
 // (오염된 digest에 넘어간 분석기의 산출물일 수 있으므로) 번들에 닿지 않고, index.md는
 // 드라이버가 재생성하므로 제외, 예약 디렉토리는 루트에서 걸러진다. 삭제는 반영하지 않는다
 // (SCHEMA 규칙 4 — 대체는 새 파일 + superseded 산문). 반영 후 lint가 내용 규정을 검사한다.
-function applyAnalyzerWorkspace(okfHome, wsRoot) {
+function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null) {
   let applied = 0;
   let blocked = 0;
+  let stamped = 0;
   const walk = (dir, rel) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       if (rel === '' && (SCAN_EXCLUDE_DIRS.has(e.name) || e.name === INGEST_INBOX_DIR)) continue;
@@ -974,8 +1001,27 @@ function applyAnalyzerWorkspace(okfHome, wsRoot) {
         blocked++;
         continue;
       }
+      // 스탬핑은 반드시 (a) 위 Buffer.compare 동일성 검사 **뒤**, (b) SCHEMA/okf_seed 차단
+      // 게이트 **뒤**다. 앞에 두면 모든 파일이 매 회차 재기록돼 유실 백스톱이 영구 무력화되고,
+      // 차단 게이트 앞에 두면 규칙서와 시드가 스탬프된다.
+      // log.md 제외를 빼지 마라 — 지금은 프론트매터가 없어 우연히 안전하지만, 누군가
+      // log.md에 프론트매터를 붙이는 순간 조용히 깨진다.
+      let out = next;
+      if (stamp && e.name !== 'log.md') {
+        // trustExisting은 prev(번들에 이미 있던 바이트) 기준이다. next 기준으로 판정하면
+        // 분석기가 방금 써넣은 generated가 '남의 것'으로 둔갑해 코드 스탬핑을 무력화한다.
+        const stampedText = stampGenerated(next.toString('utf8'), stamp, { trustExisting: prev !== null });
+        if (stampedText !== null) {
+          out = Buffer.from(stampedText, 'utf8');
+          stamped++;
+          // 이 함수는 ingest 후와 repair 후 같은 wsRoot를 두 번 본다. 워크스페이스에 같은
+          // 바이트를 되쓰지 않으면 2차 호출에서 스탬프된 파일 전부가 Buffer.compare != 0이
+          // 되어, repair가 건드리지도 않은 파일의 at까지 새 시각으로 갈아엎힌다.
+          try { fs.writeFileSync(abs, out); } catch { /* 번들 반영은 이미 안전하다 */ }
+        }
+      }
       fs.mkdirSync(path.dirname(destAbs), { recursive: true });
-      fs.writeFileSync(destAbs, next);
+      fs.writeFileSync(destAbs, out);
       applied++;
     }
   };
@@ -983,6 +1029,9 @@ function applyAnalyzerWorkspace(okfHome, wsRoot) {
   if (blocked > 0) {
     log(okfHome, `분석기 산출물 반영 거부 ${blocked}건 — SCHEMA.md/okf_seed 시드 수정 시도`);
   }
+  // 숫자만 남긴다 — 파일명·스탬프 값은 로그에 싣지 않는다. N이 그 회차 변경 파일 수보다
+  // 크면 전 번들 일괄 스탬핑(= 유실 백스톱 무력화)이라는 뜻이니 즉시 롤백하라.
+  if (stamped > 0) log(okfHome, `generated 스탬프 ${stamped}건`);
   // blocked를 함께 돌려준다 — NO-OP 판정이 "쓴 게 없다"와 "쓰려다 거부당했다"를 구분해야
   // 하기 때문이다. 기존 호출부 두 곳은 반환값을 버리고 있었으므로 파급은 0이다.
   return { applied, blocked };
@@ -1027,7 +1076,10 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
       return { ok: false, fatal: true };
     }
 
-    const applyResult = applyAnalyzerWorkspace(okfHome, wsRoot);
+    // at은 **호출당 1개**다 — 같은 LLM 호출에서 나온 파일들이 같은 시각을 공유해야 정직하고
+    // 테스트에서도 결정적이다.
+    const ingestStamp = { by: actorFor(ingestResult.model), at: isoSecondsUtc() };
+    const applyResult = applyAnalyzerWorkspace(okfHome, wsRoot, ingestStamp);
 
     // 실측(E3): 쓰기가 막히면 분석기는 성공 종료하지만 아무것도 못 쓰고, NO-OP 선언 대신 차단
     // 사정을 설명한다. 이를 NO-OP으로 오분류하면 지식이 조용히 유실된다(30일 뒤 삭제).
@@ -1057,7 +1109,9 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
       });
       accrueSpend(spend, repairResult);
       if (repairResult.ok) {
-        applyAnalyzerWorkspace(okfHome, wsRoot);
+        // 폴백을 빼면 repair가 만든 파일이 같은 모델인데도 unknown이 된다.
+        const repairStamp = { by: actorFor(repairResult.model || ingestResult.model), at: isoSecondsUtc() };
+        applyAnalyzerWorkspace(okfHome, wsRoot, repairStamp);
         regenerateIndex(okfHome);
         report = runLint(okfHome);
       }

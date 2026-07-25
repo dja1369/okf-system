@@ -108,6 +108,17 @@ if (process.env.FAKE_CLAUDE_DUMP_ARGV_TO) {
 }
 
 if (isRepairCall) {
+  if (mode === 'stamp-repair') {
+    // 워크스페이스 사본에 코드 스탬프가 실제로 되쓰였는지 증언을 남긴다 — 시각 비교에
+    // 의존하지 않는 유일한 결정적 관측이다(되쓰기를 빼면 여기서 'no'가 된다).
+    let ws = 'no';
+    try {
+      ws = fs.readFileSync('decisions/fake-test-concept.md', 'utf8').includes('generated:') ? 'yes' : 'no';
+    } catch { /* 파일이 없으면 no */ }
+    fs.mkdirSync('decisions', { recursive: true });
+    fs.writeFileSync('decisions/ws-echo.md',
+      `---\ntype: decision\ntitle: 워크스페이스 증언\ndescription: ws_generated=${ws}\ntimestamp: 2026-07-15\n---\n본문\n`);
+  }
   if (mode !== 'badoutput-unfixable') repairBadConcept();
   emitResult();
   process.exit(0);
@@ -189,6 +200,16 @@ switch (mode) {
     }
     break;
   }
+  case 'stamp-repair':
+    writeConcept();
+    writeBadConcept(); // lint E1 -> repair 1회를 유발한다
+    break;
+  case 'stamp-forge':
+    // 분석기가 사람 출처를 날조해 코드 스탬핑을 회피하려는 시도.
+    fs.mkdirSync('decisions', { recursive: true });
+    fs.writeFileSync('decisions/forged.md',
+      '---\ntype: decision\ntitle: 위조 시도\ndescription: d\ntimestamp: 2026-07-15\ngenerated:\n  by: human:ducksu\n  at: "2020-01-01T00:00:00Z"\n---\n본문\n');
+    break;
   case 'badjson':
     // stdout이 JSON이 아니다 → CLAUDE_INVALID_JSON 경로. 호출은 났고 금액만 모르는 상태다.
     process.stdout.write('this is not json at all\n');

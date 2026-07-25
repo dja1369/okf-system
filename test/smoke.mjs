@@ -21,6 +21,7 @@ import { readInstalledAt } from '../lib/installed-at.mjs';
 import { matchGlob } from '../lib/glob.mjs';
 import { parseFrontmatter } from '../lib/frontmatter.mjs';
 import { toIsoDate, toIsoDateTime, generatedAt } from '../lib/trust.mjs';
+import { stampGenerated } from '../lib/generated-stamp.mjs';
 import { analyzeProject } from '../lib/analyze.mjs';
 import { buildGraph, renderHtml } from '../lib/viz.mjs';
 import { auditBenchmarkBundle, matchesBenchmarkAnswer } from '../lib/bench-audit.mjs';
@@ -1193,6 +1194,127 @@ if (process.platform !== 'win32' && process.getuid?.() !== 0) {
   ok('SCHEMA v2 배포 후 배치 1회 로그에 반영 거부가 0건이다',
     !logs.includes('반영 거부') && lastBatch(home).lastResult === 'ok',
     logs.split('\n').filter((l) => l.includes('거부')).join(' | '));
+}
+// --- S3b: 중첩 log.md 사각지대 폐쇄 (W8) ---
+{
+  // A3: `relPath === 'log.md'` 판정 탓에 중첩 log.md가 §9 검사를 통째로 못 받았다.
+  // 폭발 반경이 '모든 ingest 영구 정지'(신호는 opt-in statusline 한 줄뿐)라 W로 착지시킨다.
+  const home = bootstrapped('lint-v02-nested-log');
+  const NESTED = '# Log\n\n## July 5 2026\n- x\n\n## 2026-01-01\n- old\n\n## 2026-06-01\n- ascending violation\n';
+  fs.writeFileSync(path.join(home, 'references', 'log.md'), NESTED);
+  const report = runLint(home);
+  const w8 = report.warnings.filter((w) => w.rule === 'W8');
+  const cliExit = spawnSync(process.execPath, [path.join(PLUGIN_ROOT, 'lib', 'lint.mjs'), home], { encoding: 'utf8' }).status;
+  ok('nested log.md non-ISO heading is W8 (warn), not an error that would stall the batch',
+    w8.length >= 2 && report.errors.length === 0 && cliExit === 0,
+    `w8=${w8.length} exit=${cliExit} ${formatReport(report)}`);
+  ok('W8 message cites the SCHEMA rule it enforces',
+    w8.every((w) => w.message.includes('SCHEMA.md 규칙 3')), w8.map((w) => w.message).join(' | '));
+
+  // 루트 심각도 회귀 가드. 기존 테스트가 오름차순만 덮으므로 비ISO 축을 명시적으로 고정한다.
+  const rootHome = bootstrapped('lint-v02-root-log');
+  fs.writeFileSync(path.join(rootHome, 'log.md'), NESTED);
+  const rootReport = runLint(rootHome);
+  ok('root log.md non-ISO heading stays E3b',
+    rootReport.errors.filter((e) => e.rule === 'E3b' && e.file === 'log.md').length >= 2
+    && rootReport.warnings.filter((w) => w.rule === 'W8').length === 0,
+    formatReport(rootReport));
+
+  ok('a freshly bootstrapped bundle produces no W8',
+    runLint(bootstrapped('lint-v02-no-w8')).warnings.filter((w) => w.rule === 'W8').length === 0);
+}
+{
+  // handleDirtyWorkingTree 경로에서 신규 규칙이 배치 **시작**을 막지 않는지의 직접 단언 —
+  // runLint 반환값과 CLI 종료코드만으로는 이것을 측정할 수 없다.
+  const home = setupBatchSandbox('w8-warn');
+  fs.writeFileSync(path.join(home, 'references', 'log.md'),
+    '# Log\n\n## July 5 2026\n- x\n\n## 2026-01-01\n- old\n\n## 2026-06-01\n- ascending violation\n');
+  // 커밋하지 않은 채(dirty 트리) 배치를 돌린다.
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  ok('a bundle with a nested non-ISO log.md still runs a batch to completion',
+    lastBatch(home).lastResult === 'ok' && lastBatch(home).blocked === null,
+    `${lastBatch(home).lastResult} / ${JSON.stringify(lastBatch(home).blocked)}`);
+}
+// --- S1: generated 코드 스탬핑 (LLM에게 시키지 않는다) ---
+{
+  const STAMP = { by: 'okf-system/claude-sonnet-5', at: '2026-07-25T10:30:00Z' };
+  const v01 = '---\ntype: decision\ntitle: 옛 개념\ndescription: 설명\ntimestamp: 2026-07-15\n---\n본문\n';
+  const stamped = stampGenerated(v01, STAMP);
+  ok('generated stamp: a v0.1 concept gains a generated block',
+    stamped.includes('generated:') && stamped.includes('  by: "okf-system/claude-sonnet-5"')
+    && stamped.includes('  at: "2026-07-25T10:30:00Z"'), stamped);
+  ok('generated stamp: existing keys and body survive byte-for-byte',
+    stamped.includes('timestamp: 2026-07-15') && stamped.endsWith('---\n본문\n'), JSON.stringify(stamped));
+  // 무따옴표였다면 Date 객체가 되어 문자열 비교가 전멸한다.
+  ok('generated stamp: at parses as a string, not a YAML Date',
+    typeof parseFrontmatter(stamped).data.generated.at === 'string');
+  ok('generated stamp: a file without frontmatter is left alone',
+    stampGenerated('프론트매터가 없는 파일\n', STAMP) === null);
+  ok('generated stamp: unparseable frontmatter is left alone',
+    stampGenerated('---\ntype: decision\n  bad: [indent\n---\n본문\n', STAMP) === null);
+  // trustExisting 기본 true = 기존 파일 시나리오.
+  const foreign = '---\ntype: decision\ntitle: t\ndescription: d\ngenerated:\n  by: human:someone\n  at: "2020-01-01T00:00:00Z"\n---\n본문\n';
+  ok('generated stamp: a foreign generated.by is respected, never overwritten',
+    stampGenerated(foreign, STAMP) === null);
+  const twice = stampGenerated(stampGenerated(v01, STAMP), { ...STAMP, at: '2026-07-26T00:00:00Z' });
+  ok('generated stamp: our own block is refreshed in place, never duplicated',
+    (twice.match(/^generated:/gm) || []).length === 1 && twice.includes('2026-07-26T00:00:00Z'), twice);
+  // 잘못된 입력은 조용히 통과시키지 않는다(actor 규약·ISO 초 단위 강제).
+  ok('generated stamp: an unsafe actor or a non-ISO at is refused',
+    stampGenerated(v01, { by: 'human:ducksu', at: STAMP.at }) === null
+    && stampGenerated(v01, { by: STAMP.by, at: '2026-07-25' }) === null);
+}
+{
+  const home = setupBatchSandbox('stamp-success');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  const concept = readIfExists(path.join(home, 'decisions', 'fake-test-concept.md'));
+  ok('success: batch stamps generated.by with the model that actually answered',
+    concept.includes('  by: "okf-system/claude-sonnet-5"'), concept);
+  ok('success: generated.at is ISO8601 UTC seconds and appears exactly once',
+    /^ {2}at: "\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"$/m.test(concept)
+    && (concept.match(/^generated:/gm) || []).length === 1, concept);
+  // log.md는 success 모드에서 실제로 수정되므로 '변경됐지만 스탬프 안 됨'의 진짜 케이스다.
+  const reserved = ['log.md', 'SCHEMA.md', 'index.md', 'decisions/index.md',
+    'preferences/okf-bundle-rules.md', 'references/okf-format.md'];
+  // SCHEMA.md는 자기 frontmatter에 generated를 **가지고 배포된다**(생산자는 플러그인 릴리스다).
+  // 그러므로 판정은 "generated가 없다"가 아니라 "**배치의** 스탬프가 없다"여야 한다.
+  const STAMPED_BY = '  by: "okf-system/claude-sonnet-5"';
+  ok('success: reserved files (log.md / SCHEMA.md / index.md / okf_seed seeds) are never stamped',
+    reserved.every((f) => !readIfExists(path.join(home, f)).includes(STAMPED_BY))
+    && reserved.filter((f) => f !== 'SCHEMA.md').every((f) => !readIfExists(path.join(home, f)).includes('generated:')),
+    reserved.filter((f) => readIfExists(path.join(home, f)).includes(STAMPED_BY)).join(','));
+  ok('success: the SCHEMA template keeps the plugin release as its producer, not the batch model',
+    readIfExists(path.join(home, 'SCHEMA.md')).includes('  by: "okf-system/0.2.1"'));
+  ok('success: stamping leaves lint clean and adds no warnings',
+    runLint(home).errors.length === 0
+    && runLint(home).warnings.filter((w) => w.file === 'decisions/fake-test-concept.md').length === 0,
+    formatReport(runLint(home)));
+  // 파일당 디스크 비용은 3줄이고 **컨텍스트 비용은 0**이다(extractEntry는 title/description만 읽는다).
+  const idxBefore = Buffer.byteLength(readIfExists(path.join(home, 'decisions', 'index.md')), 'utf8');
+  regenerateIndex(home);
+  ok('stamping does not change a single byte of the injected index line',
+    Buffer.byteLength(readIfExists(path.join(home, 'decisions', 'index.md')), 'utf8') === idxBefore);
+}
+{
+  const home = setupBatchSandbox('stamp-repair');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'stamp-repair' } });
+  // 되쓰기를 빼면 여기가 'no'가 된다 — 워크스페이스 사본이 스탬프 전 바이트로 남기 때문이다.
+  ok('stamp-repair: the repair stage sees the stamped bytes in its workspace copy',
+    readIfExists(path.join(home, 'decisions', 'ws-echo.md')).includes('ws_generated=yes'),
+    readIfExists(path.join(home, 'decisions', 'ws-echo.md')));
+  const untouched = readIfExists(path.join(home, 'decisions', 'fake-test-concept.md'));
+  ok('stamp-repair: a concept the repair stage never touched keeps exactly one generated block',
+    (untouched.match(/^generated:/gm) || []).length === 1, untouched);
+}
+{
+  // 기존 `a foreign generated.by is respected`는 **기존 파일** 시나리오만 덮고 신규 파일
+  // 구멍을 정확히 놓친다: 분석기가 신규 파일에 human: 출처를 날조하면 "남의 generated는
+  // 존중한다"가 "분석기가 사람인 척한 출처를 존중한다"로 샌다.
+  const home = setupBatchSandbox('stamp-forge');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'stamp-forge' } });
+  const forged = readIfExists(path.join(home, 'decisions', 'forged.md'));
+  ok('stamp-forge: an analyzer-authored generated.by cannot survive as human provenance',
+    forged.includes('  by: "okf-system/claude-sonnet-5"') && !forged.includes('human:ducksu'), forged);
 }
 
 // ---------------------------------------------------------------------------
