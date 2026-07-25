@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { resolveOkfHome, okfPaths, pluginRoot, claudeConfigDir, isOkfTestSessionDir, sanitizeForFilename, SCAN_EXCLUDE_DIRS, BUILTIN_EXCLUDE_CWD } from '../lib/paths.mjs';
 import { readInstalledAt } from '../lib/installed-at.mjs';
 import { readConfig, DEFAULT_CONFIG } from '../lib/config.mjs';
@@ -63,6 +64,16 @@ function log(okfHome, msg) {
     // 로그 기록 실패는 배치 진행을 막지 않는다.
   }
   console.error(msg);
+}
+
+// **raw 파일명은 그 자체가 프라이버시 페이로드다**: `YYYY-MM-DD--<cwd의 / 를 - 로 바꾼 것>--<세션UUID>.jsonl`.
+// 그래서 basename만 남기는 것으로는 이 파일이 스스로 약속한 "경로·세션ID는 절대 남기지 않는다"를
+// 지킬 수 없다(실측: 로그에 클라이언트 디렉토리 전체 경로와 세션 UUID가 그대로 찍혔다).
+// 진단에 필요한 것은 "어느 세션인지 구분되는가"뿐이므로, 파일명을 되돌릴 수 없는 짧은 다이제스트로
+// 라벨링한다. 같은 파일은 회차가 바뀌어도 같은 라벨을 갖는다(추적 가능성 유지).
+function sessionLabel(filePathOrName) {
+  const base = path.basename(String(filePathOrName ?? ''));
+  return `세션#${createHash('sha256').update(base).digest('hex').slice(0, 8)}`;
 }
 
 function summarizeLintForLog(report) {
@@ -339,7 +350,7 @@ function scanOrphanSessions(okfHome, config, collect, installFloorMs) {
         queuedById.set(sessionId, { dest, size: st.size });
         recovered++;
       } catch (err) {
-        log(okfHome, `sweep 복사 실패 ${path.basename(full)}: code=${safeErrorCode(err)}`);
+        log(okfHome, `sweep 복사 실패 ${sessionLabel(full)}: code=${safeErrorCode(err)}`);
       }
     }
   }
@@ -389,14 +400,14 @@ function recoverStagingLeftovers(okfHome) {
           fs.renameSync(full, path.join(todayDir, f));
           tryUnlink(`${full}${ARCHIVED_MARKER_SUFFIX}`); // 이동에 성공했을 때만 마커를 회수한다
         } catch (err) {
-          log(okfHome, `아카이브 재시도 실패 ${path.basename(full)}: code=${safeErrorCode(err)} — 마커를 유지해 다음 회차가 다시 시도한다`);
+          log(okfHome, `아카이브 재시도 실패 ${sessionLabel(full)}: code=${safeErrorCode(err)} — 마커를 유지해 다음 회차가 다시 시도한다`);
         }
       } else if (f.endsWith('.jsonl')) {
         try {
           fs.mkdirSync(paths.raw, { recursive: true });
           fs.renameSync(full, path.join(paths.raw, f));
         } catch (err) {
-          log(okfHome, `staging 잔재 반환 실패 ${path.basename(full)}: code=${safeErrorCode(err)}`);
+          log(okfHome, `staging 잔재 반환 실패 ${sessionLabel(full)}: code=${safeErrorCode(err)}`);
         }
       } else {
         tryUnlink(full); // *.digest.md 등 파생물은 폐기 (보존 대상 아님)
@@ -437,7 +448,7 @@ function quarantineJunkRaw(okfHome) {
       fs.renameSync(full, path.join(todayDir, f));
       quarantined++;
     } catch (err) {
-      log(okfHome, `큐 위생 격리 실패 ${f}: code=${safeErrorCode(err)}`);
+      log(okfHome, `큐 위생 격리 실패 ${sessionLabel(f)}: code=${safeErrorCode(err)}`);
     }
   }
   if (quarantined > 0) {
@@ -545,13 +556,13 @@ function generateDigests(okfHome, stagingDir, files, capKb) {
       digestPaths.push({ source: input, digest: output });
       // 세 가지 조용한 손실을 드러낸다. 로그에는 **basename과 정수만** — 전체 경로 금지.
       if (stats.droppedBytes > 0) {
-        log(okfHome, `digest 캡 절단 ${path.basename(input)}: ${stats.droppedPct}% 손실 (${Math.round(stats.beforeBytes / 1024)}KB → ${Math.round(stats.afterBytes / 1024)}KB, 캡 ${capKb}KB)`);
+        log(okfHome, `digest 캡 절단 ${sessionLabel(input)}: ${stats.droppedPct}% 손실 (${Math.round(stats.beforeBytes / 1024)}KB → ${Math.round(stats.afterBytes / 1024)}KB, 캡 ${capKb}KB)`);
       }
       if (stats.skippedLines > 0) {
-        log(okfHome, `digest 파싱 실패 줄 ${stats.skippedLines}개 스킵 ${path.basename(input)} (전체 ${stats.totalLines}줄)`);
+        log(okfHome, `digest 파싱 실패 줄 ${stats.skippedLines}개 스킵 ${sessionLabel(input)} (전체 ${stats.totalLines}줄)`);
       }
       if (stats.totalLines > 0 && stats.parsedLines === 0) {
-        log(okfHome, `경고: ${path.basename(input)}의 모든 줄이 파싱 실패 — digest가 비었다. transcript 스키마 변경을 의심하라(원본은 _remove_candidate에 30일 보관)`);
+        log(okfHome, `경고: ${sessionLabel(input)}의 모든 줄이 파싱 실패 — digest가 비었다. transcript 스키마 변경을 의심하라(원본은 _remove_candidate에 30일 보관)`);
       }
     } catch (err) {
       // 원본 텍스트 폴백을 제거했다: 같은 유출 성질이고(.slice()가 **문자 수** 기준이라
@@ -559,7 +570,7 @@ function generateDigests(okfHome, stagingDir, files, capKb) {
       // 다만 그냥 스킵하면 staging에 남아 다음 회차 recoverStagingLeftovers가 raw로 되돌리고
       // 같은 실패를 영원히 반복한다. 빈-digest 경로와 같은 관용구로 격리한다 —
       // 원본은 30일 보관되므로 유실이 아니다.
-      log(okfHome, `digest 생성 실패 ${path.basename(input)}: code=${safeErrorCode(err)} — _remove_candidate로 격리(30일 보관)`);
+      log(okfHome, `digest 생성 실패 ${sessionLabel(input)}: code=${safeErrorCode(err)} — _remove_candidate로 격리(30일 보관)`);
       try {
         const quarantineDir = path.join(okfPaths(okfHome).removeCandidate, localDateString());
         fs.mkdirSync(quarantineDir, { recursive: true });
@@ -594,7 +605,7 @@ function partitionEmptyDigests(okfHome, digestPaths) {
     (size === 0 ? empty : withContent).push(dp);
   }
   if (empty.length > 0) {
-    log(okfHome, `digest가 빈 세션 ${empty.length}개 — LLM 호출 없이 처리 완료로 이동: ${empty.map((d) => path.basename(d.source)).join(', ')}`);
+    log(okfHome, `digest가 빈 세션 ${empty.length}개 — LLM 호출 없이 처리 완료로 이동: ${empty.map((d) => sessionLabel(d.source)).join(', ')}`);
   }
   if (digestPaths.length >= 3 && empty.length === digestPaths.length) {
     log(okfHome, `경고: 이번 회차 ${digestPaths.length}개 세션의 digest가 전부 비었다. 정상적인 경우(잡담뿐인 세션들)일 수도 있으나, digest 필터 오작동이나 transcript 스키마 변경일 수 있으니 lib/digest.mjs를 확인하라. 원본은 _remove_candidate/에 30일간 보관된다.`);
@@ -902,7 +913,7 @@ function rollbackChunk(okfHome, chunk) {
       fs.mkdirSync(paths.raw, { recursive: true });
       fs.renameSync(dp.source, path.join(paths.raw, path.basename(dp.source)));
     } catch (err) {
-      log(okfHome, `청크 원복 중 raw 반환 실패 ${path.basename(dp.source)}: code=${safeErrorCode(err)}`);
+      log(okfHome, `청크 원복 중 raw 반환 실패 ${sessionLabel(dp.source)}: code=${safeErrorCode(err)}`);
     }
     tryUnlink(dp.digest);
   }
@@ -1039,9 +1050,14 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null, chunkBudget = { d
       // log.md에 프론트매터를 붙이는 순간 조용히 깨진다.
       let out = next;
       if (stamp && e.name !== 'log.md') {
-        // trustExisting은 prev(번들에 이미 있던 바이트) 기준이다. next 기준으로 판정하면
-        // 분석기가 방금 써넣은 generated가 '남의 것'으로 둔갑해 코드 스탬핑을 무력화한다.
-        const stampedText = stampGenerated(next.toString('utf8'), stamp, { trustExisting: prev !== null });
+        // trustExisting은 **prev에 이미 generated가 있었는가**로 판정한다. `prev !== null`만
+        // 보면 구멍이 남는다: 기존 파일을 고치면서 분석기가 `by: human:...`을 새로 써넣으면
+        // "번들에 있던 남의 generated"로 둔갑해 스탬프를 회피하고 위조값이 그대로 커밋된다
+        // (독립 검증이 무따옴표·flow·작은따옴표 3형태로 재현했다). next 기준으로 판정하면
+        // 반대 방향으로 같은 회피가 열리므로, 기준은 언제나 prev의 **내용**이다.
+        const prevHadGenerated = prev !== null
+          && Object.hasOwn(parseFrontmatter(prev.toString('utf8')).data ?? {}, 'generated');
+        const stampedText = stampGenerated(next.toString('utf8'), stamp, { trustExisting: prevHadGenerated });
         if (stampedText !== null) {
           out = Buffer.from(stampedText, 'utf8');
           stamped++;
@@ -1193,7 +1209,7 @@ function returnChunkToRaw(okfHome, chunk) {
       fs.mkdirSync(paths.raw, { recursive: true });
       fs.renameSync(dp.source, path.join(paths.raw, path.basename(dp.source)));
     } catch (err) {
-      log(okfHome, `이월 raw 반환 실패 ${path.basename(dp.source)}: code=${safeErrorCode(err)}`);
+      log(okfHome, `이월 raw 반환 실패 ${sessionLabel(dp.source)}: code=${safeErrorCode(err)}`);
     }
     tryUnlink(dp.digest);
   }
@@ -1383,7 +1399,7 @@ function runBatch() {
         fs.renameSync(dp.source, path.join(emptyArchiveDir, path.basename(dp.source)));
         tryUnlink(dp.digest);
       } catch (err) {
-        log(okfHome, `빈 digest 세션 이동 실패 ${path.basename(dp.source)}: code=${safeErrorCode(err)}`);
+        log(okfHome, `빈 digest 세션 이동 실패 ${sessionLabel(dp.source)}: code=${safeErrorCode(err)}`);
       }
     }
 
@@ -1404,7 +1420,7 @@ function runBatch() {
           fs.renameSync(dp.source, path.join(paths.raw, path.basename(dp.source)));
           tryUnlink(dp.digest);
         } catch (err) {
-          log(okfHome, `예산 초과분 raw 반환 실패 ${path.basename(dp.source)}: code=${safeErrorCode(err)}`);
+          log(okfHome, `예산 초과분 raw 반환 실패 ${sessionLabel(dp.source)}: code=${safeErrorCode(err)}`);
         }
       }
       log(okfHome, `digest 예산 ${budgetKb}KB 초과 — ${selected.length}개 처리, ${deferred.length}개 다음 회차로 이월`);

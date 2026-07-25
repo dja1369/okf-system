@@ -16,7 +16,7 @@ import { runLint, formatReport } from '../lib/lint.mjs';
 import { regenerateIndex } from '../lib/index-gen.mjs';
 import { digestFile } from '../lib/digest.mjs';
 import { git } from '../lib/git.mjs';
-import { isLockStale, releaseLock } from '../lib/lock.mjs';
+import { isLockStale, releaseLock, acquireLock, readLock } from '../lib/lock.mjs';
 import { readInstalledAt } from '../lib/installed-at.mjs';
 import { matchGlob } from '../lib/glob.mjs';
 import { BUILTIN_EXCLUDE_CWD } from '../lib/paths.mjs';
@@ -1789,6 +1789,129 @@ function runDeprecate(okfHome, args) {
     frontmatterKeyLineRe('status').test('status : x')
     && !frontmatterKeyLineRe('status').test('statusline: x')
     && !frontmatterKeyLineRe('by').test('  by: "x"'));
+}
+// --- 적대적 검증이 지목한 커버리지 공백 + 이번 라운드 수정의 회귀 고정 ---
+{
+  // N01: stale 판정과 unlink 사이에 남이 정상 락을 잡으면 그걸 지우면 안 된다.
+  // onLog가 판정과 unlink **사이**에서 동기 호출된다는 점을 이용해 소스 수정 없이 결정적으로
+  // 재현한다. 방어가 없으면 acquired=true가 되고 남의 락이 우리 것으로 갈린다 —
+  // 게다가 그 경로는 recoveredFromStaleLock=true를 들고 가서 남의 미커밋 산출물을
+  // 크래시 잔여물로 보고 무조건 rollback 한다.
+  const home = bootstrapped('lock-aba');
+  const lockPath = okfPaths(home).lock;
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(lockPath, JSON.stringify({ pid: 999999, startedEpochMs: Date.now(), holder: 'batch', token: 'STALE' }));
+  const B_TOKEN = 'B-VALID-TOKEN';
+  let injected = false;
+  const res = acquireLock(home, 'batch', {
+    onLog() {
+      if (injected) return;
+      injected = true;
+      fs.rmSync(lockPath, { force: true });
+      fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedEpochMs: Date.now(), holder: 'batch', token: B_TOKEN }));
+    },
+  });
+  ok('stale 판정과 회수 사이에 남이 잡은 유효한 락은 지우지 않는다',
+    injected && res.acquired === false && readLock(lockPath)?.token === B_TOKEN,
+    `injected=${injected} acquired=${res.acquired} token=${readLock(lockPath)?.token}`);
+  fs.rmSync(lockPath, { force: true });
+}
+{
+  // N09: lint W5의 PLAIN_SCALAR_RE도 콜론 앞 공백을 허용해야 한다 — 안 그러면
+  // `description : 값 # 잘림` 형태의 절단이 탐지되지 않는다.
+  const home = bootstrapped('lint-w5-spaced');
+  fs.writeFileSync(path.join(home, 'decisions', 'spaced-cut.md'),
+    '---\ntype: decision\ntitle : 잘리는 제목 # 뒤가 사라진다\ndescription : 설명도 잘린다 # 여기도\ntimestamp: 2026-07-15\n---\n본문\n');
+  const w5 = runLint(home).warnings.filter((w) => w.rule === 'W5' && w.file === 'decisions/spaced-cut.md');
+  ok('lint W5 detects truncation even with a space before the colon',
+    w5.length === 2, `w5=${w5.length}`);
+}
+{
+  // N13: generated-stamp의 SELF_BLOCK_RE도 같은 가족이다. 손편집으로 `generated :`가 된
+  // 우리 블록은 **갱신**되어야 하고, 중복 블록이 생기면 안 된다.
+  const STAMP = { by: 'okf-system/m', at: '2026-07-25T10:30:00Z' };
+  const spacedOwn = '---\ntype: decision\ntitle: t\ndescription: d\ngenerated :\n  by: "okf-system/old"\n  at: "2020-01-01T00:00:00Z"\n---\n본문\n';
+  const restamped = stampGenerated(spacedOwn, STAMP);
+  ok('generated stamp refreshes our own block even with a space before the colon',
+    restamped !== null && (restamped.match(/^generated/gm) || []).length === 1
+    && restamped.includes('  by: "okf-system/m"') && !restamped.includes('okf-system/old'),
+    JSON.stringify(restamped));
+}
+{
+  // MINOR-1: 기존 파일을 고치면서 분석기가 human 출처를 **새로** 써넣는 경로.
+  // 기존 stamp-forge 테스트는 신규 파일만 덮어 이 구멍을 정확히 놓쳤다.
+  const STAMP = { by: 'okf-system/m', at: '2026-07-25T10:30:00Z' };
+  const forgedShapes = [
+    ['무따옴표', 'generated:\n  by: human:ducksu\n  at: 2020-01-01'],
+    ['flow', 'generated: {by: human, at: 2020-01-01}'],
+    ['작은따옴표', "generated:\n  by: 'human:ducksu'\n  at: '2020-01-01'"],
+  ];
+  // prev에 generated가 없었다면(=분석기가 이번에 새로 넣었다면) 코드 스탬프가 반드시 덮는다.
+  const stampedAll = forgedShapes.map(([, block]) =>
+    stampGenerated(`---\ntype: decision\ntitle: t\ndescription: d\n${block}\n---\n본문\n`, STAMP, { trustExisting: false }));
+  ok('an analyzer-forged generated on an EXISTING file is overwritten, not respected',
+    stampedAll.every((out) => out !== null && out.includes('  by: "okf-system/m"') && !out.includes('human')),
+    forgedShapes.map(([n], i) => `${n}=${stampedAll[i] === null ? 'null' : 'ok'}`).join(' '));
+  // 반대로 prev에 이미 있던 남의 generated는 존중한다(비대칭이 계약이다).
+  ok('a generated that was already in the bundle is still respected',
+    stampGenerated(`---\ntype: decision\ntitle: t\ndescription: d\ngenerated:\n  by: human:ducksu\n  at: "2020-01-01T00:00:00Z"\n---\n본문\n`, STAMP, { trustExisting: true }) === null);
+  // 드라이버가 그 판정을 prev의 **내용**으로 하는지 소스로 확인한다(prev !== null이면 구멍이 남는다).
+  ok('the driver decides trustExisting from what prev contained, not merely that prev existed',
+    readIfExists(path.join(PLUGIN_ROOT, 'bin', 'batch.mjs')).includes('prevHadGenerated'));
+}
+{
+  // MINOR-2: bullet에 사용자가 통제하는 파일 경로가 들어가는데 문자열 replace는 $&를 치환
+  // 패턴으로 해석한다.
+  const home = bootstrapped('deprecate-dollar');
+  const weird = 'decisions/cost-$&-review.md';
+  fs.writeFileSync(path.join(home, weird),
+    '---\ntype: decision\ntitle: 달러 경로\ndescription: d\ntimestamp: 2026-07-15\n---\n본문\n');
+  fs.writeFileSync(okfPaths(home).log, `# Log\n\n## ${new Date().toLocaleDateString('en-CA')}\n- 기존 항목\n`);
+  regenerateIndex(home);
+  git(['add', '-A'], home, { stdio: 'ignore' });
+  git(['commit', '-m', 'test: dollar path'], home, { stdio: 'ignore' });
+  const r = runDeprecate(home, [weird]);
+  const logText = readIfExists(okfPaths(home).log);
+  ok('okf-deprecate does not splice the log through $-replacement patterns',
+    r.status === 0 && logText.includes(`[/${weird}](/${weird})`) && !logText.includes('cost-## '),
+    `exit=${r.status} ${logText.split('\n').filter((l) => l.includes('Deprecation')).join(' | ')}`);
+}
+{
+  // MAJOR-4: raw 파일명은 `날짜--cwd전체경로--세션UUID` 구조라 basename만 남겨도
+  // "경로·세션ID는 절대 남기지 않는다"는 계약이 깨진다. 빈 digest 경로가 그 목록을 찍었다.
+  const home = setupBatchSandbox('log-privacy', 'deadbeef-1111-2222-3333-444444444444');
+  const rawDir = okfPaths(home).raw;
+  const leaky = '2026-07-20---Users-t-clients-acme-corp-secret-merger--9f1c2d3e-1111-2222-3333-444444444444.jsonl';
+  fs.writeFileSync(path.join(rawDir, leaky), `${JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: 'x' } })}\n`);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  const logs = fs.readdirSync(okfPaths(home).logs)
+    .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8')).join('\n');
+  ok('batch logs never carry a raw filename (which encodes the full cwd and session UUID)',
+    !logs.includes('9f1c2d3e') && !logs.includes('acme-corp') && !logs.includes(leaky)
+    && !logs.includes('deadbeef') && /세션#[0-9a-f]{8}/.test(logs),
+    logs.split('\n').filter((l) => l.includes('digest가 빈') || l.includes('세션#')).join(' | '));
+}
+{
+  // MAJOR-5: applyDigestBudget의 예산 강제가 어디서도 검증되지 않았다(예산 비교를 통째로
+  // 지워도 전부 통과했다). 예산을 넘는 세션이 실제로 다음 회차로 이월되는지 행동으로 고정한다.
+  const home = setupBatchSandbox('digest-budget');
+  fs.rmSync(path.join(okfPaths(home).raw, fs.readdirSync(okfPaths(home).raw)[0]), { force: true });
+  const big = (n) => {
+    const lines = [];
+    for (let j = 0; j < 300; j++) {
+      lines.push(JSON.stringify({ type: j % 2 ? 'assistant' : 'user', message: { role: j % 2 ? 'assistant' : 'user', content: '가'.repeat(200) } }));
+    }
+    fs.writeFileSync(path.join(okfPaths(home).raw, `2026-07-0${n}--p--cccccc${n}c-1111-2222-3333-444444444444.jsonl`), `${lines.join('\n')}\n`);
+  };
+  for (let i = 0; i < 5; i++) big(i);
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, batch_max_digest_kb: 200, batch_digest_cap_kb: 150 });
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  const logs = fs.readdirSync(okfPaths(home).logs)
+    .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8')).join('\n');
+  ok('digest budget actually defers the sessions that exceed it to the next round',
+    /digest 예산 200KB 초과/.test(logs) && listRaw(home).length > 0
+    && listRemoveCandidate(home).length > 0 && listRemoveCandidate(home).length < 5,
+    `raw=${listRaw(home).length} archived=${listRemoveCandidate(home).length}`);
 }
 {
   // 회차당 소액을 4자리로 반올림하면 누계가 영원히 0이 되어 상한이 결코 발동하지 않는다.

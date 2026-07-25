@@ -38,13 +38,17 @@ function appendLogEntry(okfHome, rel, want) {
   } catch {
     // 없으면 새로 만든다
   }
+  // **replace는 반드시 함수 폼이다.** 문자열 폼이면 bullet 안의 `$&`/`$'`/`` $` ``가 치환
+  // 패턴으로 해석돼 로그가 스플라이스된다 — bullet에는 사용자가 통제하는 파일 경로가 들어간다
+  // (독립 검증 재현: `cost-$&-review.md`가 로그를 `cost-## 2026-07-25-review.md`로 망가뜨렸다).
+  // bin/batch.mjs의 프롬프트 치환이 같은 함정을 함수 폼으로 막고 있다.
   if (text.includes(`## ${today}`)) {
     // 같은 날짜 섹션이 있으면 bullet만 추가한다(중복 헤딩 금지 — SCHEMA 규칙 3).
-    fs.writeFileSync(logPath, text.replace(`## ${today}`, `## ${today}\n${bullet}`));
+    fs.writeFileSync(logPath, text.replace(`## ${today}`, () => `## ${today}\n${bullet}`));
     return;
   }
   fs.writeFileSync(logPath, text.includes('# Log')
-    ? text.replace('# Log\n', `# Log\n\n## ${today}\n${bullet}\n`)
+    ? text.replace('# Log\n', () => `# Log\n\n## ${today}\n${bullet}\n`)
     : `# Log\n\n## ${today}\n${bullet}\n${text}`);
 }
 
