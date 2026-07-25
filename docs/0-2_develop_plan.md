@@ -12,9 +12,9 @@
 
 같은 날 완료된 조사 3종이 `main`에 머지돼 있다(PR #15). 이 계획의 모든 사실 근거는 그 문서들에 있다.
 
-- [`docs/okf-v0.2-2026-07-25-summary.md`](../docs/okf-v0.2-2026-07-25-summary.md) — 종합, 두 조사의 충돌과 해소
-- [`docs/okf-v0.2-2026-07-25-spec-conformance.md`](../docs/okf-v0.2-2026-07-25-spec-conformance.md) — 스펙 델타(§2), 깨지는 지점(§3), 대응 스코프(§4)
-- [`docs/okf-v0.2-2026-07-25-reliability.md`](../docs/okf-v0.2-2026-07-25-reliability.md) — 주제별 사실(§4 T1~T11), 권고 스코프(§5)
+- [`docs/okf-v0.2-2026-07-25-summary.md`](okf-v0.2-2026-07-25-summary.md) — 종합, 두 조사의 충돌과 해소
+- [`docs/okf-v0.2-2026-07-25-spec-conformance.md`](okf-v0.2-2026-07-25-spec-conformance.md) — 스펙 델타(§2), 깨지는 지점(§3), 대응 스코프(§4)
+- [`docs/okf-v0.2-2026-07-25-reliability.md`](okf-v0.2-2026-07-25-reliability.md) — 주제별 사실(§4 T1~T11), 권고 스코프(§5)
 
 계기: Google Cloud가 2026-07-24 OKF 스펙을 **v0.2**로 올렸다(knowledge-catalog 커밋 `780fe9d`,
 PR #227), [2026-07-25 발표](https://cloud.google.com/blog/products/data-analytics/okf-v0-2-adds-trust-signals?hl=en).
@@ -77,11 +77,10 @@ Part 2의 판정 기준은 OKF의 의의다 — **코드와 문서에 내포되�
 - **I2 기본 OFF** — 관련성 라우팅은 구현하되 기본 활성화는 I6의 recall@cap 측정 통과 조건부.
   이 프로젝트는 근거 없는 튜닝을 발행했다가 **두 번 철회한 이력**이 있다.
 
-## 주의
+## 이 문서의 위치
 
-이 문서는 `prompts/`에 있다. 이 디렉토리는 플러그인 패키지에 실려 **사용자에게 배포된다**
-(현재 `ingest.md`/`repair.md`는 배치 LLM이 읽는 프롬프트다). 개발 계획서가 함께 배포되는 것이
-의도와 다르면 `docs/`로 옮겨라.
+`docs/`에 둔다. `prompts/`는 플러그인 패키지에 실려 사용자에게 배포되는 디렉토리이고
+(`ingest.md`/`repair.md`는 배치 LLM이 읽는 프롬프트다) 개발 계획서는 그 대상이 아니다.
 
 ---
 
