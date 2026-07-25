@@ -105,7 +105,24 @@ function extractLatestLogSection(logContent, maxLines = 15) {
   const afterHeading = rest.slice(match[0].length);
   const nextHeadingOffset = afterHeading.search(/^## /m);
   const section = nextHeadingOffset === -1 ? rest : rest.slice(0, match[0].length + nextHeadingOffset);
-  return capLines(section.trimEnd(), maxLines);
+  const lines = section.trimEnd().split('\n');
+  if (lines.length <= maxLines) return lines.join('\n');
+
+  // 라이브 실측: 최신 log 섹션이 44줄인데 게이트는 15줄만 싣고 29줄(66%)을 버렸다. bullet이
+  // 물리적으로 줄바꿈돼 있어 절단이 **문장 한가운데**에 떨어졌고, 모델은 잘린 문장인지 원래
+  // 그런 문장인지 구별할 수 없었다.
+  //
+  // 두 가지를 고친다. 예산은 그대로다.
+  // (1) 절단을 컬럼 0의 `- ` bullet 경계로 스냅한다 — 반쪽짜리 문장을 근거로 쓰게 두지 않는다.
+  // (2) 마커에 **개수와 도달 경로**를 싣는다. 같은 파일 buildInjectedIndex의 markerFor가
+  //     index에 대해 이미 그렇게 하고 그 근거를 "빠진 게 있다는 것만 알고 도달할 수단이 없으면
+  //     막다른 길이지 점진적 공개가 아니다"라고 적어놨는데, log 경로에만 적용되지 않았다
+  //     (독립 감사 지적). capLines의 기본 마커 `...(생략)`은 개수도 위치도 없다.
+  let cut = maxLines;
+  while (cut > 1 && !lines[cut].startsWith('- ')) cut--;
+  if (cut <= 1) cut = maxLines; // bullet 경계를 못 찾으면 원래 자리에서 자른다(굶기지 않는다)
+  const omitted = lines.length - cut;
+  return `${lines.slice(0, cut).join('\n')}\n...(${omitted}줄 생략 — 전체는 /log.md 를 Read)`;
 }
 
 function buildContext({ okfHome, latestLog, injectMaxLines, injectMaxBytes }) {
