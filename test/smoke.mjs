@@ -4002,5 +4002,124 @@ console.log('\n=== viz.mjs ===');
 }
 
 // ---------------------------------------------------------------------------
+// --- 미해결 3건(사용자 지시로 이번 릴리스에 반영) + 적대적 4차 지적 ---
+{
+  // 무한 재과금: 영구히 실패하는 세션은 매 회차 유료 호출을 한 번씩 태운다(기본 인터벌 1시간,
+  // batch_max_usd_per_day 기본 0 = 무제한이면 하루 24회 무기한). MAX_CHUNK_ATTEMPTS회에서
+  // raw로 되돌리지 않고 격리해 끝낸다. 'blocked'는 실측(E3) 재현 모드로 아무것도 못 쓰고
+  // NO-OP도 선언하지 않는다 — 영구 실패 입력의 정확한 대역이다.
+  const home = setupBatchSandbox('retry-cap');
+  const counter = path.join(sandbox('retry-cap-calls'), 'calls.txt');
+  const env = { FAKE_CLAUDE_MODE: 'blocked', FAKE_CLAUDE_CALL_COUNTER: counter };
+  runBatch({ okfHome: home, env });
+  ok('재시도 상한: 1회차 실패는 raw에 남아 재시도된다', listRaw(home).length === 1);
+  runBatch({ okfHome: home, env });
+  ok('재시도 상한: 2회차 실패도 아직 재시도 대상이다', listRaw(home).length === 1);
+  runBatch({ okfHome: home, env });
+  const calls = fs.existsSync(counter) ? fs.readFileSync(counter, 'utf8').trim().split('\n').length : 0;
+  ok('재시도 상한: 3회차에서 raw를 비우고 격리한다 — 4회차 유료 호출이 없다',
+    listRaw(home).length === 0 && listRemoveCandidate(home).length === 1,
+    `raw=${listRaw(home).length} quarantined=${listRemoveCandidate(home).length}`);
+  ok('재시도 상한: 격리가 상태 파일에 드러난다(로그만으로는 사용자가 못 본다)',
+    lastBatch(home).chunks?.quarantined === 1, JSON.stringify(lastBatch(home).chunks));
+  // 4회차: 큐가 비었으므로 유료 호출이 더 나면 안 된다. 상한이 없으면 여기서 4번째가 찍힌다.
+  runBatch({ okfHome: home, env });
+  const callsAfter = fs.existsSync(counter) ? fs.readFileSync(counter, 'utf8').trim().split('\n').length : 0;
+  ok('재시도 상한: 격리 이후 회차는 유료 호출을 하지 않는다',
+    calls === 3 && callsAfter === 3, `calls=${calls} after=${callsAfter}`);
+}
+{
+  // 성공은 카운트를 지운다 — 안 지우면 "1회 실패 → 성공 → (전사가 자라 재수집) → 2회 실패"가
+  // 3회로 합산돼 두 번만 실패한 세션이 격리된다.
+  const home = setupBatchSandbox('retry-reset');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'blocked' } });
+  ok('재시도 상한: 실패 1회 후 원장에 기록된다',
+    Object.keys(JSON.parse(fs.readFileSync(okfPaths(home).chunkRetries, 'utf8'))).length === 1);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  ok('재시도 상한: 성공하면 원장이 비워진다(다음 실패가 2회차로 오인되지 않는다)',
+    Object.keys(JSON.parse(fs.readFileSync(okfPaths(home).chunkRetries, 'utf8'))).length === 0);
+}
+{
+  // 프롬프트 유출: 로그는 sessionLabel로 해시했지만 워크스페이스 사본이 원본 파일명을 그대로
+  // 썼다. raw 파일명은 `날짜--<cwd의 /를 -로>--<세션UUID>.jsonl`이라 다른 프로젝트의 전체
+  // 경로와 세션 UUID가 유료 LLM으로 나갔다(적대적 4차 실측).
+  const home = bootstrapped('batch-prompt-leak');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE });
+  fs.mkdirSync(okfPaths(home).raw, { recursive: true });
+  const SECRET_CWD = '-Users-ducksu-clients-acme-secret-merger';
+  const SECRET_UUID = '9f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f';
+  fs.copyFileSync(SAMPLE_TRANSCRIPT,
+    path.join(okfPaths(home).raw, `2026-07-15-${SECRET_CWD}--${SECRET_UUID}.jsonl`));
+  const dump = path.join(sandbox('prompt-dump'), 'prompts.txt');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_DUMP_PROMPT_TO: dump } });
+  const promptText = fs.existsSync(dump) ? fs.readFileSync(dump, 'utf8') : '';
+  ok('프롬프트가 실제로 덤프됐다(빈 문자열로 통과하는 자기충족 방지)', promptText.length > 200);
+  ok('유료 LLM으로 나가는 프롬프트에 cwd 전체 경로가 실리지 않는다', !promptText.includes(SECRET_CWD));
+  ok('유료 LLM으로 나가는 프롬프트에 세션 UUID가 실리지 않는다', !promptText.includes(SECRET_UUID));
+}
+{
+  // index·lint 비대칭: 예약 디렉토리 이름은 **루트 자식일 때만** 예약이다. index-gen만 깊이
+  // 무관하게 걸러서, `projects/raw/x.md`가 lint 소견 0건으로 통과하면서 어떤 index.md에도
+  // 안 나타났다 — 게이트는 index 기반이므로 그 지식은 영구히 발견 불가능했다.
+  const home = bootstrapped('nested-reserved-name');
+  const nestedDir = path.join(home, 'projects', 'raw');
+  fs.mkdirSync(nestedDir, { recursive: true });
+  fs.writeFileSync(path.join(nestedDir, 'nested-knowledge.md'),
+    '---\ntype: project\ntitle: "중첩 예약어 디렉토리의 concept"\ndescription: "루트가 아닌 raw/ 아래에 있다"\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(home);
+  const projectsIndex = fs.readFileSync(path.join(home, 'projects', 'index.md'), 'utf8');
+  const nestedIndexPath = path.join(nestedDir, 'index.md');
+  ok('중첩 예약어 디렉토리도 하위 도메인으로 열거된다',
+    projectsIndex.includes('/projects/raw/index.md'), projectsIndex.slice(0, 300));
+  ok('그 안의 concept도 index에 나타난다(게이트에서 발견 가능해진다)',
+    fs.existsSync(nestedIndexPath)
+    && fs.readFileSync(nestedIndexPath, 'utf8').includes('/projects/raw/nested-knowledge.md'));
+  ok('lint도 같은 파일을 본다(비대칭이 사라졌다)',
+    runLint(home).errors.length === 0);
+}
+{
+  // writePrivateFile의 0600 강제 — 기존 테스트는 .okf/ 상태 파일만 봤는데 그것들은
+  // writePrivateJsonAtomic이 rename 뒤 한 번 더 chmod한다. 그래서 writePrivateFile 자체의
+  // 강제를 지워도 아무도 안 잡았다. 실제로 노출되는 것은 **번들 파일**이다(SCHEMA.md·log.md).
+  if (process.platform !== 'win32') {
+    const home = bootstrapped('bundle-file-perms');
+    const p = okfPaths(home);
+    const targets = [p.schema, p.log].filter((f) => fs.existsSync(f));
+    const bad = targets.filter((f) => (fs.statSync(f).mode & 0o777) !== 0o600);
+    ok('부트스트랩이 쓴 번들 파일도 소유자 전용이다',
+      targets.length === 2 && bad.length === 0,
+      bad.map((f) => `${path.basename(f)}=${(fs.statSync(f).mode & 0o777).toString(8)}`).join(','));
+  }
+}
+{
+  // 훅 stderr도 err.message를 싣지 않는다 — js-yaml 파싱 오류 메시지는 위반한 YAML **원문**을
+  // 담고 fs 오류 메시지는 절대경로를 담는다. 둘 다 전사에서 파생될 수 있는 문자열이다
+  // (bin/batch.mjs가 로그에 대해 지키는 계약과 같다).
+  // 치명적 경로를 **실제로** 태운다: OKF_HOME의 부모를 일반 파일로 만들면 ensureBootstrap의
+  // ensurePrivateDir가 ENOTDIR로 throw하고, 그 message에 경로 전체가 들어간다.
+  const base = sandbox('hook-stderr-leak');
+  const SECRET = 'CONFIDENTIAL-MERGER-CODENAME';
+  fs.writeFileSync(path.join(base, 'notadir'), 'x');
+  const brokenHome = path.join(base, 'notadir', SECRET, 'okf');
+  const fakeHome = sandbox('hook-stderr-leak-home');
+  const res = spawnSync(process.execPath, [path.join(PLUGIN_ROOT, 'bin/session-start.mjs')], {
+    input: '{}',
+    env: {
+      ...process.env,
+      OKF_HOME: brokenHome,
+      HOME: fakeHome,
+      USERPROFILE: fakeHome,
+      CLAUDE_CONFIG_DIR: path.join(fakeHome, '.claude'),
+    },
+    encoding: 'utf8',
+  });
+  ok('훅이 실제로 치명적 오류 경로를 탄다(빈 stderr로 통과하는 자기충족 방지)',
+    res.stderr.includes('[okf session-start] fatal'), res.stderr.slice(0, 200));
+  ok('훅 stderr에 오류 메시지 원문이 새지 않는다', !res.stderr.includes(SECRET),
+    res.stderr.slice(0, 200));
+  ok('그래도 세션은 막지 않는다(최소 출력)', res.stdout.trim() === '{}', JSON.stringify(res.stdout));
+}
+
+// ---------------------------------------------------------------------------
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

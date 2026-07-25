@@ -6,6 +6,7 @@ import { ensureBootstrap } from '../lib/bootstrap.mjs';
 import { maybeSpawnBatch } from '../lib/batch-gate.mjs';
 import { truncateUtf8Bytes, capLines } from '../lib/text.mjs';
 import { discoverConceptDirs, DIR_DESCRIPTIONS, DEPRECATED_PREFIX } from '../lib/index-gen.mjs';
+import { safeErrorCode } from '../lib/status.mjs';
 
 // 게이트의 목적은 "관련 concept를 실제로 Read 하게 만드는 것"인데, 루트 index.md는 카테고리별
 // 개수만 담는다("references — 3개"). 개수만으로는 관련성을 판단할 수 없어 게이트가 지시를 해도
@@ -205,7 +206,9 @@ function main() {
 try {
   main();
 } catch (err) {
-  console.error(`[okf session-start] fatal: ${err.message}`);
+  // err.message 금지 — js-yaml 파싱 오류는 위반한 YAML **원문**을 그대로 담고, 그 원문은
+  // 전사에서 파생된 concept 본문이다. 진단에 필요한 것은 코드뿐이다(bin/batch.mjs와 동일 계약).
+  console.error(`[okf session-start] fatal: code=${safeErrorCode(err)}`);
   process.stdout.write('{}'); // 절대 세션 시작을 막지 않는다 — 최소 출력이라도 내보낸다.
 }
 // process.exit()를 쓰면 안 된다. 훅의 stdout은 항상 pipe이고, pipe write는 비동기다 — 게이트가

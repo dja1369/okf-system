@@ -21,6 +21,14 @@ if (process.env.FAKE_CLAUDE_CALL_COUNTER) {
   } catch { /* 텔레메트리가 스텁을 막지 않는다 */ }
 }
 
+// 프롬프트에 무엇이 실려 유료 LLM으로 나가는지를 무과금으로 단언하기 위한 덤프 지점.
+// 로그를 아무리 해시해도 프롬프트가 원본 파일명을 실으면 같은 식별자가 그대로 나간다.
+if (process.env.FAKE_CLAUDE_DUMP_PROMPT_TO) {
+  try {
+    fs.appendFileSync(process.env.FAKE_CLAUDE_DUMP_PROMPT_TO, `${prompt}\n`);
+  } catch { /* 텔레메트리가 스텁을 막지 않는다 */ }
+}
+
 // 비용 회귀 테스트를 무과금으로 돌리기 위한 주입 지점. Number('')는 0이므로 빈 문자열은
 // 주입으로 치지 않는다 — 그러면 '비용을 0으로 주입했다'와 '주입하지 않았다'가 구분되지 않는다.
 const injectedCost = Number(process.env.FAKE_CLAUDE_COST_USD);

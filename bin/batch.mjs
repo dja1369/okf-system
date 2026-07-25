@@ -908,18 +908,71 @@ function buildRepairPrompt(pluginRootDir, report) {
   return template.replace('{{LINT_REPORT}}', () => reportText);
 }
 
+// ---------- 재시도 상한 (무한 재과금 차단) ----------
+// 청크가 실패하면 source는 raw/로 돌아가 다음 회차에 **다시 유료로** 처리된다. 재시도 자체는
+// 의도된 설계다(일시적 쓰기 차단·락·디스크는 다음 회차에 풀린다). 문제는 **영구히** 실패하는
+// 입력이다 — 그 세션 하나가 매 회차 유료 호출을 한 번씩 태우고, 기본 인터벌 1시간에
+// `batch_max_usd_per_day: 0`(무제한)이면 하루 24회를 무기한 반복한다. 관측 가능성만으로는
+// 못 막는다: 배치는 정의상 사용자가 안 보는 동안 돈다.
+// 그래서 세션 단위로 실패 횟수를 세고, 상한을 넘기면 raw/로 되돌리지 않고 _remove_candidate/로
+// 격리한다(30일 보관 후 자동 삭제 — 유실이 아니라 유예다).
+const MAX_CHUNK_ATTEMPTS = 3;
+
+// 원장은 sessionLabel(해시) → 실패 횟수다. 원본 파일명은 cwd 전체 경로와 세션 UUID를 담으므로
+// 상태 파일에도 남기지 않는다(로그·프롬프트와 같은 계약).
+function readRetryLedger(paths) {
+  try {
+    const v = JSON.parse(fs.readFileSync(paths.chunkRetries, 'utf8'));
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    return v;
+  } catch {
+    return {};
+  }
+}
+
+// 원장을 무한히 키우지 않는다: raw/·staging/ 어디에도 없는 세션의 항목은 이미 처리됐거나
+// 격리된 것이므로 버린다. 성공한 세션의 카운트가 남아 다음에 처음 실패한 회차를 3회차로
+// 오인하는 것도 이 정리가 막는다.
+function saveRetryLedger(paths, ledger) {
+  const live = new Set();
+  for (const dir of [paths.raw, paths.staging]) {
+    for (const f of safeReaddir(dir)) if (f.endsWith('.jsonl')) live.add(sessionLabel(f));
+  }
+  for (const k of Object.keys(ledger)) if (!live.has(k)) delete ledger[k];
+  try {
+    writePrivateJsonAtomic(paths.chunkRetries, ledger);
+  } catch {
+    // 원장을 못 쓰면 상한이 한 회차 느슨해질 뿐이다 — 배치를 세우지는 않는다.
+  }
+}
+
 function rollbackChunk(okfHome, chunk) {
   const paths = okfPaths(okfHome);
   rollback(paths.home); // repo-root 스코프(§5-5 6e, §7-4) — raw/·_remove_candidate/·.okf/는 .gitignore로 보호됨
+  const ledger = readRetryLedger(paths);
+  let quarantined = 0;
   for (const dp of chunk) {
+    const label = sessionLabel(dp.source);
+    const attempts = (Number.isInteger(ledger[label]) ? ledger[label] : 0) + 1;
+    const giveUp = attempts >= MAX_CHUNK_ATTEMPTS;
+    const destDir = giveUp ? path.join(paths.removeCandidate, localDateString()) : paths.raw;
     try {
-      fs.mkdirSync(paths.raw, { recursive: true });
-      fs.renameSync(dp.source, path.join(paths.raw, path.basename(dp.source)));
+      fs.mkdirSync(destDir, { recursive: true });
+      fs.renameSync(dp.source, path.join(destDir, path.basename(dp.source)));
+      if (giveUp) {
+        delete ledger[label];
+        quarantined++;
+        log(okfHome, `세션 ${label}: ${attempts}회 연속 실패 — raw로 되돌리지 않고 _remove_candidate로 격리한다(무한 재과금 차단, 30일 보관)`);
+      } else {
+        ledger[label] = attempts;
+      }
     } catch (err) {
-      log(okfHome, `청크 원복 중 raw 반환 실패 ${sessionLabel(dp.source)}: code=${safeErrorCode(err)}`);
+      log(okfHome, `청크 원복 중 반환 실패 ${label}: code=${safeErrorCode(err)}`);
     }
     tryUnlink(dp.digest);
   }
+  saveRetryLedger(paths, ledger);
+  return quarantined;
 }
 
 // 커밋 뒤의 archive 이동은 '이미 지불하고 이미 반영한' 다음에 오는 유일한 무방비 구간이었다
@@ -928,6 +981,16 @@ function rollbackChunk(okfHome, chunk) {
 // 남겨 '처리 완료됐으나 이동만 실패'로 구분한다 — recoverStagingLeftovers가 그것을 읽는다.
 function archiveChunk(okfHome, chunk, todayDir) {
   let allMoved = true;
+  // 성공은 재시도 카운트를 지운다. 안 지우면 "1회 실패 → 성공 → (전사가 자라 재수집) → 2회 실패"가
+  // 3회로 합산돼 실제로는 두 번만 실패한 세션이 격리된다.
+  const ledgerPaths = okfPaths(okfHome);
+  const ledger = readRetryLedger(ledgerPaths);
+  let ledgerChanged = false;
+  for (const dp of chunk) {
+    const label = sessionLabel(dp.source);
+    if (label in ledger) { delete ledger[label]; ledgerChanged = true; }
+  }
+  if (ledgerChanged) saveRetryLedger(ledgerPaths, ledger);
   for (const dp of chunk) {
     tryUnlink(dp.digest);
     const dest = path.join(todayDir, path.basename(dp.source));
@@ -987,9 +1050,16 @@ function buildAnalyzerWorkspace(okfHome, runId, chunkIndex, chunk) {
   copyKnowledgeTree(okfHome, wsRoot, true);
   const inbox = path.join(wsRoot, INGEST_INBOX_DIR);
   fs.mkdirSync(inbox, { recursive: true });
+  // **inbox 사본은 원본 파일명을 쓰지 않는다.** raw 파일명은
+  // `YYYY-MM-DD--<cwd의 /를 -로 치환>--<세션UUID>.jsonl`이라, 그대로 두면 로그에서 지운
+  // 것과 **같은 식별자**(다른 프로젝트의 전체 경로 + 세션 UUID)가 프롬프트에 실려 유료 LLM으로
+  // 나간다. 대화 본문이 어차피 가는 것과는 다른 문제다 — 이건 메타데이터이고, 분석기가 그
+  // 문자열을 concept에 적으면 index를 거쳐 게이트까지 간다(독립 검증이 실측으로 재현).
+  // 드라이버는 dp로 원본 매핑을 이미 들고 있으므로 이름은 버려도 된다.
   const wsChunk = chunk.map((dp) => {
-    const digest = path.join(inbox, path.basename(dp.digest));
-    const source = path.join(inbox, path.basename(dp.source));
+    const label = sessionLabel(dp.source);
+    const digest = path.join(inbox, `${label}.digest.md`);
+    const source = path.join(inbox, `${label}.jsonl`);
     fs.copyFileSync(dp.digest, digest);
     fs.copyFileSync(dp.source, source);
     return { digest, source };
@@ -1244,6 +1314,9 @@ function processChunks(okfHome, chunks, pluginRootDir, config, runId, spend, cap
   // "ok인데 산출물 0"을 상태에 드러내기 위한 계수. lastResult만으로는 정상 NO-OP과
   // 자기증식 루프(sweep 오분류)를 구분할 수 없다 — 실측으로 사용자를 혼란시킨 지점이다.
   let noopChunks = 0;
+  // 상한 초과로 격리된 세션 수. 로그만으로는 사용자가 배치 로그를 열어야 알 수 있는데,
+  // 이건 "지식이 반영되지 않고 폐기 예약됐다"는 사실이라 상태 파일에 드러나야 한다.
+  let quarantinedSessions = 0;
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     // 진입 게이트를 통과한 회차는 최소 1청크는 처리해야 backlog가 줄어든다
@@ -1251,7 +1324,7 @@ function processChunks(okfHome, chunks, pluginRootDir, config, runId, spend, cap
     if (i > 0 && capUsd > 0 && spendBeforeUsd + spend.costUsd >= capUsd) {
       log(okfHome, `일일 지출 상한 도달 ($${roundUsd(spendBeforeUsd + spend.costUsd).toFixed(4)} / $${capUsd}) — 남은 청크 ${chunks.length - i}개를 다음 회차로 이월`);
       for (let j = i; j < chunks.length; j++) returnChunkToRaw(okfHome, chunks[j]);
-      return { succeededChunks, skippedChunks, aborted: true, reason: 'spend-cap' };
+      return { succeededChunks, skippedChunks, quarantinedSessions, aborted: true, reason: 'spend-cap' };
     }
     log(okfHome, `청크 ${i + 1}/${chunks.length} 처리 시작 (세션 ${chunk.length}개)`);
 
@@ -1264,9 +1337,9 @@ function processChunks(okfHome, chunks, pluginRootDir, config, runId, spend, cap
     }
 
     if (!result.ok) {
-      rollbackChunk(okfHome, chunk);
+      quarantinedSessions += rollbackChunk(okfHome, chunk);
       if (result.fatal) {
-        return { succeededChunks, skippedChunks, aborted: true, reason: 'fatal' };
+        return { succeededChunks, skippedChunks, quarantinedSessions, aborted: true, reason: 'fatal' };
       }
       skippedChunks++;
       log(okfHome, `청크 ${i + 1} 건너뜀 — 나머지 청크는 계속 처리한다`);
@@ -1281,6 +1354,7 @@ function processChunks(okfHome, chunks, pluginRootDir, config, runId, spend, cap
     succeededChunks,
     skippedChunks,
     noopChunks,
+    quarantinedSessions,
     aborted: skippedChunks > 0,
     reason: skippedChunks > 0 ? 'skipped' : null,
   };
@@ -1448,7 +1522,7 @@ function runBatch() {
     log(okfHome, `이번 회차 처리 대상: 세션 ${selected.length}개, digest 합계 ${(totalBytes / 1024).toFixed(1)}KB`);
 
     const chunks = chunkBySize(selected, CHUNK_BYTE_LIMIT);
-    const { succeededChunks, aborted, reason, noopChunks } = processChunks(
+    const { succeededChunks, aborted, reason, noopChunks, quarantinedSessions } = processChunks(
       okfHome, chunks, pluginRootDir, config, runId, spend, capUsd, spendBeforeUsd);
 
     try {
@@ -1471,6 +1545,9 @@ function runBatch() {
         committed: succeededChunks - noopChunks,
         noop: noopChunks,
         skipped: chunks.length - succeededChunks,
+        // 상한(MAX_CHUNK_ATTEMPTS)을 넘겨 격리된 세션 수. 0이면 필드는 그대로 0이다 —
+        // 없애면 구버전 상태 파일과 구별이 안 된다.
+        quarantined: quarantinedSessions ?? 0,
       },
     });
     return { acquiredLock: true, freshPending: swept.freshPending };

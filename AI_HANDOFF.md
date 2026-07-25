@@ -47,6 +47,29 @@ commit, push, PR, destructive Git 명령은 실행하지 않았다.
 - **S4** `status: deprecated` 생산·소비 + `/okf:okf-deprecate`(`bin/deprecate.mjs`),
   청크당 은퇴 상한 3건을 드라이버가 시행.
 
+검증 라운드(적대적 4회 + codex 3회)에서 나와 반영한 것 — 각 항목은 되돌리면 실패하는 테스트를
+동반한다(mutation으로 확인):
+- **무한 재과금 차단**: 영구히 실패하는 세션은 매 회차 유료 호출을 한 번씩 태웠다(기본 인터벌
+  1시간 × `batch_max_usd_per_day: 0` 무제한 = 하루 24회 무기한). `MAX_CHUNK_ATTEMPTS`(3)회
+  실패하면 raw로 되돌리지 않고 `_remove_candidate/`로 격리한다. 원장은
+  `.okf/chunk-retries.json`(sessionLabel 해시 → 횟수)이고, 성공은 카운트를 지우며, raw·staging
+  어디에도 없는 항목은 저장 시 정리한다. 격리 건수는 `last-batch.json`의 `chunks.quarantined`.
+- **락 ABA 폐쇄**: "stale 판정 → unlink"는 두 시스템 콜이라 그 사이에 남이 잡은 **유효한** 락을
+  지울 수 있었다(되읽기는 창을 좁힐 뿐이다). `rename`으로 원자적으로 클레임한 뒤 내용을 확인하고,
+  남의 것이면 `linkSync`로 되돌린다(그 사이 제3자가 `wx`로 만든 락은 덮지 않는다).
+- **index·lint 비대칭 제거**: 예약 디렉토리 이름은 **루트 자식일 때만** 예약이다. index-gen만
+  깊이 무관하게 걸러서 `projects/raw/x.md`가 lint 소견 0건으로 통과하면서 어떤 index.md에도
+  안 나타났다 — 게이트는 index 기반이라 영구히 발견 불가능했다.
+- **프롬프트 유출 차단**: 로그는 `sessionLabel`로 해시했지만 분석기 워크스페이스 사본이 원본
+  파일명(`날짜--<cwd 전체 경로>--<세션UUID>.jsonl`)을 그대로 써서 같은 식별자가 유료 LLM으로
+  나갔다. inbox 사본을 해시 이름으로 바꿨다.
+- **훅 stderr의 `err.message` 제거**(`bin/session-start.mjs`, `lib/bootstrap.mjs` 2곳): js-yaml
+  파싱 오류 메시지는 위반한 YAML **원문**을 담고, 그 원문은 전사 파생 concept 본문이다.
+  `bin/batch.mjs`가 로그에 대해 지키던 계약을 훅에도 맞췄다.
+- **번들 파일 권한 회귀 고정**: 기존 테스트는 `.okf/` 상태 파일만 봤는데 그것들은
+  `writePrivateJsonAtomic`이 rename 뒤 한 번 더 chmod한다. `writePrivateFile`의 0600 강제를
+  지우면 실제로 0644가 되는 것은 `SCHEMA.md`·`log.md`였다.
+
 미착수: 릴리스 3(`0.3.0`, Part 2)은 I6의 recall@cap 측정 발행이 선행 조건이다.
 
 ### 그 이전 작업
@@ -186,7 +209,7 @@ $0.216→$0.258→**$0.447**로 오히려 순증가했고, zero_base_chain도 $0
 
 ```sh
 node test/smoke.mjs
-# 505 passed, 0 failed   (릴리스 1+2 적용 후. 착수 시점 기준선은 303)
+# 566 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
 
 node test/bench.mjs
 # SessionStart 57.4ms (56.7-58.2), SessionEnd 43.4ms (41.8-43.9)
@@ -234,6 +257,14 @@ batch 비용, 개인정보, README 과장을 우선 점검했다. 발견한 Impo
    `_remove_candidate` 오염 데이터는 자동 삭제하지 않았다. 정리가 필요하면 백업 후
    `[OKF-BATCH]`/`okf-smoke-*`만 별도 선별해야 한다.
 6. 외부 README 링크와 공식 가격은 시간이 지나면 변할 수 있으므로 릴리스 전에 재확인한다.
+7. **`batch_max_usd_per_day` 기본값은 여전히 0(무제한)이다.** 재시도 상한(`MAX_CHUNK_ATTEMPTS`)이
+   "영구 실패 세션이 무한히 재과금"을 닫았으므로 무제한 기본값의 최악 시나리오는 사라졌지만,
+   상한 자체는 여전히 사용자가 켜야 한다. 기본값 전환은 별도 판단이다.
+8. **`MAX_CHUNK_ATTEMPTS`는 설정 키가 아니라 상수(3)다.** 실패가 청크 단위이므로 큰 세션 하나가
+   같은 청크의 다른 세션까지 카운트를 올린다(청크 전체가 원복되므로). 실측 데이터가 쌓이면
+   세션 단위 격리로 좁히거나 설정 키로 올리는 것을 검토한다.
+9. **락 회수의 `.claim-*` 잔재.** `reclaimStaleLock`이 rename과 unlink 사이에서 프로세스가 죽으면
+   `.okf/batch.lock.claim-<pid>-<uuid>`가 남는다. 무해하지만(아무도 읽지 않는다) 정리 경로는 없다.
 
 ## 작업 시 주의
 
