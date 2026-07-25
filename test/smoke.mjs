@@ -766,8 +766,8 @@ console.log('\n=== index-gen.mjs ===');
   ok('per-directory index.md lists the concept with title+description', dirIndex.includes('A 결정') && dirIndex.includes('설명 A'));
   ok('per-directory index.md link uses .md extension + absolute path', dirIndex.includes('(/decisions/a.md)'));
 
-  const rootIndex = fs.readFileSync(okfPaths(home).rootIndex, 'utf8');
-  ok('root index.md preserves okf_version', rootIndex.includes('okf_version: "0.1"'));
+  // (구 단언 `root index.md preserves okf_version`은 S2의 승격과 함께 깨진다 — 리터럴만
+  //  바꾸면 회귀 커버리지가 소멸하므로 아래 S2 블록에서 보존/승격 두 축으로 분리했다.)
 
   // unknown directory must not crash index-gen (defensive .get-with-fallback)
   fs.mkdirSync(path.join(home, 'projects'), { recursive: true });
@@ -1315,6 +1315,98 @@ if (process.platform !== 'win32' && process.getuid?.() !== 0) {
   const forged = readIfExists(path.join(home, 'decisions', 'forged.md'));
   ok('stamp-forge: an analyzer-authored generated.by cannot survive as human provenance',
     forged.includes('  by: "okf-system/claude-sonnet-5"') && !forged.includes('human:ducksu'), forged);
+}
+// --- S2: okf_version 승격 · 루트 index 미지 키 보존 ---
+{
+  const home = bootstrapped('okf-version');
+  const rootIndex = okfPaths(home).rootIndex;
+  ok('a freshly bootstrapped bundle declares okf_version "0.2"',
+    readIfExists(rootIndex).includes('okf_version: "0.2"'), readIfExists(rootIndex).slice(0, 80));
+
+  // 다운그레이드 금지: 외부 도구가 쓴 값은 절대 건드리지 않는다. 값이 비-0.1이라
+  // **리터럴 교체로는 무력화되지 않는다**.
+  for (const foreign of ['"0.2"', '"0.3"', '"1.0"', '0.3']) {
+    fs.writeFileSync(rootIndex, `---\nokf_version: ${foreign}\nx_tool_state: keep-me\n---\n# root\n`);
+    let result = null;
+    for (let i = 0; i < 3; i++) result = regenerateIndex(home);
+    const after = readIfExists(rootIndex);
+    ok(`root index.md preserves a foreign okf_version ${foreign} (다운그레이드 금지)`,
+      after.includes(`okf_version: ${foreign}`) && result.promoted === false,
+      after.slice(0, 100));
+  }
+
+  // 미지 키 보존(SPEC §4.1 SHOULD). 재생성마다 소리 없이 사라지던 값이다.
+  fs.writeFileSync(rootIndex, '---\nokf_version: "0.1"\nx_tool_state: keep-me\nx_owner: someone\nx_seq: 7\n---\n# root\n');
+  const promotion = regenerateIndex(home);
+  const promoted = readIfExists(rootIndex);
+  ok('root index.md promotes okf_version "0.1" to the v0.2 declaration',
+    promoted.includes('okf_version: "0.2"') && promotion.promoted === true);
+  ok('root index.md preserves unknown frontmatter keys across regeneration',
+    ['x_tool_state: keep-me', 'x_owner: someone', 'x_seq: 7'].every((k) => promoted.includes(k)), promoted.slice(0, 160));
+  regenerateIndex(home);
+  const second = readIfExists(rootIndex);
+  regenerateIndex(home);
+  ok('unknown-key preservation is byte-stable across repeated regeneration',
+    second === readIfExists(rootIndex) && Buffer.byteLength(second) === Buffer.byteLength(readIfExists(rootIndex)));
+  // 경고는 완화하지 않는다 — §8/§12는 루트 index의 okf_version **하나만** 예외로 허용한다.
+  const w4 = runLint(home).warnings.filter((w) => w.file === 'index.md' && w.rule === 'W4');
+  ok('preserving unknown keys does not soften the W4 warning about them', w4.length === 1, JSON.stringify(w4));
+
+  // 파손 프론트매터는 보존하지 않는다 — 보존하면 E3a가 영구화되어 모든 ingest가 멈춘다.
+  fs.writeFileSync(rootIndex, '---\nokf_version: "0.1"\n  bad: [indent\n---\n# root\n');
+  regenerateIndex(home);
+  ok('unparseable root frontmatter is rebuilt, not preserved (E3a 자기 치유 유지)',
+    runLint(home).errors.length === 0 && readIfExists(rootIndex).includes('okf_version: "0.2"'),
+    formatReport(runLint(home)));
+}
+{
+  // "schema 범프가 유일한 트리거"는 거짓이다 — 그 거짓이 S2의 원래 파괴적 범프 단계의
+  // 유일한 근거였다. 배치가 청크마다 regenerateIndex를 부르므로 성공 1회로 승격된다.
+  const home = setupBatchSandbox('okf-version-batch');
+  fs.writeFileSync(okfPaths(home).rootIndex, '---\nokf_version: "0.1"\n---\n# OKF Knowledge Bundle\n');
+  git(['add', '-A'], home, { stdio: 'ignore' });
+  git(['commit', '-m', 'test: pin okf_version 0.1'], home, { stdio: 'ignore' });
+  const before = Number(git(['rev-list', '--count', 'HEAD'], home).trim());
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'noop' } });
+  const after = Number(git(['rev-list', '--count', 'HEAD'], home).trim());
+  ok('a single successful batch promotes okf_version without a schema bump',
+    readIfExists(okfPaths(home).rootIndex).includes('okf_version: "0.2"'),
+    readIfExists(okfPaths(home).rootIndex).slice(0, 60));
+  ok('the promotion commit happens exactly once', after === before + 1, `${before} -> ${after}`);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'noop' } });
+  ok('a second batch adds no further promotion commit and leaves the tree clean',
+    Number(git(['rev-list', '--count', 'HEAD'], home).trim()) === after
+    && git(['status', '--porcelain'], home).trim() === '');
+}
+{
+  // 부트스트랩 경로의 승격은 커밋 메시지로 드러난다(화살표는 U+2192 — 완전일치 단언).
+  const home = bootstrapped('okf-version-commit');
+  fs.writeFileSync(okfPaths(home).rootIndex, '---\nokf_version: "0.1"\n---\n# OKF Knowledge Bundle\n');
+  fs.writeFileSync(okfPaths(home).schema, '---\ntype: schema\nschema_version: 1\ntitle: 옛\ndescription: 옛\n---\n# 옛 본문\n');
+  git(['add', '-A'], home, { stdio: 'ignore' });
+  git(['commit', '-m', 'test: pin v0.1 + old schema'], home, { stdio: 'ignore' });
+  ensureBootstrap(home);
+  ok('bootstrap commit message records the OKF version promotion',
+    git(['log', '-1', '--pretty=%s'], home).trim() === 'okf: bootstrap (OKF v0.1 → v0.2)',
+    git(['log', '-1', '--pretty=%s'], home).trim());
+}
+{
+  // 다운그레이드 안전성: 승격된 번들을 **S2 이전 코드**로 읽어도 무해해야 한다. git 이력 모양에
+  // 의존하지 않도록 구 readExistingOkfVersion의 판정을 그대로 재현해 검사한다(6줄 함수였다).
+  const home = bootstrapped('okf-version-downgrade');
+  regenerateIndex(home);
+  const text = readIfExists(okfPaths(home).rootIndex);
+  const legacyRead = (content) => {
+    const { hasFrontmatter, data } = parseFrontmatter(content);
+    if (hasFrontmatter && data && data.okf_version != null && String(data.okf_version).trim() !== '') {
+      return String(data.okf_version).trim();
+    }
+    return '0.1';
+  };
+  ok('a promoted bundle still reads and lints clean under the previous release logic',
+    legacyRead(text) === '0.2' && runLint(home).errors.length === 0
+    && JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext.length > 0,
+    formatReport(runLint(home)));
 }
 
 // ---------------------------------------------------------------------------
