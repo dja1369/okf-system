@@ -51,6 +51,7 @@ Claude Code를 다시 시작하고 평소처럼 세션을 끝낸 뒤 확인합�
 | `/okf:okf-index` | 카테고리, concept 제목, 최근 변경 조회 |
 | `/okf:okf-visualize` | OKF concept와 concept 간 링크만 시각화 |
 | `/okf:okf-analysis [경로]` | 저장소와 관련 있는 OKF concept만 함께 분석 |
+| `/okf:okf-deprecate <대상>` | concept 은퇴 — 파일과 링크는 그대로 두고 게이트 주입에서만 뺀다 |
 
 `visualize`는 “번들이 무엇을 아는가?”에 답하며 저장소를 스캔하지 않습니다. `analysis`는 “번들이 아는 내용을 기준으로 이 코드는 무엇인가?”에 답합니다. 없는 경로나 파일 경로는 거부하고, 분석 잘림·제외된 무관 concept·언어별 파일/선언/internal edge 수를 표시합니다.
 

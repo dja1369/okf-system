@@ -47,6 +47,7 @@ Pourquoi une base sur l’idle ? Les sessions se terminent rarement de façon ex
 | `/okf:okf-index` | Catégories, titres et changements récents |
 | `/okf:okf-visualize` | Concepts OKF et liens entre concepts uniquement |
 | `/okf:okf-analysis [chemin]` | Dépôt analysé avec seulement les concepts OKF liés |
+| `/okf:okf-deprecate <cible>` | Retirer un concept — le fichier et ses liens restent, le gate cesse de l’injecter |
 
 `visualize` ne scanne aucun dépôt. `analysis` refuse les chemins absents/non-répertoires et signale analyse tronquée, concepts sans rapport masqués et statistiques par langage. Les deux produisent un HTML autonome, sans CDN ni réseau à l’exécution.
 

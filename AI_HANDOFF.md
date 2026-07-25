@@ -14,6 +14,43 @@ commit, push, PR, destructive Git 명령은 실행하지 않았다.
 
 ## 마지막으로 한 작업
 
+**OKF 스펙 v0.2 대응 — 릴리스 1(`0.2.0` 신뢰성) + 릴리스 2(`0.2.1` 스펙 대응) 구현 완료.**
+계획서는 [`docs/0-2_develop_plan.md`](docs/0-2_develop_plan.md), 근거 조사는
+`docs/okf-v0.2-2026-07-25-*.md` 3종이다. 브랜치 `feature/okf-v0.2-conformance`.
+
+릴리스 1 — 신뢰성 (R0 → R5 → R3 → R2 → R1 → R4 → S3a)
+- **R0** 동시 프로세스 락 경합 하네스(`runBatchDetached`), 라이브 형상 동결 픽스처
+  (`test/fixtures/live-shape-2026-07-25.json` — 줄 바이트 벡터만, 전사 텍스트 0), lint 규칙
+  코드 레지스트리. 코드 동작 변경 0줄.
+- **R5** 게이트 예산 회계 수정: 생략 마커·heading 최악값 선차감 + 환급, starvation 제거.
+  실측(cap 4,000~9,000B를 50B 간격으로 훑은 101샘플): 절단 발생 샘플 72→0, 주입 concept
+  총합 571→597, 감소 샘플 20건이며 감소폭 전부 −1.
+- **R3** 락 계약을 `lib/lock.mjs`로 이관(holder/token, 페이로드 검증, TOCTOU 이중 회수 차단),
+  bootstrap 락 가드, archive 이동 3단 폴백 + `.archived` 마커, NO-OP 마커 + AND 판정,
+  청크 독립 트랜잭션, `blocked` 상태 표면화, top-level 예외 착지.
+- **R2** 비용 가시화(4개 반환 경로 전부 — 지불 후 실패 포함) + `batch_max_usd_per_day`
+  기본 0(무제한). 상한은 best-effort임을 문서에 명시.
+- **R1** 설치 하한(`lib/installed-at.mjs`) · glob 트레일링 `/**` 수정 · 내장 제외.
+  설정 키 `sweep_backfill_days` 기본 0.
+- **R4** W5(무따옴표 ` #` 절단) · W6(description 500자) · digest 줄단위 스킵과 손실 계량 ·
+  추출기 없는 언어의 `analyzedFiles` 분리. digest의 원본 텍스트 폴백(유출 경로) 제거.
+- **S3a** `lib/trust.mjs` 신설, W2를 시간 신호 OR 검사로(폐기 필드 재생산 진동 차단),
+  미지 status W7, `TYPE_TO_DIR`를 Map으로.
+
+릴리스 2 — OKF 스펙 v0.2 대응 (S5 → S3b → S1 → S2 → S4)
+- **S5** `templates/SCHEMA.md` v2(schema_version 1→2, 릴리스 유일 범프), ingest/repair 프롬프트
+  v0.2, 게이트 head에서 버전 표기 제거(−11B, 줄 수 불변), README 배지 2종 승격.
+- **S3b** 중첩 `log.md` 사각지대 폐쇄 — 루트는 E3b 유지, 비루트만 W8.
+- **S1** `generated: {by, at}`를 **코드가** 찍는다(`lib/generated-stamp.mjs`). 위조 차단은
+  `prev` 기준 `trustExisting`, 워크스페이스 되쓰기로 2차 apply 오염 방지.
+- **S2** `okf_version` "0.1"→"0.2" 승격(외부 값 보존), 루트 index 미지 키 round-trip 보존.
+- **S4** `status: deprecated` 생산·소비 + `/okf:okf-deprecate`(`bin/deprecate.mjs`),
+  청크당 은퇴 상한 3건을 드라이버가 시행.
+
+미착수: 릴리스 3(`0.3.0`, Part 2)은 I6의 recall@cap 측정 발행이 선행 조건이다.
+
+### 그 이전 작업
+
 - `SessionEnd` 무손실 캡처를 비동기 600초 계약으로 바꾸고, 같은 세션의 역순 완료가 더 긴
   최신 transcript를 덮지 못하도록 사본+세션 잠금+크기 비교를 적용했다.
 - 캡처 상태는 transcript 내용·경로 없이 `.okf/capture-status.json`에 기록한다. POSIX bundle
@@ -149,7 +186,7 @@ $0.216→$0.258→**$0.447**로 오히려 순증가했고, zero_base_chain도 $0
 
 ```sh
 node test/smoke.mjs
-# 254 passed, 0 failed
+# 505 passed, 0 failed   (릴리스 1+2 적용 후. 착수 시점 기준선은 303)
 
 node test/bench.mjs
 # SessionStart 57.4ms (56.7-58.2), SessionEnd 43.4ms (41.8-43.9)
@@ -183,6 +220,9 @@ batch 비용, 개인정보, README 과장을 우선 점검했다. 발견한 Impo
 
 ## 남은 개선점
 
+0. **릴리스 3(`0.3.0`, 계획서 Part 2)은 I6가 선행이다.** `lib/gate.mjs` 추출 + recall@cap
+   사전등록 실험($0)을 먼저 발행하지 않으면 I5/I3/I-M/I2에 착수하지 않는다. I2(관련성 라우팅)는
+   구현하더라도 기본 OFF이며, 기본값 전환은 I6의 조건 A~E를 전부 충족할 때만 별도 커밋으로 한다.
 1. GitHub Actions를 실제 원격에서 실행해 Node 20 Windows/macOS/Linux 결과를 확인한다.
 2. regex fallback은 compiler/indexer가 아니다. PHP dynamic autoload, C/C++ macro/generated 선언,
    Swift generic/typealias 해석 등은 tree-sitter/LSP 없이 보수적으로 누락될 수 있다.

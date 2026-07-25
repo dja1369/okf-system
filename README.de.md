@@ -48,6 +48,7 @@ Warum idle-basiert? Sitzungen enden selten explizit — Background-Agenten tun e
 | `/okf:okf-index` | Kategorien, Concept-Titel und letzte Änderungen |
 | `/okf:okf-visualize` | Nur OKF-Concepts und Beziehungen untereinander |
 | `/okf:okf-analysis [Pfad]` | Repository plus ausschließlich relevante OKF-Concepts |
+| `/okf:okf-deprecate <Ziel>` | Concept stilllegen — Datei und Links bleiben, das Gate injiziert es nicht mehr |
 
 `visualize` scannt kein Repository. `analysis` lehnt fehlende/Nicht-Verzeichnis-Pfade ab und meldet Truncation, ausgeblendete irrelevante Concepts sowie Statistiken je Sprache. Beide erzeugen eigenständiges HTML ohne CDN oder Laufzeit-Netzwerk.
 

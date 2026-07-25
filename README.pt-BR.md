@@ -47,6 +47,7 @@ Por que baseado em ociosidade? Sessões raramente terminam de forma explícita �
 | `/okf:okf-index` | Categorias, títulos e mudanças recentes |
 | `/okf:okf-visualize` | Somente concepts OKF e relações entre eles |
 | `/okf:okf-analysis [caminho]` | Repositório mais apenas os concepts OKF relacionados |
+| `/okf:okf-deprecate <alvo>` | Aposentar um concept — o arquivo e seus links ficam, o gate para de injetá-lo |
 
 `visualize` não analisa repositórios. `analysis` rejeita caminhos ausentes/não diretórios e informa truncamento, concepts irrelevantes ocultos e estatísticas por linguagem. Ambos geram HTML autocontido, sem CDN nem rede durante a execução.
 

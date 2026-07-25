@@ -48,6 +48,7 @@ Por ejemplo, “desplegar 10% → 50% → 100% y revertir por encima de 0,5% de 
 | `/okf:okf-index` | Categorías, títulos y cambios recientes |
 | `/okf:okf-visualize` | Solo concepts OKF y sus relaciones |
 | `/okf:okf-analysis [ruta]` | Repositorio más los concepts OKF relacionados |
+| `/okf:okf-deprecate <objetivo>` | Retirar un concept — el archivo y sus enlaces se mantienen, el gate deja de inyectarlo |
 
 `visualize` no analiza código. `analysis` rechaza rutas inexistentes o que no sean directorios e informa truncamiento, concepts no relacionados ocultos y estadísticas por lenguaje. Ambos producen HTML autocontenido sin CDN ni red en ejecución.
 

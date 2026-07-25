@@ -47,6 +47,7 @@ claude plugin install okf@okf-marketplace
 | `/okf:okf-index` | 查看分类、concept 标题和最近变更 |
 | `/okf:okf-visualize` | 仅显示 OKF concept 与 concept 之间的关系 |
 | `/okf:okf-analysis [路径]` | 分析代码库，并只显示相关 OKF concept |
+| `/okf:okf-deprecate <目标>` | 退役一个 concept —— 文件和链接保留，gate 不再注入它 |
 
 `visualize` 不扫描代码库。`analysis` 会拒绝不存在或非目录的路径，显示 truncated、被隐藏的无关 concept，以及各语言的文件/声明/internal edge 统计。两者生成的 HTML 均自包含，不使用外部 CDN，也不在运行时联网。
 

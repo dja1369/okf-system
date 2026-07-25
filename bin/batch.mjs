@@ -14,6 +14,8 @@ import { acquireLock, releaseLock } from '../lib/lock.mjs';
 import { ensurePrivateDir, securePrivateFile, writePrivateJsonAtomic } from '../lib/permissions.mjs';
 import { safeErrorCode } from '../lib/status.mjs';
 import { stampGenerated } from '../lib/generated-stamp.mjs';
+import { parseFrontmatter } from '../lib/frontmatter.mjs';
+import { conceptStatus } from '../lib/trust.mjs';
 
 const SWEEP_LOOKBACK_DAYS = 7; // §7-8: 이보다 오래된 orphan transcript는 sweep 대상에서 제외
 // 유휴 판정은 config(sweep_min_idle_minutes, 기본 60분)로 옮겼다 — "마지막 활동 후 N분"이
@@ -37,6 +39,10 @@ const ARCHIVED_MARKER_SUFFIX = '.archived';
 // 분석기가 '쓸 게 없었다'를 선언하는 유일한 수단. `.md`로 끝나면 안 된다 —
 // applyAnalyzerWorkspace가 .md만 반영하므로 `.okf-noop.md`는 번들에 실린다.
 const NOOP_MARKER = '.okf-noop';
+// prompts/ingest.md·SCHEMA.md 규칙과 같은 값 — 한쪽만 고치면 계약이 갈린다.
+// 드라이버가 시행하는 이유: 프롬프트 규범만으로는 오염된 digest에 넘어간 분석기가 번들 전체를
+// 한 회차에 은퇴시킬 수 있다.
+const MAX_DEPRECATIONS_PER_CHUNK = 3;
 
 // 리뷰 지적(사후 반영): capture.mjs는 로컬 날짜(toLocaleDateString('en-CA'))를 쓰는데
 // 이 파일은 toISOString(UTC)을 섞어 써서, UTC+ 시간대의 이른 새벽 시간대에 라벨이 하루
@@ -969,10 +975,11 @@ function buildAnalyzerWorkspace(okfHome, runId, chunkIndex, chunk) {
 // (오염된 digest에 넘어간 분석기의 산출물일 수 있으므로) 번들에 닿지 않고, index.md는
 // 드라이버가 재생성하므로 제외, 예약 디렉토리는 루트에서 걸러진다. 삭제는 반영하지 않는다
 // (SCHEMA 규칙 4 — 대체는 새 파일 + superseded 산문). 반영 후 lint가 내용 규정을 검사한다.
-function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null) {
+function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null, chunkBudget = { deprecations: 0 }) {
   let applied = 0;
   let blocked = 0;
   let stamped = 0;
+  let blockedDeprecations = 0;
   const walk = (dir, rel) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       if (rel === '' && (SCAN_EXCLUDE_DIRS.has(e.name) || e.name === INGEST_INBOX_DIR)) continue;
@@ -1000,6 +1007,21 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null) {
       if (childRel === 'SCHEMA.md' || (prev && /^okf_seed:\s*true\b/m.test(prev.subarray(0, 2048).toString('utf8')))) {
         blocked++;
         continue;
+      }
+      // 은퇴 상한. prev가 없는 신규 파일은 세지 않는다 — 기존 지식을 지우는 행위가 아니다.
+      // 차단은 기존 blocked 관용구와 동일하게 '파일 전체를 반영하지 않는다'이다: 바이트 수술로
+      // status 줄만 되돌리면 워크스페이스(abs)와 번들(destAbs)의 바이트가 갈려, 2차 호출에서
+      // 무관한 파일까지 전부 재기록된다.
+      // 이 블록은 반드시 위 Buffer.compare **뒤**여야 한다 — 변경 없는 파일까지 파싱하면
+      // 매 회차 전 번들을 파싱한다.
+      if (prev
+        && conceptStatus(parseFrontmatter(prev.toString('utf8')).data) !== 'deprecated'
+        && conceptStatus(parseFrontmatter(next.toString('utf8')).data) === 'deprecated') {
+        chunkBudget.deprecations += 1;
+        if (chunkBudget.deprecations > MAX_DEPRECATIONS_PER_CHUNK) {
+          blockedDeprecations++;
+          continue;
+        }
       }
       // 스탬핑은 반드시 (a) 위 Buffer.compare 동일성 검사 **뒤**, (b) SCHEMA/okf_seed 차단
       // 게이트 **뒤**다. 앞에 두면 모든 파일이 매 회차 재기록돼 유실 백스톱이 영구 무력화되고,
@@ -1032,6 +1054,9 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null) {
   // 숫자만 남긴다 — 파일명·스탬프 값은 로그에 싣지 않는다. N이 그 회차 변경 파일 수보다
   // 크면 전 번들 일괄 스탬핑(= 유실 백스톱 무력화)이라는 뜻이니 즉시 롤백하라.
   if (stamped > 0) log(okfHome, `generated 스탬프 ${stamped}건`);
+  if (blockedDeprecations > 0) {
+    log(okfHome, `은퇴 상한(청크당 ${MAX_DEPRECATIONS_PER_CHUNK}건) 초과 — ${blockedDeprecations}건 반영 거부`);
+  }
   // blocked를 함께 돌려준다 — NO-OP 판정이 "쓴 게 없다"와 "쓰려다 거부당했다"를 구분해야
   // 하기 때문이다. 기존 호출부 두 곳은 반환값을 버리고 있었으므로 파급은 0이다.
   return { applied, blocked };
@@ -1079,7 +1104,9 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
     // at은 **호출당 1개**다 — 같은 LLM 호출에서 나온 파일들이 같은 시각을 공유해야 정직하고
     // 테스트에서도 결정적이다.
     const ingestStamp = { by: actorFor(ingestResult.model), at: isoSecondsUtc() };
-    const applyResult = applyAnalyzerWorkspace(okfHome, wsRoot, ingestStamp);
+    // 예산 객체는 청크당 **한 번만** 만든다 — ingest와 repair가 각자 만들면 3 + 3 = 6건으로 샌다.
+    const chunkBudget = { deprecations: 0 };
+    const applyResult = applyAnalyzerWorkspace(okfHome, wsRoot, ingestStamp, chunkBudget);
 
     // 실측(E3): 쓰기가 막히면 분석기는 성공 종료하지만 아무것도 못 쓰고, NO-OP 선언 대신 차단
     // 사정을 설명한다. 이를 NO-OP으로 오분류하면 지식이 조용히 유실된다(30일 뒤 삭제).
@@ -1111,7 +1138,7 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
       if (repairResult.ok) {
         // 폴백을 빼면 repair가 만든 파일이 같은 모델인데도 unknown이 된다.
         const repairStamp = { by: actorFor(repairResult.model || ingestResult.model), at: isoSecondsUtc() };
-        applyAnalyzerWorkspace(okfHome, wsRoot, repairStamp);
+        applyAnalyzerWorkspace(okfHome, wsRoot, repairStamp, chunkBudget);
         regenerateIndex(okfHome);
         report = runLint(okfHome);
       }

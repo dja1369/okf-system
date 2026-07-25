@@ -5,7 +5,7 @@ import { readConfig, DEFAULT_CONFIG } from '../lib/config.mjs';
 import { ensureBootstrap } from '../lib/bootstrap.mjs';
 import { maybeSpawnBatch } from '../lib/batch-gate.mjs';
 import { truncateUtf8Bytes, capLines } from '../lib/text.mjs';
-import { discoverConceptDirs, DIR_DESCRIPTIONS } from '../lib/index-gen.mjs';
+import { discoverConceptDirs, DIR_DESCRIPTIONS, DEPRECATED_PREFIX } from '../lib/index-gen.mjs';
 
 // 게이트의 목적은 "관련 concept를 실제로 Read 하게 만드는 것"인데, 루트 index.md는 카테고리별
 // 개수만 담는다("references — 3개"). 개수만으로는 관련성을 판단할 수 없어 게이트가 지시를 해도
@@ -14,7 +14,13 @@ import { discoverConceptDirs, DIR_DESCRIPTIONS } from '../lib/index-gen.mjs';
 // 시점에 그걸 병합한다. 번들 파일 포맷과 index-gen은 그대로 두고 표현만 바꾼다.
 function readCategoryLines(okfHome, dir) {
   try {
-    return fs.readFileSync(path.join(okfHome, dir, 'index.md'), 'utf8').trim().split('\n').filter(Boolean);
+    return fs.readFileSync(path.join(okfHome, dir, 'index.md'), 'utf8').trim().split('\n')
+      // `- `로 시작하는 줄만이 concept다. .filter(Boolean)은 빈 줄만 걸러서, index.md에
+      // bullet 아닌 줄이 하나라도 생기면 게이트가 그것을 concept로 세고 주입한다(N/M 카운트까지
+      // 거짓이 된다). 은퇴 줄은 index.md에 남기되 여기서만 뺀다 — 링크는 보존하고 예산은 돌려받는다.
+      // buildInjectedIndex는 손대지 않는다: c.lines.length가 이미 필터 후 개수라 heading의
+      // N/M개와 생략 마커가 자동으로 현역 기준이 된다.
+      .filter((l) => l.startsWith('- ') && !l.startsWith(DEPRECATED_PREFIX));
   } catch {
     return []; // 카테고리 index.md 부재(부트스트랩 직후 등) — 빈 카테고리로 취급한다.
   }

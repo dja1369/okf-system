@@ -19,8 +19,8 @@ import { git } from '../lib/git.mjs';
 import { isLockStale, releaseLock } from '../lib/lock.mjs';
 import { readInstalledAt } from '../lib/installed-at.mjs';
 import { matchGlob } from '../lib/glob.mjs';
-import { parseFrontmatter } from '../lib/frontmatter.mjs';
-import { toIsoDate, toIsoDateTime, generatedAt } from '../lib/trust.mjs';
+import { parseFrontmatter, setFrontmatterStatus } from '../lib/frontmatter.mjs';
+import { toIsoDate, toIsoDateTime, generatedAt, conceptStatus } from '../lib/trust.mjs';
 import { stampGenerated } from '../lib/generated-stamp.mjs';
 import { analyzeProject } from '../lib/analyze.mjs';
 import { buildGraph, renderHtml } from '../lib/viz.mjs';
@@ -1081,8 +1081,20 @@ if (process.platform !== 'win32' && process.getuid?.() !== 0) {
     schemaFindings.some((w) => w.rule === 'W3'), JSON.stringify(schemaFindings));
 }
 {
-  ok('lib/trust.mjs exports exactly the four functions this release consumes',
-    (readIfExists(path.join(PLUGIN_ROOT, 'lib', 'trust.mjs')).match(/^export function /gm) || []).length === 4);
+  // 소비자 0인 export를 테스트가 살려두는 상태를 만들지 않는다: S3a가 4개(isPlainObject /
+  // toIsoDateTime / toIsoDate / generatedAt)를 만들고, S4가 첫 소비자와 함께 conceptStatus를
+  // 더한다. normalizeVerified·isStale은 첫 소비자(viz)가 생기는 릴리스에서 추가한다.
+  const trustSrc = readIfExists(path.join(PLUGIN_ROOT, 'lib', 'trust.mjs'));
+  const trustExports = (trustSrc.match(/^export function (\w+)/gm) || []).map((m) => m.split(' ')[2]);
+  ok('lib/trust.mjs exports exactly the functions this release consumes',
+    trustExports.length === 5
+    && ['isPlainObject', 'toIsoDateTime', 'toIsoDate', 'generatedAt', 'conceptStatus']
+      .every((f) => trustExports.includes(f)),
+    trustExports.join(','));
+  // 판정자는 lib/trust.mjs 한 곳에만 있어야 한다.
+  const statusOwners = ['lint.mjs', 'index-gen.mjs', 'viz.mjs', 'frontmatter.mjs']
+    .filter((f) => /CONCEPT_STATUSES|function conceptStatus/.test(readIfExists(path.join(PLUGIN_ROOT, 'lib', f))));
+  ok('status 판정자는 lib/trust.mjs 한 곳에만 있다', statusOwners.length === 0, statusOwners.join(','));
 }
 // --- S5: SCHEMA v2 · ingest/repair 프롬프트 v0.2 · 버전 문자열 정리 ---
 {
@@ -1407,6 +1419,263 @@ if (process.platform !== 'win32' && process.getuid?.() !== 0) {
     legacyRead(text) === '0.2' && runLint(home).errors.length === 0
     && JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext.length > 0,
     formatReport(runLint(home)));
+}
+// --- S4: status: deprecated 생산·소비 + /okf:okf-deprecate ---
+function runDeprecate(okfHome, args) {
+  // **OKF_HOME을 반드시 넘긴다** — 안 넘기면 개발 머신의 진짜 번들을 은퇴시킨다.
+  const fakeHome = isolatedHome();
+  return spawnSync(process.execPath, [path.join(PLUGIN_ROOT, 'bin', 'deprecate.mjs'), ...args], {
+    env: {
+      ...process.env, OKF_HOME: okfHome, HOME: fakeHome, USERPROFILE: fakeHome,
+      CLAUDE_CONFIG_DIR: path.join(fakeHome, '.claude'),
+    },
+    encoding: 'utf8',
+  });
+}
+{
+  // 소비: 은퇴 concept는 index.md에 **남고**(링크 보존), 현역 뒤로 정렬되며, 게이트에서 빠진다.
+  // bootstrapped()는 시드를 심으므로 카운트를 리터럴로 단언하지 말고 계산해서 비교한다.
+  const home = sandbox('deprecate-index');
+  for (const d of ['decisions', 'decisions/sales']) fs.mkdirSync(path.join(home, d), { recursive: true });
+  const write = (rel, title, extra = '') => fs.writeFileSync(path.join(home, rel),
+    `---\ntype: decision\n${extra}title: ${title}\ndescription: ${title} 설명\ntimestamp: 2026-07-15\n---\n본문\n`);
+  write('decisions/a-live.md', '현역 제목');
+  write('decisions/b-tomb.md', '묘비 제목', 'status: deprecated\n');
+  write('decisions/sales/old.md', '중첩 묘비', 'status: deprecated\n');
+  regenerateIndex(home);
+  const catIndex = readIfExists(path.join(home, 'decisions', 'index.md'));
+  ok('deprecated concept stays in its category index.md (링크 보존)',
+    catIndex.includes('/decisions/b-tomb.md'), catIndex);
+  ok('deprecated concept is marked and sorted after the live ones',
+    catIndex.includes('- [deprecated] [묘비 제목]')
+    && catIndex.indexOf('현역 제목') < catIndex.indexOf('묘비 제목'), catIndex);
+  // 카운트의 목적은 "지금 유효한 지식이 몇 개인가"다 — 은퇴는 빠진다(줄 수와 어긋나는 건 의도).
+  ok('gate and root counts exclude deprecated concepts',
+    /\/decisions\/index\.md\) — 1개/.test(readIfExists(path.join(home, 'index.md'))),
+    readIfExists(path.join(home, 'index.md')));
+  ok('a nested deprecated concept is excluded from the parent and root counts',
+    catIndex.includes('concept 0개'), catIndex);
+}
+{
+  // 게이트 축출: 묘비가 점유하던 슬롯이 현역 문서로 교체되는가. 개수가 아니라 **존재/부재**로
+  // 고정한다 — 예산 경계에서 개수는 결정적이지 않다.
+  // 시드 없는 샌드박스를 쓴다 — 훅 안의 ensureBootstrap은 runHook이 심는 살아있는 락 때문에
+  // 조기 리턴하므로(R3 가드) 여기서 만든 형상이 그대로 유지된다.
+  const home = sandbox('deprecate-gate');
+  const refs = path.join(home, 'references');
+  fs.mkdirSync(refs, { recursive: true });
+  fs.mkdirSync(okfPaths(home).state, { recursive: true });
+  for (let i = 0; i < 8; i++) {
+    fs.writeFileSync(path.join(refs, `z-live-${i}.md`),
+      `---\ntype: reference\ntitle: 현역 제목 ${i}\ndescription: ${padBytes(120)}\ntimestamp: 2026-07-15\n---\n본문\n`);
+  }
+  for (let i = 0; i < 2; i++) {
+    fs.writeFileSync(path.join(refs, `a-tomb-${i}.md`),
+      `---\ntype: reference\ntitle: 묘비 제목 ${i}\ndescription: ${padBytes(120)}\ntimestamp: 2026-07-15\n---\n# 리다이렉트\n`);
+  }
+  writeConfig(home, { inject_max_bytes: 2000 });
+  regenerateIndex(home);
+  const before = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  for (let i = 0; i < 2; i++) {
+    const p = path.join(refs, `a-tomb-${i}.md`);
+    fs.writeFileSync(p, setFrontmatterStatus(readIfExists(p), 'deprecated'));
+  }
+  regenerateIndex(home);
+  const after = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  ok('deprecated concept is not injected into the session gate',
+    before.includes('묘비 제목 0') && !after.includes('묘비 제목'),
+    `${Buffer.byteLength(before)} -> ${Buffer.byteLength(after)}`);
+  ok('the live concept it used to crowd out is injected instead',
+    after.includes('현역 제목') && Buffer.byteLength(after, 'utf8') <= 2000,
+    `${Buffer.byteLength(after)}`);
+  // index.md의 링크 집합은 100% 동일해야 한다 — 순서와 접두만 변한다.
+  const links = (t) => [...t.matchAll(/\]\((\/[^)]+)\)/g)].map((m) => m[1]).sort().join(',');
+  ok('은퇴 concept의 index.md 줄 소실 0건', links(readIfExists(path.join(refs, 'index.md'))).includes('/references/a-tomb-0.md'));
+}
+{
+  // 위 블록만으로는 게이트 필터가 discriminating하지 않다: 은퇴 줄이 index 꼬리로 밀리면
+  // 예산이 알아서 잘라버려 필터를 지워도 통과한다. **전량이 예산에 들어가는** 번들에서
+  // 은퇴 줄이 여전히 빠지는지, 그리고 heading의 N/M 카운트가 현역 기준인지를 따로 고정한다.
+  const home = sandbox('deprecate-gate-roomy');
+  const d = path.join(home, 'decisions');
+  fs.mkdirSync(d, { recursive: true });
+  fs.mkdirSync(okfPaths(home).state, { recursive: true });
+  const write = (name, title, extra = '') => fs.writeFileSync(path.join(d, name),
+    `---\ntype: decision\n${extra}title: ${title}\ndescription: 짧은 설명\ntimestamp: 2026-07-15\n---\n본문\n`);
+  write('a.md', '현역 하나');
+  write('b.md', '현역 둘');
+  write('c.md', '은퇴한 것', 'status: deprecated\n');
+  regenerateIndex(home);
+  const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  ok('a deprecated concept is skipped even when the whole category fits the budget',
+    ctx.includes('현역 하나') && ctx.includes('현역 둘') && !ctx.includes('은퇴한 것'), ctx);
+  // .filter(Boolean)만 쓰면 은퇴 줄이 concept로 세어져 N/M 카운트까지 거짓이 된다.
+  ok('the category heading counts live concepts only',
+    ctx.includes('decisions (결정) — 2개') && !ctx.includes('— 3개'),
+    ctx.split('\n').filter((l) => l.startsWith('## decisions')).join(''));
+}
+{
+  // §11 관용: 미지 status는 거부가 아니라 stable로 흡수된다. 7형태 정규화.
+  const shapes = [['deprecated', 'deprecated'], ['Deprecated', 'deprecated'], ['  DEPRECATED  ', 'deprecated'],
+    ['retired', 'stable'], ['archived', 'stable'], [undefined, 'stable'], [3, 'stable']];
+  const results = shapes.map(([v, want]) => conceptStatus(v === undefined ? {} : { status: v }) === want);
+  ok('status 7형태가 정규화된다', results.every(Boolean), JSON.stringify(shapes.map(([v]) => conceptStatus({ status: v }))));
+  ok('an unknown status value is treated as active, not rejected',
+    conceptStatus({ status: 'retired' }) === 'stable' && conceptStatus({ status: null }) === 'stable');
+}
+{
+  // setFrontmatterStatus는 쓰기 전용이고 바이트 수술이다.
+  const base = '---\ntype: decision\ntitle: t\ndescription: d\n---\n본문\n';
+  const crlf = base.replace(/\n/g, '\r\n');
+  const stampedCrlf = setFrontmatterStatus(crlf, 'deprecated');
+  ok('setFrontmatterStatus: CRLF 파일에서 개행이 섞이지 않는다',
+    !/[^\r]\n/.test(stampedCrlf) && stampedCrlf.includes('status: deprecated'), JSON.stringify(stampedCrlf));
+  ok('setFrontmatterStatus: type 줄이 없는 frontmatter에서 삽입 위치가 결정적이다',
+    setFrontmatterStatus('---\ntitle: t\n---\n본문\n', 'deprecated') === '---\ntitle: t\nstatus: deprecated\n---\n본문\n',
+    JSON.stringify(setFrontmatterStatus('---\ntitle: t\n---\n본문\n', 'deprecated')));
+  const once = setFrontmatterStatus(base, 'deprecated');
+  ok('setFrontmatterStatus: 같은 값으로 두 번 호출하면 바이트가 동일하다',
+    setFrontmatterStatus(once, 'deprecated') === once);
+  // 프론트매터 앞 빈 줄은 lint E1 대상이므로 호출자가 거부해야 정상이다.
+  ok('setFrontmatterStatus: 프론트매터 앞에 빈 줄이 있으면 null을 반환한다',
+    setFrontmatterStatus('\n---\ntype: decision\n---\n본문\n', 'deprecated') === null);
+}
+{
+  const home = bootstrapped('deprecate-cmd');
+  const target = path.join(home, 'decisions', 'retire-me.md');
+  fs.writeFileSync(target,
+    '---\ntype: decision\ntitle: 은퇴 대상\ndescription: d\ntimestamp: 2026-07-15\n---\n본문\n');
+  fs.writeFileSync(path.join(home, 'decisions', 'referrer.md'),
+    '---\ntype: decision\ntitle: 참조자\ndescription: d\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(home);
+  git(['add', '-A'], home, { stdio: 'ignore' });
+  git(['commit', '-m', 'test: seed'], home, { stdio: 'ignore' });
+  const before = Number(git(['rev-list', '--count', 'HEAD'], home).trim());
+
+  const r1 = runDeprecate(home, ['decisions/retire-me.md']);
+  ok('okf-deprecate sets status in place and leaves the file where it is',
+    r1.status === 0 && fs.existsSync(target) && readIfExists(target).includes('status: deprecated'),
+    `exit=${r1.status} ${r1.stderr}`);
+  ok('okf-deprecate commits its own change and leaves the tree clean',
+    Number(git(['rev-list', '--count', 'HEAD'], home).trim()) === before + 1
+    && git(['status', '--porcelain'], home).trim() === ''
+    && runLint(home).errors.length === 0, formatReport(runLint(home)));
+  // 현재 설계대로면 index.md/log.md 제외가 없을 때 2건이 찍힌다 — 그 오탐의 회귀 가드다.
+  ok('okf-deprecate reports zero residual references right after a deprecation',
+    r1.stdout.includes('잔존 참조 0건'), r1.stdout);
+
+  const afterOne = Number(git(['rev-list', '--count', 'HEAD'], home).trim());
+  const r2 = runDeprecate(home, ['decisions/retire-me.md']);
+  ok('okf-deprecate is idempotent',
+    r2.status === 0 && Number(git(['rev-list', '--count', 'HEAD'], home).trim()) === afterOne, r2.stdout);
+
+  const r3 = runDeprecate(home, ['decisions/retire-me.md', '--restore']);
+  regenerateIndex(home);
+  ok('--restore returns the concept to the gate',
+    r3.status === 0 && !readIfExists(target).includes('status: deprecated')
+    && readIfExists(path.join(home, 'decisions', 'index.md')).includes('- [은퇴 대상]'), r3.stdout);
+  // 이 스크립트는 stdout/stderr 전용이라는 프라이버시 계약.
+  ok('--restore leaves _remove_candidate, raw and .okf/logs untouched',
+    listRemoveCandidate(home).length === 0 && listRaw(home).length === 0
+    && (fs.existsSync(okfPaths(home).logs) ? fs.readdirSync(okfPaths(home).logs).length === 0 : true));
+
+  const seed = path.join(home, 'references', 'okf-format.md');
+  ok('okf-deprecate refuses an okf_seed file', runDeprecate(home, ['references/okf-format.md']).status === 4);
+  ok('okf-deprecate refuses reserved and out-of-bundle targets',
+    runDeprecate(home, ['log.md']).status === 4 && runDeprecate(home, ['../escape.md']).status === 4
+    && fs.existsSync(seed));
+}
+{
+  // 살아있는 락에서는 아무것도 바꾸지 않고 물러난다 — **남의 락을 지우지 않는다**.
+  const home = bootstrapped('deprecate-locked');
+  const target = path.join(home, 'decisions', 'x.md');
+  fs.writeFileSync(target, '---\ntype: decision\ntitle: x\ndescription: d\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(home);
+  git(['add', '-A'], home, { stdio: 'ignore' });
+  git(['commit', '-m', 'test: seed'], home, { stdio: 'ignore' });
+  const bytes = fs.statSync(target).size;
+  const commits = git(['rev-list', '--count', 'HEAD'], home).trim();
+  fs.writeFileSync(okfPaths(home).lock,
+    JSON.stringify({ pid: process.pid, startedEpochMs: Date.now(), holder: 'batch', token: 'held' }));
+  const r = runDeprecate(home, ['decisions/x.md']);
+  ok('okf-deprecate backs off while a live batch lock is held',
+    r.status === 2 && fs.statSync(target).size === bytes
+    && git(['rev-list', '--count', 'HEAD'], home).trim() === commits
+    && fs.existsSync(okfPaths(home).lock), `exit=${r.status}`);
+  fs.rmSync(okfPaths(home).lock, { force: true });
+}
+{
+  // 죽은 PID 락 + 미커밋 크래시 잔여물 → 커밋이 아니라 rollback이다(배치와 같은 정책).
+  const home = bootstrapped('deprecate-crash');
+  fs.writeFileSync(path.join(home, 'decisions', 'y.md'),
+    '---\ntype: decision\ntitle: y\ndescription: d\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(home);
+  git(['add', '-A'], home, { stdio: 'ignore' });
+  git(['commit', '-m', 'test: seed'], home, { stdio: 'ignore' });
+  const commits = Number(git(['rev-list', '--count', 'HEAD'], home).trim());
+  const deadPid = Number(execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))']).toString().trim());
+  fs.writeFileSync(okfPaths(home).lock, JSON.stringify({ pid: deadPid, startedEpochMs: Date.now() - 1000 }));
+  const remnant = path.join(home, 'decisions', 'half.md');
+  fs.writeFileSync(remnant, '반쯤 반영된 분석기 산출물\n');
+  const r = runDeprecate(home, ['decisions/y.md']);
+  ok('okf-deprecate rolls back a crash remnant instead of committing it',
+    r.status === 0 && !fs.existsSync(remnant)
+    && Number(git(['rev-list', '--count', 'HEAD'], home).trim()) === commits + 1,
+    `exit=${r.status} ${r.stderr}`);
+}
+{
+  // 드라이버가 청크당 은퇴 상한 3건을 시행한다(프롬프트 규범만으로는 못 지킨다).
+  const home = setupBatchSandbox('deprecate-spree');
+  for (let i = 0; i < 4; i++) {
+    fs.writeFileSync(path.join(home, 'decisions', `retire-${i}.md`),
+      `---\ntype: decision\ntitle: 은퇴 후보 ${i}\ndescription: d\ntimestamp: 2026-07-15\n---\n본문\n`);
+  }
+  regenerateIndex(home);
+  git(['add', '-A'], home, { stdio: 'ignore' });
+  git(['commit', '-m', 'test: seed retire candidates'], home, { stdio: 'ignore' });
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'deprecate-spree' } });
+  const applied = [0, 1, 2, 3].filter((i) => readIfExists(path.join(home, 'decisions', `retire-${i}.md`)).includes('status: deprecated'));
+  const logs = fs.readdirSync(okfPaths(home).logs)
+    .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8')).join('\n');
+  ok('batch caps deprecations at 3 per chunk',
+    applied.length === 3 && /은퇴 상한/.test(logs) && lastBatch(home).lastResult === 'ok',
+    `applied=${applied.join(',')} result=${lastBatch(home).lastResult}`);
+}
+{
+  // 단일 은퇴 경로도 실제 사고 하나에 1:1로 대응시킨다(이 픽스처 파일의 관례).
+  const home = setupBatchSandbox('deprecate-one');
+  fs.writeFileSync(path.join(home, 'decisions', 'retire-0.md'),
+    '---\ntype: decision\ntitle: 단일 은퇴 후보\ndescription: d\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(home);
+  git(['add', '-A'], home, { stdio: 'ignore' });
+  git(['commit', '-m', 'test: seed'], home, { stdio: 'ignore' });
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'deprecate-one' } });
+  ok('batch applies a single deprecation below the cap',
+    readIfExists(path.join(home, 'decisions', 'retire-0.md')).includes('status: deprecated')
+    && lastBatch(home).lastResult === 'ok');
+  // stale-lock 회차가 이미 커밋된 은퇴를 되살리면 안 된다.
+  const deadPid = Number(execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))']).toString().trim());
+  fs.writeFileSync(okfPaths(home).lock, JSON.stringify({ pid: deadPid, startedEpochMs: Date.now() - 1000 }));
+  fs.copyFileSync(SAMPLE_TRANSCRIPT, path.join(okfPaths(home).raw, '2026-07-22--proj--aabbccdd-1111-2222-3333-444444444444.jsonl'));
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'noop-marker' } });
+  ok('a stale-lock batch does not resurrect a committed deprecation',
+    readIfExists(path.join(home, 'decisions', 'retire-0.md')).includes('status: deprecated'));
+}
+{
+  const cmd = readIfExists(path.join(PLUGIN_ROOT, 'commands', 'okf-deprecate.md'));
+  const readmeHits = ['README.md', 'README.ko.md', 'README.de.md', 'README.es.md', 'README.fr.md',
+    'README.ja.md', 'README.pt-BR.md', 'README.zh-CN.md']
+    .filter((f) => readIfExists(path.join(PLUGIN_ROOT, f)).includes('okf-deprecate'));
+  ok('okf-deprecate is documented on all eight READMEs and in USAGE',
+    readmeHits.length === 8 && readIfExists(path.join(PLUGIN_ROOT, 'docs', 'USAGE.md')).includes('okf-deprecate'),
+    readmeHits.join(','));
+  // 다른 커맨드 언급에는 반드시 okf: 네임스페이스를 붙인다.
+  ok('okf-deprecate command references other commands with the okf: namespace',
+    !/(^|[^:\w])\/okf-(status|config|batch|index)/.test(cmd) && cmd.includes('/okf:okf-status'));
+  // 상태줄은 concept frontmatter를 읽지 않는다 — 매 턴 렌더 경로다.
+  const statuslineSrc = readIfExists(path.join(PLUGIN_ROOT, 'bin', 'statusline.mjs'));
+  ok('statusline never parses concept frontmatter',
+    !statuslineSrc.includes('frontmatter') && !/readFileSync\([^)]*\.md/.test(statuslineSrc));
 }
 
 // ---------------------------------------------------------------------------

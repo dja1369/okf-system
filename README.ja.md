@@ -47,6 +47,7 @@ Session 1              ~1時間の idle           Background batch           Ses
 | `/okf:okf-index` | category、concept title、最近の変更 |
 | `/okf:okf-visualize` | OKF concept と concept 間リンクのみ可視化 |
 | `/okf:okf-analysis [path]` | repository と関連する OKF concept を一緒に分析 |
+| `/okf:okf-deprecate <対象>` | concept を退役させる — ファイルとリンクは残り、gate への注入だけが止まる |
 
 `visualize` は repository を走査しません。`analysis` は存在しない path や file path を拒否し、truncated 状態、除外した無関係 concept、言語別 file/declaration/internal edge 数を報告します。どちらも外部 CDN や実行時 network request のない自己完結 HTML です。
 

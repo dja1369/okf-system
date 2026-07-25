@@ -63,13 +63,34 @@ timestamp: 2026-07-15
 스모크 테스트 본문.
 `
   );
+  appendLogLine('- fake-claude 테스트 반영');
+}
+
+// 이 스텁의 cwd가 곧 워크스페이스 루트이므로 **상대 경로**를 쓴다(import는 fs뿐이라
+// path.join은 ReferenceError다).
+function appendLogLine(line) {
   const today = new Date().toISOString().slice(0, 10);
   const log = fs.existsSync('log.md') ? fs.readFileSync('log.md', 'utf8') : '# Log\n';
   if (log.includes(`## ${today}`)) {
-    fs.writeFileSync('log.md', log.replace(`## ${today}`, `## ${today}\n- fake-claude 테스트 반영`));
+    fs.writeFileSync('log.md', log.replace(`## ${today}`, `## ${today}\n${line}`));
   } else {
-    fs.writeFileSync('log.md', log.replace('# Log\n', `# Log\n\n## ${today}\n- fake-claude 테스트 반영\n`));
+    fs.writeFileSync('log.md', log.replace('# Log\n', `# Log\n\n## ${today}\n${line}\n`));
   }
+}
+
+// 분석기가 기존 concept를 은퇴시키는 상황을 재현한다(status 줄만 붙인다).
+function deprecateExisting(names) {
+  let done = 0;
+  for (const name of names) {
+    const p = `decisions/${name}`;
+    if (!fs.existsSync(p)) continue;
+    const text = fs.readFileSync(p, 'utf8');
+    if (text.includes('status: deprecated')) continue;
+    fs.writeFileSync(p, text.replace(/^(type:[^\r\n]*)/m, '$1\nstatus: deprecated'));
+    done++;
+  }
+  appendLogLine(`- ${done}건 은퇴 처리`);
+  return done;
 }
 
 function writeBadConcept() {
@@ -200,6 +221,13 @@ switch (mode) {
     }
     break;
   }
+  case 'deprecate-one':
+    deprecateExisting(['retire-0.md']);
+    break;
+  case 'deprecate-spree':
+    // 4건 시도 → 드라이버의 청크당 상한 3건이 시행돼야 한다.
+    deprecateExisting(['retire-0.md', 'retire-1.md', 'retire-2.md', 'retire-3.md']);
+    break;
   case 'stamp-repair':
     writeConcept();
     writeBadConcept(); // lint E1 -> repair 1회를 유발한다

@@ -51,6 +51,7 @@ Plugin commands always require the `okf:` namespace.
 | `/okf:okf-index` | List categories, concept titles, and recent changes |
 | `/okf:okf-visualize` | Render OKF concepts and concept-to-concept links only |
 | `/okf:okf-analysis [path]` | Analyze a repository and show code plus only related OKF concepts |
+| `/okf:okf-deprecate <target>` | Retire a concept — the file and its links stay, the gate stops injecting it |
 
 `visualize` answers “what does my bundle know?” and never scans a repository. `analysis` answers “what is this codebase, given what my bundle knows?” It rejects missing/non-directory paths, reports truncated analysis and hidden unrelated concepts, and exposes language-level file/declaration/internal-edge counts.
 

@@ -25,12 +25,39 @@ repository: inspect, diff, back up, or remove it with normal tools.
 /okf:okf-index               list categories, concepts, and recent changes
 /okf:okf-visualize           render bundle concepts only
 /okf:okf-analysis [path]     analyze code and show only related bundle concepts
+/okf:okf-deprecate <target>  retire a concept: keeps the file and its links, drops it from the gate
 ```
 
 `okf-visualize` never scans a repository. `okf-analysis` defaults to the current directory,
 rejects missing or non-directory paths, and reports language file/declaration/internal-edge
 coverage, truncation, oversized files, and hidden unrelated concepts. Its HTML output is
 self-contained and makes no CDN or runtime network requests.
+
+## Retiring a concept
+
+When a concept stops being useful — superseded, or noise that turned out not to be knowledge —
+retire it instead of deleting it:
+
+```
+/okf:okf-deprecate troubleshooting/obsolete-thing.md
+```
+
+This sets `status: deprecated` in the file's frontmatter. **Nothing is deleted or moved.** The
+concept keeps its line in the category `index.md` (prefixed with `[deprecated]` and sorted to the
+end) so existing links still resolve, and the session gate stops injecting it — the budget it was
+occupying goes back to live concepts. `--restore` puts it back.
+
+The statusline's concept count includes retired files, while `index.md` counts only live ones.
+If the two numbers differ, that difference is your retired count.
+
+If your bundle predates this release it may hold tombstone concepts — `# 리다이렉트` stubs left
+behind by an earlier cleanup, which still occupy gate slots. There is no automatic migration for
+them (a hardcoded file list would be dead weight in every other user's bundle). Retire them by
+hand once:
+
+```
+/okf:okf-deprecate <the tombstone's path>
+```
 
 ## Optional statusline
 
