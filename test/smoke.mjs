@@ -1855,9 +1855,22 @@ function runDeprecate(okfHome, args) {
   // 반대로 prev에 이미 있던 남의 generated는 존중한다(비대칭이 계약이다).
   ok('a generated that was already in the bundle is still respected',
     stampGenerated(`---\ntype: decision\ntitle: t\ndescription: d\ngenerated:\n  by: human:ducksu\n  at: "2020-01-01T00:00:00Z"\n---\n본문\n`, STAMP, { trustExisting: true }) === null);
-  // 드라이버가 그 판정을 prev의 **내용**으로 하는지 소스로 확인한다(prev !== null이면 구멍이 남는다).
-  ok('the driver decides trustExisting from what prev contained, not merely that prev existed',
-    readIfExists(path.join(PLUGIN_ROOT, 'bin', 'batch.mjs')).includes('prevHadGenerated'));
+  // **드라이버가 그 판정을 어떻게 내리는지를 행동으로 단언한다.** 위 단언들은 trustExisting을
+  // 인자로 넘기므로 판정 로직 자체는 하나도 검증하지 않는다 — 그건 codex 1차가 지적한
+  // 자기충족 단언과 정확히 같은 부류이고, 실제로 `prev !== null`로 되돌려도 전부 통과했다.
+  // 배치를 돌려 **기존 파일에 위조가 들어오는 경로**를 밟는다.
+  const home = setupBatchSandbox('stamp-forge-existing');
+  fs.writeFileSync(path.join(home, 'decisions', 'preexisting.md'),
+    '---\ntype: decision\ntitle: 기존 개념\ndescription: 원래 내용\ntimestamp: 2026-07-15\n---\n원래 본문.\n');
+  regenerateIndex(home);
+  git(['add', '-A'], home, { stdio: 'ignore' });
+  git(['commit', '-m', 'test: preexisting concept without generated'], home, { stdio: 'ignore' });
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'stamp-forge-existing' } });
+  const edited = readIfExists(path.join(home, 'decisions', 'preexisting.md'));
+  ok('an analyzer that forges human provenance while EDITING an existing file is overwritten',
+    edited.includes('  by: "okf-system/claude-sonnet-5"') && !edited.includes('human:ducksu')
+    && edited.includes('고쳐진 본문'),
+    edited);
 }
 {
   // MINOR-2: bullet에 사용자가 통제하는 파일 경로가 들어가는데 문자열 replace는 $&를 치환
@@ -1970,10 +1983,14 @@ function runDeprecate(okfHome, args) {
     `archived=${listRemoveCandidate(home).length} calls=${readIfExists(counter).split('\n').filter(Boolean).length}`);
 }
 {
-  // 회차당 유료 호출 상한. R3의 청크 독립 트랜잭션은 **실제 지출을 올린다** — 예전엔 첫 청크가
-  // 실패하면 회차가 중단돼 2회에서 멈췄지만, 이제는 모든 청크를 시도하므로 전 청크가 repair를
-  // 유발하는 최악의 회차가 상한을 다 쓴다. 상한 자체(청크당 2회)는 불변이어야 한다.
-  // 기본 설정 실측: digest 예산 600KB / 청크 300KB → 청크 2개 → 회차 4회.
+  // 유료 호출 상한. R3의 청크 독립 트랜잭션은 **실제 지출을 올린다** — 예전엔 첫 청크가
+  // 실패하면 회차가 중단돼 2회에서 멈췄지만, 이제는 모든 청크를 시도한다.
+  //
+  // **참인 불변식은 "청크당 ingest 1 + repair 1"이지 "회차당 4회"가 아니다.** 계획서 §4-8의
+  // '회차당 4회'는 근거 없는 수치였고, 내가 처음 쓴 이 테스트도 픽스처의 digest 크기 분포를
+  // 고정했을 뿐 상한을 고정하지 못했다(독립 검증이 digest 120KB×5로 청크 3개 → 6회를 재현했다).
+  // 청크 수는 batch_max_digest_kb / CHUNK_BYTE_LIMIT 분포에 따라 정해지므로, 여기서는
+  // **청크 수와 무관하게 청크당 정확히 2회**임을 청크 수를 바꿔가며 고정한다.
   const home = setupBatchSandbox('paid-call-ceiling');
   fs.copyFileSync(SAMPLE_TRANSCRIPT,
     path.join(okfPaths(home).raw, '2026-07-23--proj--fedcba98-1111-2222-3333-444444444444.jsonl'));
@@ -1986,6 +2003,24 @@ function runDeprecate(okfHome, args) {
   ok('a round never spends more than two paid calls per chunk (ingest + one repair)',
     calls.length === 4 && calls.filter((c) => c === 'repair').length === 2,
     `calls=${calls.join(',')}`);
+
+  // 청크 수를 3으로 늘려도 비율이 유지되는지 — 이것이 진짜 불변식이다.
+  const home3 = setupBatchSandbox('paid-call-ceiling-3');
+  for (let i = 0; i < 2; i++) {
+    fs.copyFileSync(SAMPLE_TRANSCRIPT,
+      path.join(okfPaths(home3).raw, `2026-07-2${i}--proj--dd${i}00000-1111-2222-3333-444444444444.jsonl`));
+  }
+  const counter3 = path.join(sandbox('paid-call-counter-3'), 'calls.txt');
+  runBatch({
+    okfHome: home3,
+    env: { FAKE_CLAUDE_MODE: 'badoutput', OKF_CHUNK_BYTE_LIMIT: '1', FAKE_CLAUDE_CALL_COUNTER: counter3 },
+  });
+  const calls3 = readIfExists(counter3).split('\n').filter(Boolean);
+  const chunks3 = lastBatch(home3).chunks?.total;
+  ok('the two-calls-per-chunk ratio holds as the chunk count changes',
+    chunks3 === 3 && calls3.length === chunks3 * 2
+    && calls3.filter((c) => c === 'repair').length === chunks3,
+    `chunks=${chunks3} calls=${calls3.length}`);
 }
 
 // ---------------------------------------------------------------------------

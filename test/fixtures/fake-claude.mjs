@@ -232,6 +232,14 @@ switch (mode) {
     writeConcept();
     writeBadConcept(); // lint E1 -> repair 1회를 유발한다
     break;
+  case 'stamp-forge-existing':
+    // **기존** concept를 고치면서 human 출처를 새로 써넣는다. 신규 파일 경로(stamp-forge)와
+    // 달리 prev가 존재하므로, 드라이버가 trustExisting을 `prev !== null`로 판정하면
+    // "번들에 있던 남의 generated"로 둔갑해 스탬프를 회피하고 위조값이 그대로 커밋된다.
+    fs.mkdirSync('decisions', { recursive: true });
+    fs.writeFileSync('decisions/preexisting.md',
+      '---\ntype: decision\ntitle: 기존 개념\ndescription: 분석기가 이번에 고쳤다\ntimestamp: 2026-07-15\ngenerated:\n  by: human:ducksu\n  at: 2020-01-01\n---\n고쳐진 본문.\n');
+    break;
   case 'stamp-forge':
     // 분석기가 사람 출처를 날조해 코드 스탬핑을 회피하려는 시도.
     fs.mkdirSync('decisions', { recursive: true });
