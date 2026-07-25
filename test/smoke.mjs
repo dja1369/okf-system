@@ -5052,11 +5052,52 @@ if (process.platform !== 'win32') {
   // **게이트는 파일을 문맥 밖으로 주입하므로 상대경로를 되살려야 한다.** 포맷은 스펙을 따르고
   // 해석은 소비자가 한다 — 이 분업이 깨지면 모델은 `api.md`가 어느 디렉토리인지 모른다.
   const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  // 게이트는 index **사슬을 끝까지 따라간다** — 하위 index 링크를 싣는 대신 그 아래 concept를
+  // 끌어올린다. 게이트는 한 번에 주입되고 끝이라, 링크만 실으면 모델은 무엇이 있는지 못 본다.
   ok('게이트 주입 시에는 번들 루트 기준 절대경로로 되살린다(게이트 규칙 2의 약속)',
-    ctx.includes('](/projects/manna/index.md)'), ctx.split('\n').filter((l) => l.startsWith('* ')).join('|'));
+    ctx.includes('](/projects/manna/api.md)'), ctx.split('\n').filter((l) => l.startsWith('* ')).join('|'));
+  ok('게이트는 하위 index 링크가 아니라 그 아래 concept를 싣는다',
+    !ctx.includes('](/projects/manna/index.md)'), ctx.split('\n').filter((l) => l.startsWith('* ')).join('|'));
   ok('게이트에 상대경로 링크가 그대로 새지 않는다',
     !/\]\((?!\/)[^)\s]+\)/.test(ctx.slice(ctx.indexOf('--- index.md ---'))),
     ctx.split('\n').filter((l) => l.startsWith('* ')).join('|'));
+}
+
+{
+  // **중첩이 게이트 예산을 먹으면 안 된다.** 사용자가 요청한 중첩 도메인 구조를 넣자마자
+  // 실측한 결과, 게이트가 index 사슬을 1단계만 읽던 때는 같은 지식 25개에서 주입 concept 줄이
+  // **28 → 4개(-86%)**로 무너졌다 — 자리를 전부 하위 도메인 링크가 먹었다.
+  // 그건 라이브 벤치가 반증한 방향(강제 Read 왕복 = 토큰 91% 낭비, 새 사실 0개)으로 되돌아가는
+  // 것이라, 게이트가 사슬을 펼치도록 고쳤다(수정 후 -4%).
+  // 이 단언은 그 회귀를 고정한다: **같은 지식을 중첩해도 주입 concept 수가 크게 줄지 않는다.**
+  const pad = (n) => (n <= 0 ? '' : '가'.repeat(Math.floor(n / 3)) + 'x'.repeat(n % 3));
+  const CATS = [['decisions', 'decision'], ['patterns', 'pattern'], ['references', 'reference']];
+  const build = (label, nested) => {
+    const home = bootstrapped(`gate-nesting-${label}`);
+    let made = 0;
+    for (const [dir, type] of CATS) {
+      for (let i = 0; i < 5; i++, made++) {
+        const sub = nested ? path.join(dir, `주제${i % 3}`) : dir;
+        fs.mkdirSync(path.join(home, sub), { recursive: true });
+        fs.writeFileSync(path.join(home, sub, `c${String(made).padStart(2, '0')}.md`),
+          `---\ntype: ${type}\ntitle: 개념 ${made}\ndescription: ${pad(150)}\ntimestamp: 2026-07-15\n---\n본문\n`);
+      }
+    }
+    regenerateIndex(home);
+    const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+    const bullets = ctx.split('\n').filter((l) => l.startsWith('* '));
+    return {
+      concepts: bullets.filter((l) => !/\]\([^)]*index\.md\)/.test(l)).length,
+      domainLinks: bullets.filter((l) => /\]\([^)]*index\.md\)/.test(l)).length,
+    };
+  };
+  const flat = build('flat', false);
+  const nested = build('nested', true);
+  ok('중첩해도 게이트에 하위 도메인 링크가 실리지 않는다(사슬을 펼친다)',
+    nested.domainLinks === 0, JSON.stringify(nested));
+  ok('중첩이 게이트의 concept 수를 무너뜨리지 않는다(같은 지식, 같은 예산)',
+    nested.concepts >= flat.concepts - 2 && nested.concepts > 0,
+    `평면=${flat.concepts} 중첩=${nested.concepts}`);
 }
 
 // ---------------------------------------------------------------------------

@@ -26,6 +26,37 @@ function absolutizeLinks(line, dir) {
   ));
 }
 
+// **게이트는 index 사슬을 끝까지 따라간다.** 파일 쪽 점진적 공개(상위 index → 하위 index)는
+// 파일을 제자리에서 탐색하는 소비자에게 맞지만, 게이트는 **한 번에 주입되고 그걸로 끝**이다 —
+// 하위 index 링크만 실으면 모델은 "무엇이 있는지"를 못 본다.
+// 실측(concept 25개, 같은 예산): 게이트가 1단계만 읽을 때 주입되는 concept 줄이
+// **28 → 4개(-86%)**로 무너졌다. 나머지 자리는 전부 하위 도메인 링크가 먹었다.
+// 그건 라이브 벤치가 반증한 방향(강제 Read 왕복 = 토큰 91% 낭비, 새 사실 0개)으로 되돌아가는 것이다.
+// 그래서 여기서 사슬을 펼치고, 무엇을 실을지는 예산(buildInjectedIndex)이 정한다.
+const MAX_INDEX_DEPTH = 8; // 순환은 불가능하지만(파일시스템 트리) 폭주 방지용 안전판
+
+function collectConceptLines(okfHome, dir, depth = 0) {
+  if (depth >= MAX_INDEX_DEPTH) return [];
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(okfHome, dir, 'index.md'), 'utf8');
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const line of raw.trim().split('\n')) {
+    if (!line.startsWith('* ') || line.startsWith(DEPRECATED_PREFIX)) continue;
+    const target = /\]\(([^)\s]+)\)/.exec(line)?.[1];
+    if (target && target.endsWith('/index.md')) {
+      // 하위 도메인 — 그 자리에 링크를 싣지 않고 **그 아래 concept를 끌어올린다.**
+      out.push(...collectConceptLines(okfHome, `${dir}/${target.slice(0, -'/index.md'.length)}`, depth + 1));
+      continue;
+    }
+    out.push(absolutizeLinks(line, dir));
+  }
+  return out;
+}
+
 function readCategoryLines(okfHome, dir) {
   try {
     return fs.readFileSync(path.join(okfHome, dir, 'index.md'), 'utf8').trim().split('\n')
@@ -50,7 +81,7 @@ function readCategoryLines(okfHome, dir) {
 // 없는 것을 없다고 단정하지 않는다.
 function buildInjectedIndex(okfHome, budgetLines, budgetBytes) {
   const cats = discoverConceptDirs(okfHome).map((dir) => ({
-    dir, label: DIR_DESCRIPTIONS[dir] || dir, lines: readCategoryLines(okfHome, dir), taken: 0,
+    dir, label: DIR_DESCRIPTIONS[dir] || dir, lines: collectConceptLines(okfHome, dir), taken: 0,
   }));
   if (!cats.length) return '';
 
