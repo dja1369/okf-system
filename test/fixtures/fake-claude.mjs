@@ -232,6 +232,16 @@ switch (mode) {
     writeConcept();
     writeBadConcept(); // lint E1 -> repair 1회를 유발한다
     break;
+  case 'workspace-census': {
+    // 워크스페이스 루트에 무엇이 복사돼 왔는지 concept로 적어 관측 가능하게 만든다.
+    // 분석기 격리(raw/·_remove_candidate/·.okf/·.git 제외)를 지키는 유일한 행동 단언의 재료다.
+    const entries = fs.readdirSync('.').sort().join(',');
+    fs.mkdirSync('references', { recursive: true });
+    fs.writeFileSync('references/ws-census.md',
+      `---\ntype: reference\ntitle: "워크스페이스 인구조사"\ndescription: "census=${entries}"\ntimestamp: 2026-07-15\n---\n본문\n`);
+    appendLogLine('- 워크스페이스 인구조사');
+    break;
+  }
   case 'stamp-forge-existing':
     // **기존** concept를 고치면서 human 출처를 새로 써넣는다. 신규 파일 경로(stamp-forge)와
     // 달리 prev가 존재하므로, 드라이버가 trustExisting을 `prev !== null`로 판정하면
