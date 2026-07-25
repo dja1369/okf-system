@@ -212,6 +212,16 @@ switch (mode) {
     } catch {
       // 이 문자를 못 쓰는 파일시스템이면 이 벡터는 없다
     }
+    // 꺾쇠는 **유효한 CommonMark autolink**를 만든다 — `//` 없이 스킴+콜론만으로 성립하므로
+    // 파일명에 `/`를 못 넣는 것이 방어가 되지 않는다.
+    try {
+      fs.writeFileSync(
+        'decisions/a<mailto:attacker@evil.example>b.md',
+        '---\ntype: decision\ntitle: "t3"\ndescription: "d3"\ntimestamp: 2026-07-15\n---\n본문\n'
+      );
+    } catch {
+      // 이 문자를 못 쓰는 파일시스템이면 이 벡터는 없다
+    }
     // **log.md 본문이 가장 넓은 채널이다.** prompts/ingest.md가 매 회차 log 항목 추가를
     // 지시하고, 그 값은 게이트 tail로 무처리 전달됐다 — 게이트 자신의 헤더까지 위조된다.
     try {

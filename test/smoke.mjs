@@ -2348,8 +2348,16 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   // 게이트의 가시 텍스트가 되며 그 concept 자신의 링크도 사라진다.
   // 라이브 실측으로 부작용 0을 확인하고 경계에서 거부한다(concept 이름 38개 중 이 문자 0건).
   ok('워크스페이스 반영: 마크다운 구조 문자를 담은 파일명도 차단된다',
-    fs.readdirSync(path.join(home, 'decisions')).every((n) => !/[[\]()]/.test(n)),
+    fs.readdirSync(path.join(home, 'decisions')).every((n) => !/[[\]()<>]/.test(n)),
     JSON.stringify(fs.readdirSync(path.join(home, 'decisions'))));
+  // 꺾쇠는 유효한 autolink를 만든다(`//` 없이 스킴+콜론만으로 성립) — 파일명에 `/`를 못 넣는
+  // 것이 방어가 되지 않는다. 게이트에 링크가 실제로 안 남는지까지 본다.
+  {
+    const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+    ok('파일명 경유 autolink가 게이트에 실리지 않는다',
+      !/<[a-zA-Z][a-zA-Z0-9+.-]*:[^<>\s]*>/.test(ctx),
+      (ctx.match(/<[a-zA-Z][a-zA-Z0-9+.-]*:[^<>\s]*>/g) || []).join('|'));
+  }
   // 리뷰 확정(minor): 규칙서와 시드는 프롬프트 규범('수정 금지')만으로는 못 지킨다 — 드라이버가 시행해야 한다.
   ok('워크스페이스 반영: SCHEMA.md 변조 시도는 차단된다', !fs.readFileSync(path.join(home, 'SCHEMA.md'), 'utf8').includes('변조된 규칙'));
   const seedPath = path.join(home, 'preferences', 'okf-bundle-rules.md');
