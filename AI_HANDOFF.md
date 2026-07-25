@@ -258,6 +258,19 @@ commit, push, PR, destructive Git 명령은 실행하지 않았다.
   확장 mutant 7종 중 5종이 잡히고 2종은 **정상적으로 생존한다**: (a) 백틱·`"`·`|`·`#`·`*`·`{}`는
   concept 파일명에 현실적 용례가 없어 보존할 값이 없고, (b) `LOG_CONTROL_RE`는 `split('\n')`
   뒤에 줄 단위로 적용되므로 집합에 개행을 넣어도 아무 일도 안 하는 죽은 확장이다.
+- **같은 결함 구조가 세 곳 더 있었다**(독립 검증이 "정의는 하나, 적용 지점은 사람이 기억"
+  패턴을 다른 술어에서 찾아달라는 요청에 답해 grep으로 훑었다):
+  (a) `lib/bench-audit.mjs`의 `conceptFiles`가 `SCAN_EXCLUDE_DIRS`를 **깊이 무관하게** 걸렀다 —
+  `lint.mjs`·`index-gen.mjs`가 가진 루트 한정 가드가 없어 `projects/raw/x.md`가 감사에서 통째로
+  빠진다. 이 파일은 **recall@cap 측정 경로**이고 릴리스 3의 착수 조건이 그 측정치라, 왜곡되면
+  잘못된 판단을 게이트한다.
+  (b) 예약 basename이 **세 곳에 다른 내용으로** 흩어져 있었다: `bin/deprecate.mjs`(README 없음),
+  `lib/bench-audit.mjs` 인라인 배열(README 있음), `lib/index-gen.mjs`(`index.md`만).
+  `lib/paths.mjs`의 `NON_CONCEPT_BASENAMES` 하나로 합쳤다.
+  (c) 그 결과 **중첩 `log.md`가 concept로 열거**되고 있었다 — lint는 그것을 log 파일로 안다
+  (S3b가 비루트 log.md에 W8을 켰다). 같은 파일을 두 모듈이 다르게 봤다.
+  (독립 검증이 "루트 log.md가 concept로 나열되나"로 물었는데, `regenerateDir`는 항상 `[dir]`
+  이상으로 호출되어 루트가 오지 않는다 — 실제 결함은 **중첩** 쪽이었다.)
 - **무커버 방어 5종에 테스트**: `OKF_BATCH=1` 재귀 가드(§7-1 2차), sweep의 분석기 자기세션
   cwd 가드, `actorFor` 화이트리스트(모델 이름이 `generated.by`로 번들에 영구히 남는다),
   워크스페이스 `rmSync`(지우지 않으면 **전사 사본**이 /tmp에 회차마다 쌓인다), 전 세션
@@ -402,7 +415,7 @@ $0.216→$0.258→**$0.447**로 오히려 순증가했고, zero_base_chain도 $0
 
 ```sh
 node test/smoke.mjs
-# 640 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
+# 644 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
 
 node test/bench.mjs
 # SessionStart 57.4ms (56.7-58.2), SessionEnd 43.4ms (41.8-43.9)

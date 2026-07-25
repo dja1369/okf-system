@@ -4867,6 +4867,43 @@ if (process.platform !== 'win32') {
     readIfExists(path.join(dotHome, 'decisions', 'index.md')).slice(0, 200));
 }
 
+{
+  // --- 예약 basename·스캔 깊이의 단일 원천 ---
+  //
+  // 이 라운드의 결함 구조는 "정의는 한 곳으로 모았는데 **적용 지점 목록은 사람이 기억한다**"였다.
+  // 독립 검증이 같은 패턴을 세 곳 더 찾았다: `bench-audit`가 예약 디렉토리를 깊이 무관하게
+  // 걸렀고(lint·index-gen은 루트 한정), 예약 basename이 세 곳에 다른 내용으로 흩어져 있었다.
+  const home = bootstrapped('reserved-basenames');
+  fs.mkdirSync(path.join(home, 'projects', 'raw'), { recursive: true });
+  const CONCEPT = '---\ntype: project\ntitle: "중첩 concept"\ndescription: "d"\ntimestamp: 2026-07-15\n---\n본문\n';
+  fs.writeFileSync(path.join(home, 'projects', 'raw', 'nested.md'), CONCEPT);
+  // 중첩 log.md는 **lint가 log 파일로 안다**(S3b가 비루트 log.md에 W8을 켰다). index-gen이
+  // 그것을 concept로 열거하면 같은 파일을 두 모듈이 다르게 본다.
+  fs.writeFileSync(path.join(home, 'projects', 'log.md'), '## 2026-07-25\n- 하위 도메인 변경 이력\n');
+  regenerateIndex(home);
+  const projIndex = readIfExists(path.join(home, 'projects', 'index.md'));
+  ok('중첩 log.md는 concept로 열거되지 않는다(lint는 log로 안다)',
+    !projIndex.includes('/projects/log.md'), projIndex.slice(0, 200));
+  ok('중첩 예약어 디렉토리의 concept는 그대로 열거된다(과잉 차단 가드)',
+    readIfExists(path.join(home, 'projects', 'raw', 'index.md')).includes('/projects/raw/nested.md'));
+
+  // bench-audit은 recall@cap 측정 경로다 — 릴리스 3의 착수 조건이 그 측정치라 왜곡되면
+  // 잘못된 판단을 게이트한다. 루트가 아닌 `raw/`는 정상 스캔 대상이어야 한다.
+  // 사실 패턴을 담은 concept를 중첩 위치에 두고, 감사가 그 파일을 찾는지로 판정한다.
+  fs.writeFileSync(path.join(home, 'projects', 'raw', 'fact.md'),
+    '---\ntype: project\ntitle: "중첩 사실"\ndescription: "d"\ntimestamp: 2026-07-15\n---\nDB는 sqlite를 쓴다.\n');
+  // 같은 사실을 예약 파일에도 넣는다 — 그것까지 세면 concept 수가 부풀어 측정이 왜곡된다.
+  fs.writeFileSync(path.join(home, 'projects', 'log.md'),
+    '## 2026-07-25\n- 하위 도메인 변경 이력. sqlite 관련 정리.\n');
+  const audited = auditBenchmarkBundle(home, '');
+  const dbFact = audited.facts?.architecture_database ?? {};
+  const matched = JSON.stringify(dbFact.matchingFiles ?? []);
+  ok('bench-audit도 중첩 예약어 디렉토리를 스캔한다(lint·index-gen과 같은 깊이 규칙)',
+    matched.includes('fact.md'), matched);
+  ok('bench-audit이 예약 파일을 concept로 세지 않는다',
+    !matched.includes('log.md'), matched);
+}
+
 // ---------------------------------------------------------------------------
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

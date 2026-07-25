@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveOkfHome, okfPaths, SCAN_EXCLUDE_DIRS, UNSAFE_NAME_RE } from '../lib/paths.mjs';
+import { resolveOkfHome, okfPaths, SCAN_EXCLUDE_DIRS, UNSAFE_NAME_RE, NON_CONCEPT_BASENAMES } from '../lib/paths.mjs';
 import { acquireLock, releaseLock } from '../lib/lock.mjs';
 import { isDirty, commitAll, rollback } from '../lib/git.mjs';
 import { runLint, formatReport, walkMdFiles } from '../lib/lint.mjs';
@@ -16,7 +16,7 @@ import { conceptStatus } from '../lib/trust.mjs';
 // 4=대상 부적합, 5=사후 lint 실패(롤백함).
 // **출력은 stdout/stderr 전용이다** — .okf/logs/에 쓰지 않는다.
 
-const RESERVED_BASENAMES = new Set(['index.md', 'log.md', 'SCHEMA.md']);
+// 예약 basename은 lib/paths.mjs가 단일 원천이다 — 세 곳에 흩어져 있던 것을 합쳤다.
 
 function fail(code, message) {
   console.error(message);
@@ -83,7 +83,7 @@ function main() {
   if (relNorm.split('/').some((seg) => UNSAFE_NAME_RE.test(seg))) {
     return fail(4, '이름에 제어문자가 있는 경로는 대상이 아니다');
   }
-  if (RESERVED_BASENAMES.has(path.basename(abs))) return fail(4, '예약 파일(index.md/log.md/SCHEMA.md)은 대상이 아니다');
+  if (NON_CONCEPT_BASENAMES.has(path.basename(abs))) return fail(4, '예약 파일(index.md/log.md/SCHEMA.md/README.md)은 대상이 아니다');
   if (relNorm.split('/').some((seg) => SCAN_EXCLUDE_DIRS.has(seg))) return fail(4, '운영 디렉토리 안의 파일은 대상이 아니다');
   let original;
   try {
@@ -135,7 +135,7 @@ function main() {
     const residual = [];
     for (const other of walkMdFiles(okfHome)) {
       if (other === relNorm) continue;
-      if (RESERVED_BASENAMES.has(path.basename(other))) continue;
+      if (NON_CONCEPT_BASENAMES.has(path.basename(other))) continue;
       try {
         if (fs.readFileSync(path.join(okfHome, other), 'utf8').includes(`/${relNorm}`)) residual.push(other);
       } catch {
