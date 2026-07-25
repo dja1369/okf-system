@@ -62,8 +62,12 @@ import('\${CLAUDE_PLUGIN_ROOT}/lib/viz.mjs').then(async (viz) => {
 - 코드 분석 출처(`codeSource`): `understand-anything (...)`이면 이미 있는 UA 그래프 재사용,
   `okf static analysis`면 이 플러그인의 정적 분석기가 만든 것
 - `truncated`가 true면 **파일 수 상한에 걸려 그래프가 일부만 담겼다는 사실을 반드시 알려라**
-- `languageStats`의 언어별 파일 수 / 선언 수 / 내부 edge 수. 파일은 있지만 선언과 edge가 모두
-  0이면 구조 추출 공백일 수 있으므로 분석 성공이라고 표현하지 마라.
+- `languageStats`의 언어별 파일 수(`files`) / **실제 분석한 파일 수**(`analyzedFiles`) / 선언 수 /
+  내부 edge 수. 파일은 있지만 선언과 edge가 모두 0이면 구조 추출 공백일 수 있으므로 분석
+  성공이라고 표현하지 마라.
+- **`analyzedFiles`가 `files`보다 작으면 그 차이는 구조를 추출하지 않은 파일이다.** 추출기가 없는
+  언어(shell/markdown/json/yaml/toml 등)를 "선언 0개"라고 보고하지 마라 — 그건 측정 결과가
+  아니라 **측정하지 않았다**는 뜻이다. 두 수가 다르면 그 차이를 명시적으로 밝혀라.
 - `primaryLanguages`와 실제 대상의 주 언어가 어긋나면 vendored/generated/보조 언어가 구조를
   왜곡했는지 확인하고 그 한계를 보고하라.
 - 그래프의 "Start here"(아무도 import하지 않는 진입점)와 "Most depended on"(다들 import하는 허브)이

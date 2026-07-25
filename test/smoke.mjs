@@ -789,12 +789,193 @@ console.log('\n=== digest.mjs ===');
   const tinyContent = fs.readFileSync(tinyOut, 'utf8');
   ok('truncation at tiny cap never emits a UTF-8 replacement char (boundary-safe cut)', !tinyContent.includes('�'));
 
+  // --- R4: 조용한 손실을 시끄럽게 ---
+  // 예전엔 한 줄만 깨져도 break + **원본 전체 폴백**이었다 — 필터를 하나도 거치지 않은 원문
+  // 앞부분이 그대로 LLM 입력이 됐다(tool_result 원문 유출 경로).
+  const mixedDir = sandbox('digest-mixed');
+  const mixedInput = path.join(mixedDir, 'mixed.jsonl');
+  const SECRET = 'AWS_SECRET_ACCESS_KEY=abcd1234';
+  fs.writeFileSync(mixedInput, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: '첫 번째 정상 턴' } }),
+    `{ 깨진 줄 ${SECRET} `,
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: '두 번째 정상 턴' } }),
+  ].join('\n') + '\n');
+  const mixedOut = path.join(mixedDir, 'mixed.digest.md');
+  const mixedStats = digestFile(mixedInput, mixedOut, 150);
+  const mixedContent = fs.readFileSync(mixedOut, 'utf8');
+  ok('digest keeps parseable turns on both sides of a corrupt line',
+    mixedContent.includes('첫 번째 정상 턴') && mixedContent.includes('두 번째 정상 턴'));
+  ok('corrupt jsonl no longer leaks raw transcript content into the digest',
+    !mixedContent.includes(SECRET) && !mixedContent.includes('toolUseResult'));
+  ok('digest reports how many lines it skipped',
+    mixedStats.skippedLines === 1 && mixedStats.parsedLines === 2 && mixedStats.keptTurns === 2,
+    JSON.stringify(mixedStats));
+
+  // 동시 기록 중인 transcript의 잘린 마지막 줄도 같은 경로로 안전하게 처리된다.
+  const truncInput = path.join(mixedDir, 'truncated.jsonl');
+  fs.writeFileSync(truncInput, `${JSON.stringify({ type: 'user', message: { role: 'user', content: '완결된 턴' } })}\n{"type":"assis`);
+  const truncOut = path.join(mixedDir, 'truncated.digest.md');
+  const truncStats = digestFile(truncInput, truncOut, 150);
+  ok('digest survives a truncated final line (concurrent transcript write)',
+    fs.readFileSync(truncOut, 'utf8').includes('완결된 턴') && truncStats.skippedLines === 1);
+
   const badDir = sandbox('digest-badinput');
   const badInput = path.join(badDir, 'broken.jsonl');
   fs.writeFileSync(badInput, 'not valid jsonl at all {{{\n');
   const badOut = path.join(badDir, 'broken.digest.md');
-  digestFile(badInput, badOut, 10);
-  ok('malformed jsonl falls back without throwing', fs.existsSync(badOut));
+  const badStats = digestFile(badInput, badOut, 10);
+  ok('fully unparseable jsonl yields an empty digest instead of a raw dump',
+    fs.existsSync(badOut) && fs.readFileSync(badOut, 'utf8').length === 0
+    && badStats.parsedLines === 0 && badStats.skippedLines === 1);
+
+  // 절단 픽스처 주의: digestFile(SAMPLE_TRANSCRIPT, out, 150) 결과는 566바이트라 capKb=1에서도
+  // truncateHeadTail이 원문을 그대로 돌려줘 droppedBytes === 0이 된다 — 반드시 대용량 인라인
+  // 픽스처를 만들어야 절단 경로를 밟는다.
+  const bigDir = sandbox('digest-big');
+  const bigInput = path.join(bigDir, 'big.jsonl');
+  fs.writeFileSync(bigInput, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: '앞'.repeat(2000) } }),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: '뒤'.repeat(2000) } }),
+  ].join('\n') + '\n');
+  const bigStats = digestFile(bigInput, path.join(bigDir, 'big.digest.md'), 1);
+  ok('digestFile reports the cap-truncation loss ratio',
+    bigStats.droppedBytes > 0 && bigStats.droppedPct >= 1 && bigStats.droppedPct <= 99,
+    JSON.stringify(bigStats));
+}
+{
+  // W5/W6 — 조용히 잘린 프론트매터 값과 예산을 혼자 먹는 description.
+  const home = bootstrapped('lint-fidelity');
+  const d = path.join(home, 'decisions');
+  fs.mkdirSync(d, { recursive: true });
+  // 라이브 3건과 같은 절단 패턴: 따옴표 없는 값 안의 ` #`
+  fs.writeFileSync(path.join(d, 'cut-title.md'),
+    '---\ntype: decision\ntitle: 배포는 canary로 한다 # 그리고 오류율 0.5% 초과 시 롤백한다\ndescription: 설명\ntimestamp: 2026-07-15\n---\n본문\n');
+  fs.writeFileSync(path.join(d, 'cut-desc.md'),
+    '---\ntype: decision\ntitle: 제목\ndescription: 타임아웃은 30초다 # 게이트웨이가 30초에 끊기 때문이다\ntimestamp: 2026-07-15\n---\n본문\n');
+  fs.writeFileSync(path.join(d, 'cut-both.md'),
+    '---\ntype: decision\ntitle: 두 값 모두 잘린다 # 뒤가 사라진다\ndescription: 이쪽도 잘린다 # 여기도 사라진다\ntimestamp: 2026-07-15\n---\n본문\n');
+  // 오탐 대조군 5종
+  fs.writeFileSync(path.join(d, 'safe-quoted.md'),
+    '---\ntype: decision\ntitle: "따옴표 안의 값 # 은 안전하다"\ndescription: "설명 # 도 안전하다"\ntimestamp: 2026-07-15\n---\n본문\n');
+  fs.writeFileSync(path.join(d, 'safe-flow.md'),
+    '---\ntype: decision\ntitle: 제목\ndescription: 설명\ntags: [a, b]\nresource: https://x/y#frag\ntimestamp: 2026-07-15 # 주석\n---\n본문\n');
+  fs.writeFileSync(path.join(d, 'safe-block.md'),
+    '---\ntype: decision\ntitle: 제목\ndescription: |\n  블록 스칼라 본문 # 은 주석이 아니다\ntimestamp: 2026-07-15\n---\n본문\n');
+  const longDesc = '가'.repeat(977);
+  fs.writeFileSync(path.join(d, 'long-desc.md'),
+    `---\ntype: decision\ntitle: 긴 설명\ndescription: ${longDesc}\ntimestamp: 2026-07-15\n---\n본문\n`);
+  fs.writeFileSync(path.join(d, 'exactly-500.md'),
+    `---\ntype: decision\ntitle: 경계값\ndescription: ${'나'.repeat(500)}\ntimestamp: 2026-07-15\n---\n본문\n`);
+  const report = runLint(home);
+  const w5 = report.warnings.filter((w) => w.rule === 'W5');
+  const w6 = report.warnings.filter((w) => w.rule === 'W6');
+  ok('lint W5 flags a frontmatter value silently cut at an unquoted " #"',
+    w5.length === 4 && report.errors.length === 0, `${w5.map((w) => `${w.file}:${w.message}`).join(' | ')} / errors=${formatReport(report)}`);
+  ok('lint W5 stays silent when the same value is double-quoted',
+    !w5.some((w) => w.file.includes('safe-quoted')));
+  ok('lint W5 does not fire on flow sequences or block scalars',
+    !w5.some((w) => w.file.includes('safe-flow') || w.file.includes('safe-block')),
+    w5.map((w) => w.file).join(','));
+  // 메시지에 값 원문이 실리면 formatReport -> repair 프롬프트로 그대로 새 나간다.
+  ok('lint W5 never echoes the truncated value into the report',
+    !formatReport(report).includes('그리고 오류율') && !formatReport(report).includes('게이트웨이가 30초'));
+  ok('lint W6 flags a description longer than 500 chars but not one at exactly 500',
+    w6.length === 1 && w6[0].file === 'decisions/long-desc.md', w6.map((w) => w.file).join(','));
+
+  // repair 경계: W6은 '쪼개라'는 규범인데 repair는 새 파일을 만들 수 없다.
+  const w6Only = { errors: [], warnings: [w6[0]] };
+  ok('W6 text never instructs the repair pass to create files',
+    !/쪼개|split|새 파일/.test(formatReport(w6Only)), formatReport(w6Only));
+
+  // 하류 금지: index 생성기는 절대 자르지 않는다.
+  regenerateIndex(home);
+  ok('index generation never truncates a long description',
+    readIfExists(path.join(d, 'index.md')).includes(longDesc));
+}
+{
+  // 기존 사용자 무회귀: 시드 번들에서 W5/W6 0건, 그리고 W5/W6를 든 번들도 배치가 돈다.
+  const seedHome = bootstrapped('w5-seed');
+  const seedReport = runLint(seedHome);
+  ok('seeded bundle produces no W5/W6 warnings',
+    seedReport.warnings.filter((w) => w.rule === 'W5' || w.rule === 'W6').length === 0,
+    formatReport(seedReport));
+
+  const home = setupBatchSandbox('w5-warn');
+  fs.writeFileSync(path.join(home, 'decisions', 'cut.md'),
+    `---\ntype: decision\ntitle: 잘리는 제목 # 뒤가 사라진다\ndescription: ${'다'.repeat(600)}\ntimestamp: 2026-07-15\n---\n본문\n`);
+  const promptDump = path.join(sandbox('w6-repair-dump'), 'prompt.txt');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'badoutput', FAKE_CLAUDE_DUMP_PROMPT_TO: promptDump } });
+  ok('a bundle carrying W5/W6 warnings still runs a batch', lastBatch(home).lastResult === 'ok',
+    lastBatch(home).lastResult);
+  // repair 프롬프트 덤프는 마지막 호출(=repair)의 내용이다.
+  const dumped = readIfExists(promptDump);
+  ok('bloat warnings never reach the repair prompt',
+    dumped.includes('lint 오류 리포트') && !dumped.includes('W6') && dumped.includes('W5'),
+    dumped.slice(0, 200));
+}
+{
+  // digest 손실이 로그로 드러나는가. lib/config.mjs의 검증기 하한이 1이라 1KB 미만은
+  // 설정으로 내려갈 수 없다 — raw 세션 파일 쪽을 크게 만들어야 절단 경로를 밟는다.
+  const home = setupBatchSandbox('digest-loss-log');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, batch_digest_cap_kb: 1 });
+  const rawFile = path.join(okfPaths(home).raw, fs.readdirSync(okfPaths(home).raw)[0]);
+  fs.writeFileSync(rawFile, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: '앞'.repeat(2000) } }),
+    '{ 깨진 줄 ',
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: '뒤'.repeat(2000) } }),
+  ].join('\n') + '\n');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  const lossLogs = fs.readdirSync(okfPaths(home).logs)
+    .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8')).join('\n');
+  ok('batch logs the digest cap truncation ratio',
+    /digest 캡 절단 .*: \d{1,2}% 손실/.test(lossLogs),
+    lossLogs.split('\n').filter((l) => l.includes('캡 절단')).join(' | '));
+  ok('batch logs how many transcript lines a digest skipped',
+    /digest 파싱 실패 줄 1개 스킵/.test(lossLogs));
+  ok('digest loss logs carry no full paths', !lossLogs.includes(okfPaths(home).raw));
+}
+if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+  // 읽을 수 없는 digest 입력이 매 회차 같은 실패를 반복하지 않는다(영구 재시도 루프 차단).
+  // 예전 코드는 여기서 **원본 텍스트 폴백**으로 갔다 — 필터를 하나도 안 거친 원문이 LLM 입력이 됐다.
+  // (root는 퍼미션을 무시하므로 이 시나리오를 재현할 수 없다.)
+  const home = setupBatchSandbox('digest-unreadable');
+  const rawFile = path.join(okfPaths(home).raw, fs.readdirSync(okfPaths(home).raw)[0]);
+  fs.chmodSync(rawFile, 0o000);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  ok('a digest that cannot be read is quarantined instead of retried forever',
+    listRaw(home).length === 0 && listRemoveCandidate(home).length === 1,
+    `raw=${listRaw(home).length} archived=${listRemoveCandidate(home).length}`);
+  const quarantineLogs = fs.readdirSync(okfPaths(home).logs)
+    .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8')).join('\n');
+  ok('the quarantine path never falls back to raw transcript text',
+    /_remove_candidate로 격리/.test(quarantineLogs) && !quarantineLogs.includes('원본 텍스트 폴백'));
+}
+{
+  // 추출기 없는 언어를 "선언 0개"라고 보고하면, 측정하지 않은 것을 측정 사실처럼 말하는 것이다.
+  const root = sandbox('analyze-no-extractor');
+  fs.writeFileSync(path.join(root, 'run.sh'), '#!/bin/sh\necho hello\n');
+  fs.writeFileSync(path.join(root, 'README.md'), '# 문서\n\n본문\n');
+  fs.writeFileSync(path.join(root, 'app.js'), "import x from './x.js';\nexport function main() {}\n");
+  const graph = analyzeProject(root);
+  const byLang = graph.languageStats;
+  const shellNode = graph.nodes.find((n) => n.filePath === 'run.sh');
+  ok('analyze: a language without extractors is not described as "0 declarations"',
+    !/선언 0개/.test(shellNode.summary) && /추출기 없음/.test(shellNode.summary) && !/0줄/.test(shellNode.summary),
+    shellNode.summary);
+  ok('analyze: no-extractor files count as files but never as analyzed files',
+    byLang.shell?.files === 1 && byLang.shell.analyzedFiles === 0
+    && byLang.markdown?.files === 1 && byLang.markdown.analyzedFiles === 0,
+    JSON.stringify(byLang));
+  ok('analyze: a language with extractors still counts as analyzed',
+    byLang.javascript?.files === 1 && byLang.javascript.analyzedFiles === 1, JSON.stringify(byLang.javascript));
+}
+{
+  ok('ingest prompt requires quoted title/description with a numeric description cap',
+    /큰따옴표/.test(readIfExists(path.join(PLUGIN_ROOT, 'prompts', 'ingest.md')))
+    && readIfExists(path.join(PLUGIN_ROOT, 'prompts', 'ingest.md')).includes('500자'));
+  ok('okf-analysis tells the reporter not to call unmeasured files "0 declarations"',
+    readIfExists(path.join(PLUGIN_ROOT, 'commands', 'okf-analysis.md')).includes('analyzedFiles')
+    && readIfExists(path.join(PLUGIN_ROOT, 'commands', 'okf-analysis.md')).includes('측정하지 않았다'));
 }
 
 // ---------------------------------------------------------------------------

@@ -529,16 +529,31 @@ function generateDigests(okfHome, stagingDir, files, capKb) {
     const input = path.join(stagingDir, f);
     const output = path.join(stagingDir, f.replace(/\.jsonl$/, '.digest.md'));
     try {
-      digestFile(input, output, capKb);
+      const stats = digestFile(input, output, capKb);
       digestPaths.push({ source: input, digest: output });
+      // 세 가지 조용한 손실을 드러낸다. 로그에는 **basename과 정수만** — 전체 경로 금지.
+      if (stats.droppedBytes > 0) {
+        log(okfHome, `digest 캡 절단 ${path.basename(input)}: ${stats.droppedPct}% 손실 (${Math.round(stats.beforeBytes / 1024)}KB → ${Math.round(stats.afterBytes / 1024)}KB, 캡 ${capKb}KB)`);
+      }
+      if (stats.skippedLines > 0) {
+        log(okfHome, `digest 파싱 실패 줄 ${stats.skippedLines}개 스킵 ${path.basename(input)} (전체 ${stats.totalLines}줄)`);
+      }
+      if (stats.totalLines > 0 && stats.parsedLines === 0) {
+        log(okfHome, `경고: ${path.basename(input)}의 모든 줄이 파싱 실패 — digest가 비었다. transcript 스키마 변경을 의심하라(원본은 _remove_candidate에 30일 보관)`);
+      }
     } catch (err) {
-      log(okfHome, `digest 생성 실패 ${path.basename(input)}: code=${safeErrorCode(err)} — 원본 텍스트 폴백`);
+      // 원본 텍스트 폴백을 제거했다: 같은 유출 성질이고(.slice()가 **문자 수** 기준이라
+      // 한국어에서 캡의 최대 3배가 나갔다) 필터를 하나도 거치지 않는다.
+      // 다만 그냥 스킵하면 staging에 남아 다음 회차 recoverStagingLeftovers가 raw로 되돌리고
+      // 같은 실패를 영원히 반복한다. 빈-digest 경로와 같은 관용구로 격리한다 —
+      // 원본은 30일 보관되므로 유실이 아니다.
+      log(okfHome, `digest 생성 실패 ${path.basename(input)}: code=${safeErrorCode(err)} — _remove_candidate로 격리(30일 보관)`);
       try {
-        const text = fs.readFileSync(input, 'utf8').slice(0, capKb * 1024);
-        fs.writeFileSync(output, text);
-        digestPaths.push({ source: input, digest: output });
+        const quarantineDir = path.join(okfPaths(okfHome).removeCandidate, localDateString());
+        fs.mkdirSync(quarantineDir, { recursive: true });
+        fs.renameSync(input, path.join(quarantineDir, path.basename(input)));
       } catch (err2) {
-        log(okfHome, `digest 폴백도 실패 ${path.basename(input)}: code=${safeErrorCode(err2)} — 이 세션은 이번 배치에서 스킵`);
+        log(okfHome, `격리 실패: code=${safeErrorCode(err2)}`);
       }
     }
   }
@@ -829,7 +844,12 @@ function buildIngestPrompt(pluginRootDir, chunk) {
 
 function buildRepairPrompt(pluginRootDir, report) {
   const template = fs.readFileSync(path.join(pluginRootDir, 'prompts', 'repair.md'), 'utf8');
-  const reportText = formatReport(report);
+  // W6은 '분할' 규범인데 repair는 새 파일을 만들 수 없다(prompts/repair.md). 리포트에 실으면
+  // 헛돌거나 파일을 임의로 잘라낸다 — applyAnalyzerWorkspace에는 신규 파일 차단이 없어
+  // 그 절단이 실제로 번들에 반영된다. W5(따옴표 씌우기)와 W1/W3는 repair 범위 안이라 그대로
+  // 싣는다. 규칙 코드 레지스트리는 lib/lint.mjs 상단.
+  const filtered = { errors: report.errors, warnings: report.warnings.filter((w) => w.rule !== 'W6') };
+  const reportText = formatReport(filtered);
   return template.replace('{{LINT_REPORT}}', () => reportText);
 }
 
