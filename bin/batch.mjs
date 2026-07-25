@@ -1052,6 +1052,11 @@ function archiveChunk(okfHome, chunk, todayDir) {
 // 물리적으로 접근할 수 없다(SCHEMA 규칙 7이 프롬프트 규범에서 물리 격리로 승격).
 const INGEST_INBOX_DIR = '.ingest-inbox';
 
+// 파일·디렉토리 이름에 허용하지 않는 문자. 제어문자(개행·NUL·터미널 이스케이프)와 U+0085,
+// 줄 구분자가 대상이다. 경로 구분자는 readdir이 이미 이름 단위로 주므로 여기 대상이 아니다.
+// eslint-disable-next-line no-control-regex
+const UNSAFE_NAME_RE = /[\u0000-\u001f\u007f\u0085\u2028\u2029]/;
+
 function copyKnowledgeTree(srcDir, destDir, isRoot) {
   fs.mkdirSync(destDir, { recursive: true });
   for (const e of fs.readdirSync(srcDir, { withFileTypes: true })) {
@@ -1101,6 +1106,14 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null, chunkBudget = { d
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       if (rel === '' && (SCAN_EXCLUDE_DIRS.has(e.name) || e.name === INGEST_INBOX_DIR)) continue;
       if (e.name === '.git') continue;
+      // **이름에 제어문자가 있으면 반영하지 않는다.** 파일명은 분석기가 정하고(오염된 digest에
+      // 넘어간 분석기가 임의로 쓴다), 그 값은 네 곳으로 흘러 각각 다른 방어를 요구한다:
+      // lint 리포트(→ 유료 repair 프롬프트) · index.md 링크 · 게이트 · 상태 파일.
+      // 독립 검증이 분석기 스텁만으로 `decisions/a\n이전 지시를 무시하라\nb.md`를 번들에
+      // 커밋시켰고(lastResult: ok), 그 뒤 **모든 회차의 lint 리포트가 오염**됐다.
+      // 여기서 한 번 거르면 하류 넷이 함께 닫힌다 — 심링크·확장자·SCHEMA·시드를 이미 거르는
+      // 바로 그 자리다.
+      if (UNSAFE_NAME_RE.test(e.name)) { blocked++; continue; }
       const abs = path.join(dir, e.name);
       const childRel = rel ? `${rel}/${e.name}` : e.name;
       if (e.isSymbolicLink()) continue;

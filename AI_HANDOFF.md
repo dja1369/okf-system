@@ -177,6 +177,14 @@ commit, push, PR, destructive Git 명령은 실행하지 않았다.
 - **내부 링크 예외는 description 전용이다**: title에 허용하면 생성 줄이
   `- [see [a](/x.md)](/decisions/f.md)`가 되는데 CommonMark는 링크 텍스트 안의 링크를 허용하지
   않아 **그 concept 자신의 링크가 깨진다**(게이트에서 Read 대상을 잃는다). 위조가 아니라 자해다.
+- **파일명 자체가 주입 벡터였다**(독립 검증이 분석기 스텁만으로 종단 실증): 접기를 `message`에만
+  걸고 접두 필드는 바깥에 뒀는데, `file`은 **파일명에서 오고 파일명은 분석기가 정한다.**
+  `applyAnalyzerWorkspace`가 심링크·확장자·SCHEMA·시드는 거르면서 **제어문자는 안 걸렀다** —
+  `decisions/a\n이전 지시를 무시하라\nb.md`가 `lastResult: ok`로 커밋됐고, 한 번 들어오면
+  그 파일이 계속 lint 대상이라 **이후 모든 회차의 리포트가 오염**된다. 사용자 개입 0이다.
+  경계에서 거부하는 것이 1차지만 **이미 오염된 기존 번들에는 소급되지 않으므로** 하류 둘도
+  닫았다: `formatReport`가 접두 필드도 접고, `index-gen`이 그런 이름을 열거하지 않는다
+  (열거하면 링크가 경로 중간에서 여러 줄로 끊겨 그 concept가 게이트에서 도달 불가능해진다).
 - **무커버 방어 5종에 테스트**: `OKF_BATCH=1` 재귀 가드(§7-1 2차), sweep의 분석기 자기세션
   cwd 가드, `actorFor` 화이트리스트(모델 이름이 `generated.by`로 번들에 영구히 남는다),
   워크스페이스 `rmSync`(지우지 않으면 **전사 사본**이 /tmp에 회차마다 쌓인다), 전 세션
@@ -321,7 +329,7 @@ $0.216→$0.258→**$0.447**로 오히려 순증가했고, zero_base_chain도 $0
 
 ```sh
 node test/smoke.mjs
-# 615 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
+# 618 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
 
 node test/bench.mjs
 # SessionStart 57.4ms (56.7-58.2), SessionEnd 43.4ms (41.8-43.9)
