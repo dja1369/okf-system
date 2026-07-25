@@ -1677,6 +1677,24 @@ function runDeprecate(okfHome, args) {
   ok('statusline never parses concept frontmatter',
     !statuslineSrc.includes('frontmatter') && !/readFileSync\([^)]*\.md/.test(statuslineSrc));
 }
+{
+  // 회차당 유료 호출 상한. R3의 청크 독립 트랜잭션은 **실제 지출을 올린다** — 예전엔 첫 청크가
+  // 실패하면 회차가 중단돼 2회에서 멈췄지만, 이제는 모든 청크를 시도하므로 전 청크가 repair를
+  // 유발하는 최악의 회차가 상한을 다 쓴다. 상한 자체(청크당 2회)는 불변이어야 한다.
+  // 기본 설정 실측: digest 예산 600KB / 청크 300KB → 청크 2개 → 회차 4회.
+  const home = setupBatchSandbox('paid-call-ceiling');
+  fs.copyFileSync(SAMPLE_TRANSCRIPT,
+    path.join(okfPaths(home).raw, '2026-07-23--proj--fedcba98-1111-2222-3333-444444444444.jsonl'));
+  const counter = path.join(sandbox('paid-call-counter'), 'calls.txt');
+  runBatch({
+    okfHome: home,
+    env: { FAKE_CLAUDE_MODE: 'badoutput', OKF_CHUNK_BYTE_LIMIT: '1', FAKE_CLAUDE_CALL_COUNTER: counter },
+  });
+  const calls = readIfExists(counter).split('\n').filter(Boolean);
+  ok('a round never spends more than two paid calls per chunk (ingest + one repair)',
+    calls.length === 4 && calls.filter((c) => c === 'repair').length === 2,
+    `calls=${calls.join(',')}`);
+}
 
 // ---------------------------------------------------------------------------
 console.log('\n=== batch.mjs (subprocess, fake claude) ===');
