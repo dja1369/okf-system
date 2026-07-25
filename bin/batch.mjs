@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { resolveOkfHome, okfPaths, pluginRoot, claudeConfigDir, isOkfTestSessionDir, sanitizeForFilename, SCAN_EXCLUDE_DIRS, BUILTIN_EXCLUDE_CWD } from '../lib/paths.mjs';
+import { resolveOkfHome, okfPaths, pluginRoot, claudeConfigDir, isOkfTestSessionDir, sanitizeForFilename, SCAN_EXCLUDE_DIRS, BUILTIN_EXCLUDE_CWD, UNSAFE_NAME_RE } from '../lib/paths.mjs';
 import { readInstalledAt } from '../lib/installed-at.mjs';
 import { readConfig, DEFAULT_CONFIG } from '../lib/config.mjs';
 import { git, isDirty, commitAll, rollback } from '../lib/git.mjs';
@@ -1052,10 +1052,6 @@ function archiveChunk(okfHome, chunk, todayDir) {
 // 물리적으로 접근할 수 없다(SCHEMA 규칙 7이 프롬프트 규범에서 물리 격리로 승격).
 const INGEST_INBOX_DIR = '.ingest-inbox';
 
-// 파일·디렉토리 이름에 허용하지 않는 문자. 제어문자(개행·NUL·터미널 이스케이프)와 U+0085,
-// 줄 구분자가 대상이다. 경로 구분자는 readdir이 이미 이름 단위로 주므로 여기 대상이 아니다.
-// eslint-disable-next-line no-control-regex
-const UNSAFE_NAME_RE = /[\u0000-\u001f\u007f\u0085\u2028\u2029]/;
 
 function copyKnowledgeTree(srcDir, destDir, isRoot) {
   fs.mkdirSync(destDir, { recursive: true });

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveOkfHome, okfPaths, SCAN_EXCLUDE_DIRS } from '../lib/paths.mjs';
+import { resolveOkfHome, okfPaths, SCAN_EXCLUDE_DIRS, UNSAFE_NAME_RE } from '../lib/paths.mjs';
 import { acquireLock, releaseLock } from '../lib/lock.mjs';
 import { isDirty, commitAll, rollback } from '../lib/git.mjs';
 import { runLint, formatReport, walkMdFiles } from '../lib/lint.mjs';
@@ -64,12 +64,25 @@ function main() {
   // 비교만 취약하다.
   const okfHome = path.resolve(resolveOkfHome());
   const paths = okfPaths(okfHome);
-  const abs = path.resolve(okfHome, rel);
+  // **concept ID 형식(`/decisions/foo.md`)도 받는다.** 게이트 규칙 2와 skills/okf-usage가
+  // concept ID를 번들 루트 기준 **절대경로**로 제시하므로, 그것을 그대로 복사해 넘기는 것이
+  // 자연스러운 사용이다. 그런데 `path.resolve(okfHome, '/decisions/foo.md')`는 인자를 진짜
+  // 절대경로로 해석해 `/decisions/foo.md`를 만들고, 아래 경계 검사가 "번들 밖 경로"로 거부한다 —
+  // 문서가 안내한 형식과 게이트가 제시하는 형식이 갈려 있었다.
+  // 앞 슬래시만 벗긴다. 경로 탈출(`../`)은 아래 startsWith 검사가 그대로 막는다.
+  const relInBundle = rel.replace(/^\/+/, '');
+  const abs = path.resolve(okfHome, relInBundle);
   const relNorm = path.relative(okfHome, abs).split(path.sep).join('/');
 
   // 대상 검증 — 경로 탈출, 확장자, 예약 basename, 운영 디렉토리, 시드 보호.
   if (!abs.startsWith(okfHome + path.sep)) return fail(4, '번들 밖 경로는 대상이 아니다');
   if (!abs.endsWith('.md')) return fail(4, '.md 파일만 은퇴시킬 수 있다');
+  // 번들에 쓰는 **두 번째 입구**다. bin/batch.mjs가 경계에서 거르는 술어를 여기도 둔다 —
+  // 경계 도입 전에 들어온 오염 파일을 이 명령으로 은퇴시키면 그 경로가 log.md 항목으로
+  // 기록되고, 그 log가 게이트에 실린다(독립 검증 실증: 주입 문장이 게이트까지 도달했다).
+  if (relNorm.split('/').some((seg) => UNSAFE_NAME_RE.test(seg))) {
+    return fail(4, '이름에 제어문자가 있는 경로는 대상이 아니다');
+  }
   if (RESERVED_BASENAMES.has(path.basename(abs))) return fail(4, '예약 파일(index.md/log.md/SCHEMA.md)은 대상이 아니다');
   if (relNorm.split('/').some((seg) => SCAN_EXCLUDE_DIRS.has(seg))) return fail(4, '운영 디렉토리 안의 파일은 대상이 아니다');
   let original;
