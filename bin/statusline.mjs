@@ -75,6 +75,12 @@ function build() {
       } else if (typeof last.lastRunEpochMs === 'number') {
         parts.push(relTime(last.lastRunEpochMs));
       }
+      // 오늘 지출. 이미 파싱한 JSON의 필드 두 개라 추가 I/O는 0이다. 날짜 비교 규칙은
+      // bin/batch.mjs의 localDateString과 같아야 한다(toLocaleDateString('en-CA')).
+      if (last.spendDate === new Date().toLocaleDateString('en-CA')
+        && Number.isFinite(last.spendTodayUsd) && last.spendTodayUsd > 0) {
+        parts.push(`$${last.spendTodayUsd.toFixed(2)} today`);
+      }
     } catch {
       parts.push('no batch yet');
     }

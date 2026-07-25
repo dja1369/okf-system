@@ -21,6 +21,11 @@ if (process.env.FAKE_CLAUDE_CALL_COUNTER) {
   } catch { /* 텔레메트리가 스텁을 막지 않는다 */ }
 }
 
+// 비용 회귀 테스트를 무과금으로 돌리기 위한 주입 지점. Number('')는 0이므로 빈 문자열은
+// 주입으로 치지 않는다 — 그러면 '비용을 0으로 주입했다'와 '주입하지 않았다'가 구분되지 않는다.
+const injectedCost = Number(process.env.FAKE_CLAUDE_COST_USD);
+const COST_USD = Number.isFinite(injectedCost) && process.env.FAKE_CLAUDE_COST_USD ? injectedCost : 0.001;
+
 function emitResult(subtype = 'success', isError = false, resultText = 'done') {
   process.stdout.write(JSON.stringify({
     type: 'result',
@@ -36,7 +41,7 @@ function emitResult(subtype = 'success', isError = false, resultText = 'done') {
     },
     duration_ms: 250,
     duration_api_ms: 200,
-    total_cost_usd: 0.001,
+    total_cost_usd: COST_USD,
     num_turns: 1,
     modelUsage: {
       'claude-sonnet-5': { inputTokens: 100, outputTokens: 20, costUSD: 0.001 },
@@ -184,6 +189,11 @@ switch (mode) {
     }
     break;
   }
+  case 'badjson':
+    // stdout이 JSON이 아니다 → CLAUDE_INVALID_JSON 경로. 호출은 났고 금액만 모르는 상태다.
+    process.stdout.write('this is not json at all\n');
+    process.exit(0);
+    break;
   case 'blocked-mentions-noop':
     // 리뷰 확정(minor) 재현: 실패 설명문이 NO-OP이라는 단어를 "언급"만 해도 substring 판정은
     // 이를 선언으로 오인해 archive했다 — 선언은 정확히 'NO-OP' 한 줄이어야 한다.

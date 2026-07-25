@@ -315,6 +315,7 @@ Edit `~/.claude/okf/.okf/config.md` or use `/okf:okf-config`. Unknown or invalid
 | `batch_digest_cap_kb` | `150` | Per-session LLM-facing digest cap; raw stays complete |
 | `remove_candidate_ttl_days` | `30` | Retention before processed raw deletion |
 | `inject_max_lines` / `inject_max_bytes` | `120` / `9000` | Inline gate limits below Claude Code’s 10,000-character threshold |
+| `batch_max_usd_per_day` | `0` | Daily LLM spend cap in USD; `0` = unlimited (default). Spend is recorded and shown either way. Best-effort only — the tally lives in `.okf/last-batch.json`. |
 
 ## Removal
 

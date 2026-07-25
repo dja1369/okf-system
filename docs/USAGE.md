@@ -52,6 +52,7 @@ The main controls in `.okf/config.md` are:
 | `capture_exclude_cwd` | `[]` | Directories whose sessions are never collected (matched against each session's cwd) |
 | `sweep_min_idle_minutes` | `60` | Idle time after the last activity before a conversation is collected; `0` collects immediately |
 | `inject_max_lines` / `inject_max_bytes` | `120` / `9000` | Inline gate limits |
+| `batch_max_usd_per_day` | `0` | Daily LLM spend cap in USD; `0` means unlimited (the default). Cost is always recorded and shown regardless. Best-effort only: the running total lives in `.okf/last-batch.json`, so deleting that file restarts the tally at zero, and a SIGKILLed batch never records its spend. |
 
 Files above 512 KiB remain visible in analysis but are marked unanalyzed. Repository analysis
 stops at 2,000 files and reports `truncated: true`. The fallback parser is conservative and

@@ -318,6 +318,7 @@ console.log('\n=== config validation ===');
     claude_bin: 'claude.cmd & calc',
     node_bin: 'node.exe | calc',
     seed_language: 'xx-NOPE',
+    batch_max_usd_per_day: -1,
     unexpected_key: 'must not escape normalization',
   });
   const warnings = [];
@@ -1336,6 +1337,178 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   const statusCommand = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-status.md'), 'utf8');
   ok('상태 커맨드가 lint로 멈춘 배치를 최상단에 보고하도록 지시한다',
     statusCommand.includes('blocked') && statusCommand.includes('맨 첫 줄부터'));
+}
+// --- R2: 비용 가시화 · batch_max_usd_per_day(기본 0 = 무제한) ---
+{
+  // Claude CLI가 --output-format json으로 이미 무료로 돌려주는 값을 runClaude가 손에 쥐고도
+  // 버렸다(T11.1). 라이브 로그 263줄에 cost/usd/token이 0건이었던 이유다.
+  const home = setupBatchSandbox('spend-success');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  const st = lastBatch(home);
+  ok('batch records the round cost in last-batch.json',
+    st.costUsd === 0.001 && st.llmCalls === 1 && st.unpricedCalls === 0, JSON.stringify(st));
+  ok('batch records token usage alongside the dollar cost',
+    st.tokens?.input_tokens === 100 && st.tokens.output_tokens === 20 && st.tokens.cache_read_input_tokens === 25,
+    JSON.stringify(st.tokens));
+  ok('spendTodayUsd is scoped to the local date',
+    st.spendDate === new Date().toLocaleDateString('en-CA') && st.spendTodayUsd === 0.001, `${st.spendDate}`);
+  const endLogs = fs.readdirSync(okfPaths(home).logs)
+    .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8')).join('\n');
+  ok('batch end log reports the round cost as digits only',
+    /비용 \$0\.0010/.test(endLogs) && !endLogs.includes(home), 'log leaked a path');
+}
+{
+  // 지불 후 실패 3경로. 이 셋이 빠지면 "지불한 것은 전부 남는다"가 거짓이 된다
+  // (실측: 35회 중 최소 10회가 지불 후 롤백인데 금액은 어디에도 없었다).
+  const blockedHome = setupBatchSandbox('spend-blocked');
+  runBatch({ okfHome: blockedHome, env: { FAKE_CLAUDE_MODE: 'blocked' } });
+  ok('a run that paid and then rolled back still records the spend',
+    lastBatch(blockedHome).costUsd === 0.001 && lastBatch(blockedHome).llmCalls === 1,
+    JSON.stringify(lastBatch(blockedHome)));
+
+  const maxturnsHome = setupBatchSandbox('spend-maxturns');
+  runBatch({ okfHome: maxturnsHome, env: { FAKE_CLAUDE_MODE: 'maxturns' } });
+  ok('an incomplete claude result still carries its paid cost',
+    lastBatch(maxturnsHome).costUsd === 0.001 && lastBatch(maxturnsHome).llmCalls === 1,
+    JSON.stringify(lastBatch(maxturnsHome)));
+
+  const badjsonHome = setupBatchSandbox('spend-badjson');
+  runBatch({ okfHome: badjsonHome, env: { FAKE_CLAUDE_MODE: 'badjson' } });
+  const bj = lastBatch(badjsonHome);
+  // 금액을 모르는 것은 0이 아니다 — 0으로 뭉개면 상한이 조용히 무력화된다.
+  ok('an unparseable claude result counts as an unpriced call',
+    bj.costUsd === 0 && bj.llmCalls === 1 && bj.unpricedCalls === 1, JSON.stringify(bj));
+}
+{
+  // 누계는 같은 로컬 날짜 안에서만 이어진다.
+  const home = setupBatchSandbox('spend-accumulate');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  fs.copyFileSync(SAMPLE_TRANSCRIPT,
+    path.join(okfPaths(home).raw, '2026-07-16--proj--b2b2b2b2-1111-2222-3333-444444444444.jsonl'));
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  ok('daily spend accumulates across rounds in the same local day',
+    lastBatch(home).spendTodayUsd === 0.002, JSON.stringify(lastBatch(home)));
+
+  // 어제 누계 $99가 오늘의 상한을 막으면 안 된다.
+  const stale = lastBatch(home);
+  stale.spendDate = new Date(Date.now() - 86400_000).toLocaleDateString('en-CA');
+  stale.spendTodayUsd = 99;
+  fs.writeFileSync(okfPaths(home).lastBatch, JSON.stringify(stale, null, 2));
+  fs.copyFileSync(SAMPLE_TRANSCRIPT,
+    path.join(okfPaths(home).raw, '2026-07-17--proj--b3b3b3b3-1111-2222-3333-444444444444.jsonl'));
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', OKF_MAX_USD: '0.5' } });
+  ok('a new local day resets the daily spend counter',
+    lastBatch(home).spendTodayUsd === 0.001 && lastBatch(home).lastResult === 'ok',
+    JSON.stringify(lastBatch(home)));
+}
+{
+  // 사용자 결정: 기본값은 0(무제한). 비용은 *보이게* 하되 기본 차단은 걸지 않는다.
+  ok('batch_max_usd_per_day defaults to 0 (unlimited)', DEFAULT_CONFIG.batch_max_usd_per_day === 0);
+  const home = setupBatchSandbox('spend-unlimited');
+  let skipped = 0;
+  for (let round = 0; round < 3; round++) {
+    // 회차마다 새 세션을 넣어야 실제로 회차당 유료 호출 1회가 난다 — 한 번에 다 넣으면
+    // 청크가 하나로 묶여 1회차만 지불하고 2·3회차는 raw가 비어 noop이 된다.
+    if (round > 0) {
+      fs.copyFileSync(SAMPLE_TRANSCRIPT,
+        path.join(okfPaths(home).raw, `2026-07-2${round}--proj--c${round}c0c0c0-1111-2222-3333-444444444444.jsonl`));
+    }
+    runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_COST_USD: '10' } });
+    if (String(lastBatch(home).lastResult).startsWith('skipped:')) skipped++;
+  }
+  ok('the unlimited default never skips a round no matter the cost',
+    skipped === 0 && lastBatch(home).spendTodayUsd === 30, `skipped=${skipped} today=${lastBatch(home).spendTodayUsd}`);
+}
+{
+  // 상한 도달 회차는 유료 호출 0회로 끝나고 대기 세션은 raw에 그대로 남는다.
+  const home = setupBatchSandbox('spend-cap');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, batch_max_usd_per_day: 0.0005 });
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });   // 1회차: 누계 0 -> 통과, $0.001 지출
+  const counter = path.join(sandbox('spend-cap-counter'), 'calls.txt');
+  const commitsBefore = git(['rev-list', '--count', 'HEAD'], home).trim();
+  fs.copyFileSync(SAMPLE_TRANSCRIPT,
+    path.join(okfPaths(home).raw, '2026-07-18--proj--d4d4d4d4-1111-2222-3333-444444444444.jsonl'));
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_CALL_COUNTER: counter } });
+  ok('daily spend cap skips the next round with zero paid calls',
+    !fs.existsSync(counter) && lastBatch(home).lastResult === 'skipped: daily spend cap',
+    `counter=${fs.existsSync(counter)} result=${lastBatch(home).lastResult}`);
+  ok('a capped round leaves queued sessions in raw/ and commits nothing',
+    listRaw(home).length === 1 && git(['rev-list', '--count', 'HEAD'], home).trim() === commitsBefore
+      && git(['status', '--porcelain'], home).trim() === '');
+}
+{
+  // 회차 중간 상한: 이미 통과한 회차는 최소 1청크를 처리하고, 남은 청크는 git을 건드리지 않고
+  // raw로 이월한다. rollback()을 부르면 방금 커밋한 앞 청크와 무관한 변경까지 날린다.
+  const home = setupBatchSandbox('spend-cap-midrun');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, batch_max_usd_per_day: 0.0005 });
+  fs.copyFileSync(SAMPLE_TRANSCRIPT,
+    path.join(okfPaths(home).raw, '2026-07-19--proj--e5e5e5e5-1111-2222-3333-444444444444.jsonl'));
+  const counter = path.join(sandbox('spend-cap-midrun-counter'), 'calls.txt');
+  runBatch({
+    okfHome: home,
+    env: { FAKE_CLAUDE_MODE: 'success', OKF_CHUNK_BYTE_LIMIT: '1', FAKE_CLAUDE_CALL_COUNTER: counter },
+  });
+  ok('mid-run cap defers the remaining chunks back to raw/',
+    readIfExists(counter).split('\n').filter(Boolean).length === 1
+      && listRemoveCandidate(home).length === 1 && listRaw(home).length === 1
+      && git(['status', '--porcelain'], home).trim() === ''
+      && String(lastBatch(home).lastResult).includes('daily spend cap'),
+    `calls=${readIfExists(counter).split('\n').filter(Boolean).length} raw=${listRaw(home).length} result=${lastBatch(home).lastResult}`);
+}
+{
+  // fail-open: 상태 파일 하나가 파손됐다고 배치가 영구 정지하면 안 된다. 그리고 그 파일을
+  // 지우면 누계가 0에서 다시 시작한다 — **알려진 한계**를 테스트로 고정한다. 지금 문서가
+  // "지불한 것은 전부 남는다"는 잘못된 인상을 주기 때문이다.
+  const home = setupBatchSandbox('spend-ledger-limits');
+  fs.writeFileSync(okfPaths(home).lastBatch, '{ this is not json');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  ok('a corrupt last-batch.json does not block the next batch',
+    lastBatch(home).lastResult === 'ok' && lastBatch(home).spendTodayUsd === 0.001);
+
+  fs.rmSync(okfPaths(home).lastBatch, { force: true });
+  fs.copyFileSync(SAMPLE_TRANSCRIPT,
+    path.join(okfPaths(home).raw, '2026-07-21--proj--f7f7f7f7-1111-2222-3333-444444444444.jsonl'));
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  ok('deleting last-batch.json resets the daily ledger (known limitation)',
+    lastBatch(home).spendTodayUsd === 0.001, JSON.stringify(lastBatch(home)));
+}
+{
+  // 설정 표면 동기화. 키를 추가하고 문서를 안 고치면 사용자는 그 노브의 존재를 모른다.
+  const surfaces = ['README.md', 'README.ko.md', 'README.de.md', 'README.es.md', 'README.fr.md',
+    'README.ja.md', 'README.pt-BR.md', 'README.zh-CN.md', 'docs/USAGE.md',
+    'commands/okf-config.md', 'templates/config.md'];
+  const missing = surfaces.filter((f) => !fs.readFileSync(path.join(PLUGIN_ROOT, f), 'utf8').includes('batch_max_usd_per_day'));
+  ok('batch_max_usd_per_day is documented on every config surface', missing.length === 0, missing.join(', '));
+  const configCommand = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-config.md'), 'utf8');
+  // 키 설명 절과 안전 범위 절 **양쪽**에 있어야 한다 — 한쪽만 있으면 값 변경 시 범위를 모른다.
+  ok('okf-config documents the spend cap in both the key list and the safe-range section',
+    (configCommand.match(/batch_max_usd_per_day/g) || []).length >= 2 && configCommand.includes('0~1000'));
+  // 상한의 한계를 정직하게 적었는가 — 하드 과금 차단이 아니다.
+  ok('the spend cap documents itself as best-effort, not a hard billing block',
+    configCommand.includes('best-effort') && fs.readFileSync(path.join(PLUGIN_ROOT, 'docs', 'USAGE.md'), 'utf8').includes('Best-effort'));
+  ok('okf-status reports the cost fields and says so when they are absent',
+    fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-status.md'), 'utf8').includes('비용 기록 없음'));
+
+  // DEFAULT_CONFIG에 키를 추가하고 VALIDATORS를 빠뜨리면 그 키는 영원히 unknown_key로
+  // 무시되고 기본값이 남는다 — 조용히 죽은 노브가 된다. VALIDATORS는 export되지 않으므로
+  // '유효한 값을 넣으면 실제로 반영되는가'로 행동 단언한다.
+  const validHome = bootstrapped('config-all-valid');
+  const validValues = {
+    enabled: false, batch_interval_hours: 2, batch_max_digest_kb: 500, batch_max_sessions: 25,
+    batch_model: 'claude-opus-5', batch_effort: 'high', seed_language: 'ko',
+    capture_exclude_cwd: ['/secret/**'], batch_digest_cap_kb: 120, sweep_min_idle_minutes: 30,
+    remove_candidate_ttl_days: 14, inject_max_lines: 100, inject_max_bytes: 8000,
+    claude_bin: '/usr/local/bin/claude', node_bin: '/usr/local/bin/node', batch_max_usd_per_day: 2.5,
+  };
+  const unvalidated = Object.keys(DEFAULT_CONFIG).filter((k) => !(k in validValues));
+  writeConfig(validHome, validValues);
+  const validWarnings = [];
+  const applied = readConfig(validHome, (w) => validWarnings.push(w));
+  const notApplied = Object.keys(validValues)
+    .filter((k) => JSON.stringify(applied[k]) !== JSON.stringify(validValues[k]));
+  ok('every DEFAULT_CONFIG key has a matching validator (no silently dead knobs)',
+    unvalidated.length === 0 && notApplied.length === 0 && validWarnings.length === 0,
+    `unvalidated=${unvalidated.join(',')} notApplied=${notApplied.join(',')} warnings=${validWarnings.map((w) => w.key).join(',')}`);
 }
 // ---------------------------------------------------------------------------
 console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가 아니라 "마지막 활동 후 N분" ===');

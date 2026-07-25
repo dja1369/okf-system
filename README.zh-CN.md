@@ -213,7 +213,7 @@ fallback analyzer 是确定性的、零依赖并采取保守连接；“发现�
 
 ## 配置和删除
 
-使用 `~/.claude/okf/.okf/config.md` 或 `/okf:okf-config`。主要默认值：`enabled: true`（收集、gate 和 batch 的总开关）、`batch_interval_hours: 1`、`batch_max_digest_kb: 600`、`batch_digest_cap_kb: 150`、`sweep_min_idle_minutes: 60`（最后一次活动后需空闲这么久才会被收集，`0` 表示立即收集）、`remove_candidate_ttl_days: 30`、`inject_max_lines` / `inject_max_bytes` 为 `120` / `9000`。未知或无效值回退到安全默认值。
+使用 `~/.claude/okf/.okf/config.md` 或 `/okf:okf-config`。主要默认值：`enabled: true`（收集、gate 和 batch 的总开关）、`batch_interval_hours: 1`、`batch_max_digest_kb: 600`、`batch_digest_cap_kb: 150`、`sweep_min_idle_minutes: 60`（最后一次活动后需空闲这么久才会被收集，`0` 表示立即收集）、`remove_candidate_ttl_days: 30`、`inject_max_lines` / `inject_max_bytes` 为 `120` / `9000`、`batch_max_usd_per_day: 0`（每日 LLM 支出上限，单位 USD；`0` 表示不限，且为默认值 —— 无论是否设上限，费用始终会被记录并展示；这是 best-effort 的护栏，累计值存放在 `.okf/last-batch.json`）。未知或无效值回退到安全默认值。
 
 ```sh
 claude plugin uninstall okf

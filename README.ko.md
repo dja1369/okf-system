@@ -312,6 +312,7 @@ fallback 분석기는 결정적이고 의존성이 없으며 보수적으로 연
 | `batch_digest_cap_kb` | `150` | 세션별 LLM digest 상한, raw는 무손실 |
 | `remove_candidate_ttl_days` | `30` | 처리된 raw 삭제 전 보존일 |
 | `inject_max_lines` / `inject_max_bytes` | `120` / `9000` | Claude Code 10,000자 기준 아래 inline gate 상한 |
+| `batch_max_usd_per_day` | `0` | 하루 LLM 지출 상한(USD). `0`=무제한(기본). 상한과 무관하게 비용은 항상 기록·표시된다. best-effort 가드이며 누계는 `.okf/last-batch.json`에 산다. |
 
 ## 제거
 

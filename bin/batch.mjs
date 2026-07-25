@@ -600,6 +600,63 @@ function buildAnalyzerSettings(bundleDir) {
   });
 }
 
+// Claude CLI가 --output-format json으로 **이미 무료로** 돌려주는 지출 메타데이터를 호출자에게
+// 전달한다. 예전엔 runClaude가 이 값을 손에 쥐고도 {ok, output}만 반환하며 버렸다(T11.1).
+// costUsd는 null과 0을 구분한다 — 0 = 안 썼다, null = 얼마 썼는지 모른다.
+function extractSpend(result) {
+  const usage = {};
+  for (const [key, value] of Object.entries(result?.usage || {})) {
+    if (typeof value === 'number' && Number.isFinite(value)) usage[key] = value;
+  }
+  return {
+    costUsd: Number.isFinite(result?.total_cost_usd) ? result.total_cost_usd : null,
+    usage,
+    numTurns: Number.isFinite(result?.num_turns) ? result.num_turns : null,
+  };
+}
+
+function roundUsd(v) {
+  return Math.round(v * 10000) / 10000; // 소수 4자리 고정 — 테스트가 오차 0을 단언한다
+}
+
+// 누계기는 **가변 객체를 통과**시킨다. processChunks의 catch가 processChunkBody를 삼켜도
+// 이미 누적된 지출이 살아남아야 한다 — 지불 후 실패한 회차의 금액이 가장 중요한 값이다.
+function createSpendAccumulator() {
+  return { costUsd: 0, usage: {}, calls: 0, unknownCalls: 0 };
+}
+
+function accrueSpend(acc, claudeResult) {
+  if (!acc || !claudeResult) return;
+  acc.calls += 1;
+  if (Number.isFinite(claudeResult.costUsd)) acc.costUsd += claudeResult.costUsd;
+  else acc.unknownCalls += 1; // 파싱 실패·타임아웃 — 호출은 났고 금액만 모른다
+  for (const [k, v] of Object.entries(claudeResult.usage || {})) {
+    if (typeof v === 'number' && Number.isFinite(v)) acc.usage[k] = (acc.usage[k] || 0) + v;
+  }
+}
+
+// 당일 누계. 파손·부재는 0으로 본다(fail-open) — 상태 파일 하나 때문에 배치가 영구 정지하면 안 된다.
+function readSpendToday(okfHome, today = localDateString()) {
+  const prev = readLastBatch(okfHome);
+  if (!prev || prev.spendDate !== today || !Number.isFinite(prev.spendTodayUsd)) return 0;
+  return prev.spendTodayUsd;
+}
+
+// updateLastBatch의 extra 슬롯에 얹을 비용 필드. R3이 소유한 시그니처는 건드리지 않는다.
+function spendExtra(okfHome, spend) {
+  const today = localDateString();
+  const carried = readSpendToday(okfHome, today);
+  const runCost = Number.isFinite(spend?.costUsd) ? spend.costUsd : 0;
+  return {
+    costUsd: roundUsd(runCost),
+    spendTodayUsd: roundUsd(carried + runCost),
+    spendDate: today,
+    tokens: { ...(spend?.usage ?? {}) },
+    llmCalls: spend?.calls ?? 0,
+    unpricedCalls: spend?.unknownCalls ?? 0,
+  };
+}
+
 function runClaude(prompt, { cwd, okfHome, timeoutMs, claudeBin, model, effort }) {
   const bin = claudeBin || 'claude';
   // --settings를 JSON 문자열로 명령줄에 실으면 Windows(claude.cmd 대응 shell:true) 경로에서
@@ -657,7 +714,9 @@ function runClaude(prompt, { cwd, okfHome, timeoutMs, claudeBin, model, effort }
     } catch {
       const error = new Error('claude result parse failed');
       error.code = 'CLAUDE_INVALID_JSON';
-      return { ok: false, error };
+      // spend는 JSON.parse 성공 이후 스코프에서만 유효하다 — 여기서 `...spend`를 쓰면 TDZ다.
+      // 호출은 났으므로 costUsd: null(= 얼마 썼는지 모른다)로 표시한다.
+      return { ok: false, error, costUsd: null, usage: {}, numTurns: null };
     }
     try {
       // cwd는 이제 임시 워크스페이스다 — 레지스트리는 반드시 번들(.okf)에 남아야 다음 sweep이 본다.
@@ -668,22 +727,19 @@ function runClaude(prompt, { cwd, okfHome, timeoutMs, claudeBin, model, effort }
     // The live benchmark needs batch cost for an honest break-even calculation. Persist only
     // Claude's numeric usage metadata when explicitly opted in; never write result/errors/session
     // content, which may contain transcript-derived private data.
+    const spend = extractSpend(result);
     if (process.env.OKF_BENCH_USAGE_FILE) {
       try {
         const usagePath = path.resolve(process.env.OKF_BENCH_USAGE_FILE);
         fs.mkdirSync(path.dirname(usagePath), { recursive: true });
-        const numericUsage = {};
-        for (const [key, value] of Object.entries(result?.usage || {})) {
-          if (typeof value === 'number' && Number.isFinite(value)) numericUsage[key] = value;
-        }
         const record = {
           stage: prompt.includes('lint 오류 리포트') ? 'repair' : 'ingest',
           models: Object.keys(result?.modelUsage || {}),
-          usage: numericUsage,
+          usage: spend.usage,
           duration_ms: Number.isFinite(result?.duration_ms) ? result.duration_ms : null,
           duration_api_ms: Number.isFinite(result?.duration_api_ms) ? result.duration_api_ms : null,
-          total_cost_usd: Number.isFinite(result?.total_cost_usd) ? result.total_cost_usd : null,
-          num_turns: Number.isFinite(result?.num_turns) ? result.num_turns : null,
+          total_cost_usd: spend.costUsd,
+          num_turns: spend.numTurns,
         };
         fs.appendFileSync(usagePath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
         securePrivateFile(usagePath);
@@ -694,11 +750,13 @@ function runClaude(prompt, { cwd, okfHome, timeoutMs, claudeBin, model, effort }
     if (result?.type !== 'result' || result.subtype !== 'success' || result.is_error === true) {
       const error = new Error('claude result incomplete');
       error.code = 'CLAUDE_INCOMPLETE';
-      return { ok: false, error };
+      // 지불 후 실패다 — 파싱은 됐으므로 금액을 안다. 이 경로가 비용 기록에서 빠지면
+      // "지불한 것은 전부 남는다"가 거짓이 된다(실측: 35회 중 최소 10회가 지불 후 롤백).
+      return { ok: false, error, ...spend };
     }
-    return { ok: true, output: result.result ?? '' };
+    return { ok: true, output: result.result ?? '', ...spend };
   } catch (err) {
-    return { ok: false, error: err };
+    return { ok: false, error: err, costUsd: null, usage: {}, numTurns: null };
   }
 }
 
@@ -887,7 +945,7 @@ function declaredNoOp(wsRoot, output) {
   return output.trim() === 'NO-OP';
 }
 
-function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, config, runId) {
+function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, config, runId, spend) {
   const { wsRoot, wsChunk } = buildAnalyzerWorkspace(okfHome, runId, i, chunk);
   try {
     const ingestResult = runClaude(buildIngestPrompt(pluginRootDir, wsChunk), {
@@ -898,6 +956,8 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
       model: config.batch_model,
       effort: config.batch_effort,
     });
+    // 누적은 반드시 `if (!ok) return` **앞**이다 — 지불 후 실패한 회차의 금액이 가장 중요하다.
+    accrueSpend(spend, ingestResult);
     if (!ingestResult.ok) {
       // claude를 아예 못 부르는 상태라면 남은 청크도 15분씩 타임아웃만 태운다 — 치명 실패다.
       log(okfHome, `청크 ${i + 1} ingest 실패: ${describeClaudeError(ingestResult.error)} — 원복 후 배치 중단`);
@@ -932,6 +992,7 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
         model: config.batch_model,
         effort: config.batch_effort,
       });
+      accrueSpend(spend, repairResult);
       if (repairResult.ok) {
         applyAnalyzerWorkspace(okfHome, wsRoot);
         regenerateIndex(okfHome);
@@ -961,7 +1022,22 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
 // 청크는 독립 트랜잭션이다. 예전엔 한 청크의 비치명 실패(NO-OP 판정 실패, repair 후 lint
 // 실패)가 배치 전체를 중단시켜 뒤 청크의 세션이 통째로 raw에 남았다 — 실측 2청크 픽스처에서
 // 처리 0/2, archive 0, raw 2. 치명 실패(claude 자체를 못 부름)만 중단하고 나머지는 건너뛴다.
-function processChunks(okfHome, chunks, pluginRootDir, config, runId) {
+// 이월은 git을 건드리지 않는다. rollbackChunk를 부르면 이미 커밋된 앞 청크와 무관한 변경까지
+// 날린다 — 이월은 실패가 아니라 '다음 회차에 하겠다'이다.
+function returnChunkToRaw(okfHome, chunk) {
+  const paths = okfPaths(okfHome);
+  for (const dp of chunk) {
+    try {
+      fs.mkdirSync(paths.raw, { recursive: true });
+      fs.renameSync(dp.source, path.join(paths.raw, path.basename(dp.source)));
+    } catch (err) {
+      log(okfHome, `이월 raw 반환 실패 ${path.basename(dp.source)}: code=${safeErrorCode(err)}`);
+    }
+    tryUnlink(dp.digest);
+  }
+}
+
+function processChunks(okfHome, chunks, pluginRootDir, config, runId, spend, capUsd, spendBeforeUsd) {
   const paths = okfPaths(okfHome);
   const todayDir = path.join(paths.removeCandidate, localDateString());
 
@@ -969,11 +1045,18 @@ function processChunks(okfHome, chunks, pluginRootDir, config, runId) {
   let skippedChunks = 0;
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
+    // 진입 게이트를 통과한 회차는 최소 1청크는 처리해야 backlog가 줄어든다
+    // (applyDigestBudget의 '최소 1개는 항상 통과'와 같은 논리) — 그래서 i > 0에서만 재검사한다.
+    if (i > 0 && capUsd > 0 && spendBeforeUsd + spend.costUsd >= capUsd) {
+      log(okfHome, `일일 지출 상한 도달 ($${roundUsd(spendBeforeUsd + spend.costUsd).toFixed(4)} / $${capUsd}) — 남은 청크 ${chunks.length - i}개를 다음 회차로 이월`);
+      for (let j = i; j < chunks.length; j++) returnChunkToRaw(okfHome, chunks[j]);
+      return { succeededChunks, skippedChunks, aborted: true, reason: 'spend-cap' };
+    }
     log(okfHome, `청크 ${i + 1}/${chunks.length} 처리 시작 (세션 ${chunk.length}개)`);
 
     let result;
     try {
-      result = processChunkBody(okfHome, chunk, i, chunks.length, paths, pluginRootDir, config, runId);
+      result = processChunkBody(okfHome, chunk, i, chunks.length, paths, pluginRootDir, config, runId, spend);
     } catch (err) {
       log(okfHome, `청크 ${i + 1} 처리 중 예외 발생: code=${safeErrorCode(err)} — 크래시로 간주해 원복 후 배치 중단`);
       result = { ok: false, fatal: true };
@@ -1011,7 +1094,11 @@ function updateLastBatch(okfHome, result, extra = {}) {
   writePrivateJsonAtomic(paths.lastBatch, {
     lastRunEpochMs: Date.now(), lastResult: result, pendingAfter, blocked: null, ...extra,
   });
-  log(okfHome, `배치 종료: ${result} (잔여 raw: ${pendingAfter})`);
+  // 비용은 숫자만 남긴다 — 경로·세션ID·모델 응답은 로그에 절대 싣지 않는다.
+  const spendNote = Number.isFinite(extra.costUsd) && extra.llmCalls > 0
+    ? `, 비용 $${extra.costUsd.toFixed(4)} / 오늘 누계 $${Number(extra.spendTodayUsd ?? 0).toFixed(4)} (호출 ${extra.llmCalls}회)`
+    : '';
+  log(okfHome, `배치 종료: ${result} (잔여 raw: ${pendingAfter}${spendNote})`);
 }
 
 function runBatch() {
@@ -1027,6 +1114,9 @@ function runBatch() {
 
   try {
     log(okfHome, `배치 시작 (recoveredFromStaleLock=${lockResult.recoveredFromStaleLock})`);
+    // 회차 지출 누계기. 모든 종료 경로가 이것을 spendExtra로 상태 파일에 남긴다 —
+    // 지불 후 실패한 회차의 금액이 기록에서 빠지면 "지불한 것은 전부 남는다"가 거짓이 된다.
+    const spend = createSpendAccumulator();
     for (const warning of configWarnings) {
       log(okfHome, `config ${warning.key}: ${warning.code} — 기본값 사용`);
     }
@@ -1061,6 +1151,7 @@ function runBatch() {
       const prev = readLastBatch(okfHome);
       const since = prev?.blocked?.kind === 'pre-batch-lint' ? prev.blocked.since : Date.now();
       updateLastBatch(okfHome, 'aborted: pre-batch dirty tree lint failed', {
+        ...spendExtra(okfHome, spend),
         blocked: {
           kind: 'pre-batch-lint',
           since,
@@ -1073,6 +1164,19 @@ function runBatch() {
 
     purgeRemoveCandidate(okfHome, config.remove_candidate_ttl_days);
 
+    // 일일 지출 상한. 위치가 요점이다 — 수집(sweep, 무료)은 이미 끝났다. 상한이 수집까지
+    // 막으면 7일 창(SWEEP_LOOKBACK_DAYS)을 넘긴 transcript가 영구 소실된다.
+    // normalizeConfig(lib/config.mjs)가 이미 잘못된 값을 기본값으로 되돌린 뒤이므로 여기서
+    // 재검증하지 않는다(그 분기는 결코 발화하지 않는 죽은 코드다). 0 = 무제한.
+    const capUsd = config.batch_max_usd_per_day;
+    const spendBeforeUsd = readSpendToday(okfHome);
+    if (capUsd > 0 && spendBeforeUsd >= capUsd) {
+      log(okfHome, `일일 지출 상한 도달 ($${spendBeforeUsd.toFixed(4)} / $${capUsd}) — LLM 호출 없이 종료`);
+      updateLastBatch(okfHome, 'skipped: daily spend cap', spendExtra(okfHome, spend));
+      // freshPending 0으로 링거를 끝낸다 — 5분마다 이 경로를 밟으면 상태 파일을 96번 다시 쓴다.
+      return { acquiredLock: true, freshPending: 0 };
+    }
+
     const { stagingDir, files } = snapshotRaw(okfHome, runId, config.batch_max_sessions);
     if (files.length === 0) {
       log(okfHome, '처리할 raw 없음(sweep 이후에도) — LLM 호출 없이 조기 종료');
@@ -1081,7 +1185,7 @@ function runBatch() {
       } catch {
         // no-op
       }
-      updateLastBatch(okfHome, 'noop');
+      updateLastBatch(okfHome, 'noop', spendExtra(okfHome, spend));
       return { acquiredLock: true, freshPending: swept.freshPending };
     }
 
@@ -1096,7 +1200,7 @@ function runBatch() {
           // no-op
         }
       }
-      updateLastBatch(okfHome, 'error: digest generation failed');
+      updateLastBatch(okfHome, 'error: digest generation failed', spendExtra(okfHome, spend));
       return { acquiredLock: true, freshPending: swept.freshPending };
     }
 
@@ -1138,7 +1242,8 @@ function runBatch() {
     log(okfHome, `이번 회차 처리 대상: 세션 ${selected.length}개, digest 합계 ${(totalBytes / 1024).toFixed(1)}KB`);
 
     const chunks = chunkBySize(selected, CHUNK_BYTE_LIMIT);
-    const { succeededChunks, aborted } = processChunks(okfHome, chunks, pluginRootDir, config, runId);
+    const { succeededChunks, aborted, reason } = processChunks(
+      okfHome, chunks, pluginRootDir, config, runId, spend, capUsd, spendBeforeUsd);
 
     try {
       fs.rmdirSync(stagingDir);
@@ -1146,7 +1251,12 @@ function runBatch() {
       // no-op (혹시 남은 게 있으면 다음 실행의 크래시 복구 단계가 처리)
     }
 
-    updateLastBatch(okfHome, aborted ? `partial: ${succeededChunks}/${chunks.length} chunks` : 'ok');
+    const outcome = !aborted
+      ? 'ok'
+      : (reason === 'spend-cap'
+        ? `partial: ${succeededChunks}/${chunks.length} chunks (daily spend cap)`
+        : `partial: ${succeededChunks}/${chunks.length} chunks`);
+    updateLastBatch(okfHome, outcome, spendExtra(okfHome, spend));
     return { acquiredLock: true, freshPending: swept.freshPending };
   } finally {
     // token을 반드시 넘긴다 — 인자 없이 부르면 lib/lock.mjs의 단락 평가로 '남의 락도 무조건
