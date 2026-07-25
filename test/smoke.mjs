@@ -16,6 +16,7 @@ import { runLint, formatReport } from '../lib/lint.mjs';
 import { regenerateIndex } from '../lib/index-gen.mjs';
 import { digestFile } from '../lib/digest.mjs';
 import { git } from '../lib/git.mjs';
+import { isLockStale, releaseLock } from '../lib/lock.mjs';
 import { analyzeProject } from '../lib/analyze.mjs';
 import { buildGraph, renderHtml } from '../lib/viz.mjs';
 import { auditBenchmarkBundle, matchesBenchmarkAnswer } from '../lib/bench-audit.mjs';
@@ -1101,6 +1102,240 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   const allInts = LIVE_SHAPE.categories.every((c) => Array.isArray(c.lineBytes) && c.lineBytes.every(Number.isInteger));
   ok('live-shape fixture carries byte counts only, never transcript text',
     allInts && !shapeRaw.includes('](/'), `allInts=${allInts}`);
+}
+// --- R3: 커밋 이후 실패 방어 / NO-OP 마커 / 청크 독립 / 락 계약 / 정지 표면화 ---
+{
+  // T2.2: 커밋 직후의 archive 이동만 try/catch 밖이라, ENOSPC 한 번에 같은 세션이 다음 회차에
+  // 재과금됐다. _remove_candidate/<오늘> 자리에 디렉토리가 아니라 **파일**을 놓아 mkdirSync가
+  // 던지게 한다(chmod 없이 3-OS 공통으로 재현된다).
+  const home = setupBatchSandbox('archive-fail');
+  const counter = path.join(sandbox('archive-fail-counter'), 'calls.txt');
+  const blocker = path.join(okfPaths(home).removeCandidate, new Date().toLocaleDateString('en-CA'));
+  fs.mkdirSync(path.dirname(blocker), { recursive: true });
+  fs.writeFileSync(blocker, 'not a directory');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_CALL_COUNTER: counter } });
+  ok('archive 이동 실패는 예외로 배치를 죽이지 않는다',
+    lastBatch(home).lastResult === 'ok' && fs.existsSync(path.join(home, 'decisions', 'fake-test-concept.md')),
+    `lastResult=${lastBatch(home).lastResult}`);
+  // 2회차: 방해물을 치우면 마커가 LLM 호출 **없이** 이동만 재시도한다.
+  fs.rmSync(blocker, { force: true });
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_CALL_COUNTER: counter } });
+  const archiveCalls = readIfExists(counter).split('\n').filter(Boolean);
+  ok('archive 실패 세션은 다음 회차에 재과금되지 않는다',
+    archiveCalls.length === 1 && listRemoveCandidate(home).length === 1 && listRaw(home).length === 0,
+    `calls=${archiveCalls.length} archived=${listRemoveCandidate(home).length} raw=${listRaw(home).length}`);
+}
+{
+  // runLoop의 top-level 예외가 unhandled rejection으로 사라지면 상태에 아무 흔적도 안 남는다.
+  // lastBatch 경로를 디렉토리로 만들어 writePrivateJsonAtomic의 rename을 강제로 실패시킨다.
+  const home = setupBatchSandbox('crash-landing');
+  fs.rmSync(okfPaths(home).lastBatch, { force: true });
+  fs.mkdirSync(okfPaths(home).lastBatch, { recursive: true });
+  let crashExit = 0;
+  try {
+    runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  } catch (err) {
+    crashExit = typeof err?.status === 'number' ? err.status : 1;
+  }
+  const crashLogs = fs.readdirSync(okfPaths(home).logs)
+    .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8')).join('\n');
+  ok('runLoop 예외는 unhandled rejection이 아니라 로그로 착지한다',
+    crashLogs.includes('배치 루프 예외 종료') && !crashLogs.includes('illegal operation') && crashExit !== 0,
+    `exit=${crashExit}`);
+}
+{
+  // NO-OP 판정을 자유 텍스트 완전일치에서 워크스페이스 마커로 옮긴다(실측 25회 중 9회 실패).
+  const home = setupBatchSandbox('noop-marker');
+  const commitsBefore = git(['rev-list', '--count', 'HEAD'], home).trim();
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'noop-marker' } });
+  ok('NO-OP은 마커 파일로 선언한다 — 출력 문구와 무관하다',
+    listRaw(home).length === 0 && listRemoveCandidate(home).length === 1
+      && lastBatch(home).lastResult === 'ok'
+      && git(['rev-list', '--count', 'HEAD'], home).trim() === commitsBefore,
+    `lastResult=${lastBatch(home).lastResult}`);
+}
+{
+  // 마커 프로토콜이 여는 **새 유실 경로**의 회귀 고정: 무언가를 쓰고도 마커를 남긴 회차를
+  // 마커만 보고 NO-OP으로 판정하면, 방금 쓴 concept가 커밋되지 않은 채 raw만 archive되어
+  // 지식이 조용히 사라진다. 판정이 `applied === 0 && blocked === 0`과 AND이므로 여기서는
+  // 마커가 무시되고 정상 커밋 경로를 타야 한다 — 유실 0이 이 픽스처의 불변식이다.
+  const home = setupBatchSandbox('noop-marker-with-write');
+  const commitsBefore = Number(git(['rev-list', '--count', 'HEAD'], home).trim());
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'noop-marker-with-write' } });
+  const commitsAfter = Number(git(['rev-list', '--count', 'HEAD'], home).trim());
+  ok('마커를 남겨도 실제로 쓴 concept는 NO-OP으로 묻히지 않는다',
+    fs.existsSync(path.join(home, 'decisions', 'fake-test-concept.md'))
+      && commitsAfter === commitsBefore + 1 && listRemoveCandidate(home).length === 1,
+    `commits=${commitsBefore}->${commitsAfter} archived=${listRemoveCandidate(home).length}`);
+  // 마커 파일 자체가 번들로 새어 들어가면 안 된다(.md가 아니므로 반영 대상이 아니다).
+  ok('NO-OP 마커 파일은 번들에 반영되지 않는다', !fs.existsSync(path.join(home, '.okf-noop')));
+}
+{
+  // applied===0 이지만 blocked>0 — 쓰려다 거부당한 것이지 쓸 게 없던 것이 아니다.
+  const home = setupBatchSandbox('blocked-with-marker');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'blocked-with-marker' } });
+  ok('전량 차단된 워크스페이스에 마커가 있어도 실패로 판정된다',
+    listRaw(home).length === 1 && listRemoveCandidate(home).length === 0,
+    `raw=${listRaw(home).length} archived=${listRemoveCandidate(home).length}`);
+}
+{
+  // 청크 독립 트랜잭션. 예전엔 첫 청크의 비치명 실패가 배치 전체를 중단시켜 뒤 청크 세션이
+  // 통째로 raw에 남았다(실측: 처리 0/2, archive 0, raw 2).
+  const home = setupBatchSandbox('chunk-independent');
+  fs.copyFileSync(SAMPLE_TRANSCRIPT,
+    path.join(okfPaths(home).raw, '2026-07-16--proj--e1e1e1e1-1111-2222-3333-444444444444.jsonl'));
+  const counter = path.join(sandbox('chunk-independent-counter'), 'calls.txt');
+  const chunkCounter = path.join(sandbox('chunk-independent-chunks'), 'chunks.txt');
+  runBatch({
+    okfHome: home,
+    env: {
+      FAKE_CLAUDE_MODE: 'first-chunk-blocked', OKF_CHUNK_BYTE_LIMIT: '1',
+      FAKE_CLAUDE_CALL_COUNTER: counter, FAKE_CLAUDE_CHUNK_COUNTER: chunkCounter,
+    },
+  });
+  const chunkLogs = fs.readdirSync(okfPaths(home).logs)
+    .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8')).join('\n');
+  ok('한 청크의 프로토콜 실패가 나머지 청크를 죽이지 않는다',
+    listRemoveCandidate(home).length === 1 && listRaw(home).length === 1
+      && lastBatch(home).lastResult === 'partial: 1/2 chunks'
+      && chunkLogs.includes('건너뜀')
+      && readIfExists(counter).split('\n').filter(Boolean).length <= 2,
+    `archived=${listRemoveCandidate(home).length} raw=${listRaw(home).length} result=${lastBatch(home).lastResult}`);
+}
+{
+  // stale lock 회수 회차의 '무조건 원복'은 그 판단이 틀렸을 때 되돌릴 방법이 없었다.
+  // listRemoveCandidate는 <날짜디렉토리>/<엔트리명>만 반환하고 재귀하지 않는다 — 백업
+  // 디렉토리는 직접 읽어야 한다.
+  const home = setupBatchSandbox('stale-lock-backup');
+  const deadPid = execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))']).toString().trim();
+  fs.writeFileSync(okfPaths(home).lock, JSON.stringify({ pid: Number(deadPid), startedEpochMs: Date.now() - 1000 }));
+  const remnant = path.join(home, 'decisions', 'crash-remnant.md');
+  fs.writeFileSync(remnant, '크래시 잔여물: frontmatter 없는 반쯤 반영된 산출물\n');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  const dateDir = path.join(okfPaths(home).removeCandidate, new Date().toLocaleDateString('en-CA'));
+  const backupDirs = (fs.existsSync(dateDir) ? fs.readdirSync(dateDir) : []).filter((n) => n.startsWith('pre-rollback-'));
+  ok('stale-lock 원복 전에 dirty 파일이 _remove_candidate 아래로 백업된다',
+    backupDirs.length === 1 && !fs.existsSync(remnant), `backupDirs=${backupDirs.join(',')}`);
+  ok('백업본이 원본 바이트를 보존한다',
+    backupDirs.length === 1
+      && readIfExists(path.join(dateDir, backupDirs[0], 'decisions', 'crash-remnant.md')).includes('크래시 잔여물'));
+  // TTL 회수: 날짜 디렉토리를 31일 전 이름으로 바꾸면 다음 배치의 purge가 가져간다.
+  const oldName = new Date(Date.now() - 31 * 86400_000).toLocaleDateString('en-CA');
+  fs.renameSync(dateDir, path.join(okfPaths(home).removeCandidate, oldName));
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'noop-marker' } });
+  ok('pre-rollback 백업은 remove_candidate TTL로 회수된다',
+    !fs.existsSync(path.join(okfPaths(home).removeCandidate, oldName)));
+}
+{
+  // 락 계약. releaseLock이 token을 안 보면 남의 락을 지운다 — 그러면 두 프로세스가 동시에
+  // 번들에 쓰고, 배치의 유실 백스톱이 통째로 무력화된다.
+  const home = bootstrapped('lock-contract');
+  const lockPath = okfPaths(home).lock;
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedEpochMs: Date.now(), holder: 'deprecate', token: 'not-mine' }));
+  const released = releaseLock(home, 'mine');
+  ok('releaseLock은 남의 락을 지우지 않는다', released === false && fs.existsSync(lockPath));
+  fs.rmSync(lockPath, { force: true });
+
+  // 손상 페이로드는 전부 stale이어야 한다. {pid:0}은 process.kill(0,0)이 프로세스 그룹 조회로
+  // 성공해 영원히 alive가 되고, startedEpochMs 부재는 NaN 비교로 하드 상한을 무력화한다 —
+  // 둘 다 배치를 **영구 정지**시킨다.
+  const corrupt = [null, undefined, 'string', [], {}, { pid: 0, startedEpochMs: Date.now() },
+    { pid: -1, startedEpochMs: Date.now() }, { pid: process.pid }, { pid: process.pid, startedEpochMs: 'x' }];
+  ok('손상된 락 페이로드는 stale로 판정된다(영구 정지 방지)', corrupt.every((p) => isLockStale(p)));
+
+  // 구버전 페이로드(holder/token 없음) 3종의 판정이 바뀌지 않아야 한다 — 이 릴리스는 기존
+  // 사용자의 락 파일을 그대로 읽는다.
+  const deadPid = Number(execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))']).toString().trim());
+  ok('구버전 락 페이로드 3종의 판정이 바뀌지 않는다',
+    isLockStale({ pid: process.pid, startedEpochMs: Date.now() }) === false
+    && isLockStale({ pid: deadPid, startedEpochMs: Date.now() - 1000 }) === true
+    && isLockStale({ pid: process.pid, startedEpochMs: Date.now() - 5 * 3600_000 }) === true);
+}
+{
+  // S4의 /okf:okf-deprecate가 배치와 공존한다는 계약의 **배치 쪽 절반**: 다른 홀더의 살아있는
+  // 락이 있으면 배치는 유료 호출 없이 물러나고 raw를 건드리지 않는다.
+  const home = setupBatchSandbox('foreign-holder');
+  const counter = path.join(sandbox('foreign-holder-counter'), 'calls.txt');
+  fs.writeFileSync(okfPaths(home).lock,
+    JSON.stringify({ pid: process.pid, startedEpochMs: Date.now(), holder: 'deprecate', token: 'held-by-deprecate' }));
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_CALL_COUNTER: counter } });
+  ok('살아있는 다른 홀더의 락이 있으면 배치는 유료 호출 없이 물러난다',
+    !fs.existsSync(counter) && listRaw(home).length === 1 && fs.existsSync(okfPaths(home).lock),
+    `counter=${fs.existsSync(counter)} raw=${listRaw(home).length}`);
+  fs.rmSync(okfPaths(home).lock, { force: true });
+}
+{
+  // pre-batch lint 실패는 배치를 **영구 정지**시키는데 그 사실이 어디에도 구조화돼 남지 않았다.
+  const home = setupBatchSandbox('blocked-surface');
+  const broken = path.join(home, 'decisions', 'broken.md');
+  fs.writeFileSync(broken, 'frontmatter가 없는 파일 — E1\n');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  const blockedState = lastBatch(home);
+  ok('pre-batch lint 실패가 상태 파일에 구조화돼 남는다',
+    blockedState.blocked?.kind === 'pre-batch-lint'
+      && blockedState.blocked.files.includes('decisions/broken.md')
+      && /E1/.test(blockedState.blocked.rules)
+      && typeof blockedState.blocked.since === 'number',
+    JSON.stringify(blockedState.blocked));
+  // blocked에 lint message를 실으면 js-yaml 파싱 에러 메시지에 담긴 YAML 원문이 새 나간다.
+  ok('blocked 상태에 lint 메시지 원문이 실리지 않는다',
+    !JSON.stringify(blockedState.blocked).includes('missing frontmatter'));
+
+  // statusline은 lint 정지를 일반 실패와 구분해 표시하고, 파일명은 노출하지 않는다.
+  const statusHome = isolatedHome();
+  const statusLine = execFileSync(process.execPath, [path.join(PLUGIN_ROOT, 'bin', 'statusline.mjs')], {
+    env: { ...process.env, OKF_HOME: home, HOME: statusHome, USERPROFILE: statusHome, CLAUDE_CONFIG_DIR: path.join(statusHome, '.claude') },
+    encoding: 'utf8',
+  });
+  ok('statusline은 lint 정지를 ok/실패와 구분해 표시한다',
+    statusLine.includes('blocked: lint') && !statusLine.includes('decisions/broken.md'), statusLine);
+
+  // 고치면 해소된다 — blocked가 남아 있으면 /okf:okf-status가 이미 고친 실패를 영구 보고한다.
+  fs.writeFileSync(broken,
+    '---\ntype: decision\ntitle: 고친 결정\ndescription: lint 통과\ntimestamp: 2026-07-15\n---\n본문\n');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  ok('lint를 고치면 blocked 상태가 해소된다',
+    lastBatch(home).blocked === null && lastBatch(home).lastResult === 'ok',
+    `${JSON.stringify(lastBatch(home).blocked)} / ${lastBatch(home).lastResult}`);
+}
+{
+  // B11: bootstrap이 락을 확인하지 않아, 배치 중 SCHEMA/index 쓰기가 배치의 유실 백스톱을
+  // 무력화했다. 가드는 git init **앞**에 있어야 한다 — 뒤에 두면 커밋 없는 dirty 트리를 남긴다.
+  const home = bootstrapped('bootstrap-lock-guard');
+  const paths = okfPaths(home);
+  const schemaBefore = fs.readFileSync(paths.schema);
+  const indexBefore = fs.readFileSync(paths.rootIndex);
+  const commitsBefore = git(['rev-list', '--count', 'HEAD'], home).trim();
+  fs.writeFileSync(paths.lock, JSON.stringify({ pid: process.pid, startedEpochMs: Date.now(), holder: 'batch', token: 't' }));
+  // 템플릿 갱신을 유발할 상태(구버전 SCHEMA)로 만들어 두고, 그럼에도 손대지 않는지 본다.
+  for (let i = 0; i < 5; i++) ensureBootstrap(home);
+  ok('bootstrap이 살아있는 락 아래에서 dirty 트리를 남기지 않는다',
+    Buffer.compare(schemaBefore, fs.readFileSync(paths.schema)) === 0
+      && Buffer.compare(indexBefore, fs.readFileSync(paths.rootIndex)) === 0
+      && git(['status', '--porcelain'], home).trim() === ''
+      && git(['rev-list', '--count', 'HEAD'], home).trim() === commitsBefore);
+  fs.rmSync(paths.lock, { force: true });
+
+  // 빈 홈(= git init조차 안 된 상태) + 살아있는 락. 가드가 git init 뒤에 있으면 여기서
+  // 커밋 없는 dirty 트리가 생긴다.
+  const emptyHome = sandbox('bootstrap-lock-empty');
+  const emptyPaths = okfPaths(emptyHome);
+  fs.mkdirSync(emptyPaths.state, { recursive: true });
+  fs.writeFileSync(emptyPaths.lock, JSON.stringify({ pid: process.pid, startedEpochMs: Date.now(), holder: 'batch', token: 't' }));
+  ensureBootstrap(emptyHome);
+  ok('빈 홈 + 살아있는 락에서도 dirty가 0이다',
+    !fs.existsSync(emptyPaths.git) && !fs.existsSync(emptyPaths.rootIndex) && !fs.existsSync(emptyPaths.schema));
+}
+{
+  // 프롬프트 텍스트 단언은 행동 단언의 프록시다(test/smoke.mjs의 기존 관용구) — 배치가 실제로
+  // 마커를 읽는지는 위 noop-marker 블록이 행동으로 증명하고, 여기서는 계약서 쪽을 고정한다.
+  const ingestPrompt = fs.readFileSync(path.join(PLUGIN_ROOT, 'prompts', 'ingest.md'), 'utf8');
+  ok('ingest 프롬프트가 NO-OP 선언 수단을 마커 파일로 규정한다',
+    ingestPrompt.includes('.okf-noop') && ingestPrompt.includes('출력 텍스트는 판정에 쓰이지'));
+  const statusCommand = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-status.md'), 'utf8');
+  ok('상태 커맨드가 lint로 멈춘 배치를 최상단에 보고하도록 지시한다',
+    statusCommand.includes('blocked') && statusCommand.includes('맨 첫 줄부터'));
 }
 // ---------------------------------------------------------------------------
 console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가 아니라 "마지막 활동 후 N분" ===');

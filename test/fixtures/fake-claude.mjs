@@ -145,6 +145,45 @@ switch (mode) {
       // 심링크 미지원 환경(권한 없는 Windows)이면 이 벡터는 원천적으로 없다
     }
     break;
+  case 'noop-marker':
+    // 마커만 쓰고 출력 텍스트는 프로토콜과 다르게 낸다 — 판정이 텍스트가 아니라 마커임을 고정한다.
+    fs.writeFileSync('.okf-noop', '');
+    resultText = '재사용할 만한 지식이 없어 아무 파일도 쓰지 않았습니다';
+    break;
+  case 'noop-marker-with-write':
+    // 마커 프로토콜이 여는 **새 유실 경로**: concept를 쓰고도 마커를 남기면 NO-OP이 아니라 실패다.
+    writeConcept();
+    fs.writeFileSync('.okf-noop', '');
+    break;
+  case 'blocked-with-marker':
+    // blocked>0 / applied===0 + 마커. 마커만 믿으면 차단된 지식이 조용히 archive된다.
+    try {
+      fs.appendFileSync('SCHEMA.md', '\n<!-- 변조된 규칙 -->\n');
+    } catch {
+      // SCHEMA가 없는 워크스페이스면 이 벡터는 없다
+    }
+    fs.writeFileSync('.okf-noop', '');
+    break;
+  case 'first-chunk-blocked': {
+    // 첫 청크만 차단을 재현하고 두 번째부터는 정상 — 청크가 독립 트랜잭션인지 검증한다.
+    // 청크마다 새 프로세스라 프로세스 내 변수로는 셀 수 없다.
+    const chunkCounter = process.env.FAKE_CLAUDE_CHUNK_COUNTER || '';
+    let seenChunks = 0;
+    try {
+      seenChunks = fs.readFileSync(chunkCounter, 'utf8').split('\n').filter(Boolean).length;
+    } catch {
+      seenChunks = 0;
+    }
+    try {
+      fs.appendFileSync(chunkCounter, 'chunk\n');
+    } catch { /* 카운터 실패가 스텁을 막지 않는다 */ }
+    if (seenChunks === 0) {
+      resultText = '파일 쓰기가 sensitive file 권한으로 차단되어 반영하지 못했습니다';
+    } else {
+      writeConcept();
+    }
+    break;
+  }
   case 'blocked-mentions-noop':
     // 리뷰 확정(minor) 재현: 실패 설명문이 NO-OP이라는 단어를 "언급"만 해도 substring 판정은
     // 이를 선언으로 오인해 archive했다 — 선언은 정확히 'NO-OP' 한 줄이어야 한다.

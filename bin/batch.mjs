@@ -9,17 +9,19 @@ import { runLint, formatReport } from '../lib/lint.mjs';
 import { regenerateIndex } from '../lib/index-gen.mjs';
 import { digestFile } from '../lib/digest.mjs';
 import { matchGlob } from '../lib/glob.mjs';
-import { readLock, isLockStale } from '../lib/lock.mjs';
+import { acquireLock, releaseLock } from '../lib/lock.mjs';
 import { ensurePrivateDir, securePrivateFile, writePrivateJsonAtomic } from '../lib/permissions.mjs';
 import { safeErrorCode } from '../lib/status.mjs';
 
-const LOCK_ACQUIRE_MAX_ATTEMPTS = 10; // 경합 재시도 상한 — 이론상 수렴하지만 무한루프 방지용 안전판
 const SWEEP_LOOKBACK_DAYS = 7; // §7-8: 이보다 오래된 orphan transcript는 sweep 대상에서 제외
 // 유휴 판정은 config(sweep_min_idle_minutes, 기본 60분)로 옮겼다 — "마지막 활동 후 N분"이
 // 수집의 1차 기준이 됐기 때문이다. 세션 훅은 수집 시점이 아니라 배치를 깨우는 트리거일 뿐이다.
 const BATCH_SESSION_RETENTION_MS = 14 * 86400_000;
 const BATCH_SESSION_REGISTRY_LIMIT = 2000;
-const CHUNK_BYTE_LIMIT = 300 * 1024; // §5-5 6단계
+// §5-5 6단계. env 조정은 LINGER_POLL_MS와 같은 관용구다(테스트가 청크 경계를 만들기 위한
+// 수단일 뿐 사용자 노브가 아니다). positiveIntFromEnv는 함수 선언이라 호이스팅된다 —
+// 화살표 함수로 바꾸면 TDZ로 즉사한다.
+const CHUNK_BYTE_LIMIT = positiveIntFromEnv('OKF_CHUNK_BYTE_LIMIT', 300 * 1024);
 const INGEST_TIMEOUT_MS = 15 * 60_000;
 const REPAIR_TIMEOUT_MS = 15 * 60_000;
 // 링거(유휴 대기) 노브 — 기본 5분 간격 확인, 최대 8시간. 테스트가 수 분씩 잠들지 않도록
@@ -27,6 +29,12 @@ const REPAIR_TIMEOUT_MS = 15 * 60_000;
 const LINGER_POLL_MS = positiveIntFromEnv('OKF_LINGER_POLL_MS', 5 * 60_000);
 const LINGER_MAX_MS = positiveIntFromEnv('OKF_LINGER_MAX_MS', 8 * 3600_000);
 const SESSION_ID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+// 커밋은 끝났는데 archive 이동만 실패한 세션을 '미처리'와 구분하는 마커. 이게 없으면 다음
+// 회차가 그 세션을 raw로 되돌려 이미 지불한 ingest를 다시 지불한다(T2.2).
+const ARCHIVED_MARKER_SUFFIX = '.archived';
+// 분석기가 '쓸 게 없었다'를 선언하는 유일한 수단. `.md`로 끝나면 안 된다 —
+// applyAnalyzerWorkspace가 .md만 반영하므로 `.okf-noop.md`는 번들에 실린다.
+const NOOP_MARKER = '.okf-noop';
 
 // 리뷰 지적(사후 반영): capture.mjs는 로컬 날짜(toLocaleDateString('en-CA'))를 쓰는데
 // 이 파일은 toISOString(UTC)을 섞어 써서, UTC+ 시간대의 이른 새벽 시간대에 라벨이 하루
@@ -100,6 +108,14 @@ function rememberBatchSession(okfHome, sessionId) {
   writePrivateJsonAtomic(paths.batchSessions, { sessions: kept });
 }
 
+function readLastBatch(okfHome) {
+  try {
+    return JSON.parse(fs.readFileSync(okfPaths(okfHome).lastBatch, 'utf8'));
+  } catch {
+    return null; // 부재·파손은 '이전 상태 없음'과 같다 — 여기서 배치를 막지 않는다
+  }
+}
+
 function batchSessionIds(okfHome) {
   try {
     const parsed = JSON.parse(fs.readFileSync(okfPaths(okfHome).batchSessions, 'utf8'));
@@ -171,45 +187,9 @@ function transcriptCwdIsOkfHome(transcriptPath, okfHome) {
   return cwd != null && samePath(cwd, okfHome);
 }
 
-// ---------- 0. 락 획득 (원자적 wx + stale 판정 2단계) ----------
-function tryAcquireOnce(lockPath, payload) {
-  try {
-    fs.writeFileSync(lockPath, payload, { flag: 'wx' });
-    return true;
-  } catch (err) {
-    if (err.code === 'EEXIST') return false;
-    throw err;
-  }
-}
-
-function acquireLock(okfHome) {
-  const paths = okfPaths(okfHome);
-  fs.mkdirSync(paths.state, { recursive: true });
-  const payload = JSON.stringify({ pid: process.pid, startedEpochMs: Date.now() });
-
-  for (let attempt = 0; attempt < LOCK_ACQUIRE_MAX_ATTEMPTS; attempt++) {
-    if (tryAcquireOnce(paths.lock, payload)) {
-      return { acquired: true, recoveredFromStaleLock: false };
-    }
-
-    // lib/lock.mjs의 동일 판정(죽은 PID, 또는 살아있어도 하드 상한 초과)을 쓴다 — 이 판정
-    // 로직이 여기와 lib/batch-gate.mjs 두 곳에 따로 있으면 서로 어긋나기 쉽다(리뷰 지적 사후 반영).
-    const existing = readLock(paths.lock);
-    if (isLockStale(existing)) {
-      log(okfHome, existing ? `stale lock 회수 (PID ${existing.pid})` : 'stale lock 회수 (락 파일 파손/부재)');
-      tryUnlink(paths.lock);
-      if (tryAcquireOnce(paths.lock, payload)) return { acquired: true, recoveredFromStaleLock: true };
-      continue;
-    }
-
-    return { acquired: false, recoveredFromStaleLock: false }; // 다른 배치가 정상 진행 중
-  }
-  return { acquired: false, recoveredFromStaleLock: false };
-}
-
-function releaseLock(okfHome) {
-  tryUnlink(okfPaths(okfHome).lock);
-}
+// ---------- 0. 락 획득 ----------
+// 획득/해제는 lib/lock.mjs가 소유한다(락 계약의 단일 원천). /okf:okf-deprecate가 같은 API의
+// 두 번째 소비자이고, lib/bootstrap.mjs가 isBundleLocked로 그 계약을 존중한다.
 
 // ---------- 1. 수집 (sweep, §7-8 — 이제 1차 수집 경로) ----------
 // 수집 기준은 세션 훅이 아니라 "마지막 활동 후 sweep_min_idle_minutes 유휴 + 크기 성장"이다.
@@ -336,9 +316,27 @@ function recoverStagingLeftovers(okfHome) {
   const paths = okfPaths(okfHome);
   for (const runId of safeReaddir(paths.staging)) {
     const runDir = path.join(paths.staging, runId);
+    // 마커(.archived) 인지가 .jsonl 분기보다 **먼저** 와야 한다 — 순서를 뒤집으면 else의
+    // tryUnlink가 마커를 지워버려 '커밋은 끝났고 이동만 실패했다'는 사실이 사라지고, 짝
+    // transcript가 raw로 되돌아가 이미 지불한 세션이 재과금된다.
+    const archivedMarkers = new Set(
+      safeReaddir(runDir).filter((f) => f.endsWith(ARCHIVED_MARKER_SUFFIX))
+        .map((f) => f.slice(0, -ARCHIVED_MARKER_SUFFIX.length))
+    );
+    const todayDir = path.join(paths.removeCandidate, localDateString());
     for (const f of safeReaddir(runDir)) {
       const full = path.join(runDir, f);
-      if (f.endsWith('.jsonl')) {
+      if (f.endsWith(ARCHIVED_MARKER_SUFFIX)) {
+        tryUnlink(full);
+      } else if (f.endsWith('.jsonl') && archivedMarkers.has(f)) {
+        // 이미 처리·커밋된 세션이다. raw가 아니라 _remove_candidate로 회수한다(LLM 호출 0회).
+        try {
+          fs.mkdirSync(todayDir, { recursive: true });
+          fs.renameSync(full, path.join(todayDir, f));
+        } catch (err) {
+          log(okfHome, `아카이브 재시도 실패 ${path.basename(full)}: code=${safeErrorCode(err)}`);
+        }
+      } else if (f.endsWith('.jsonl')) {
         try {
           fs.mkdirSync(paths.raw, { recursive: true });
           fs.renameSync(full, path.join(paths.raw, f));
@@ -393,27 +391,63 @@ function quarantineJunkRaw(okfHome) {
   return quarantined;
 }
 
+// stale lock 회수 회차의 원복은 "크래시 잔여물을 버린다"인데, 그 판단이 틀렸을 때 되돌릴
+// 방법이 없었다. 원복 전에 추적 파일을 _remove_candidate 아래로 복사해 TTL(기본 30일) 동안
+// 가역으로 만든다. 반드시 **날짜 디렉토리 아래**여야 purgeRemoveCandidate가 회수한다.
+// `--ignored`는 절대 붙이지 마라 — raw/ 전사 원문이 통째로 딸려온다.
+function backupDirtyTree(okfHome, runId) {
+  const paths = okfPaths(okfHome);
+  let entries;
+  try {
+    entries = git(['status', '--porcelain', '-z'], paths.home).split('\0').filter(Boolean);
+  } catch (err) {
+    log(okfHome, `원복 전 백업 목록 조회 실패: code=${safeErrorCode(err)}`);
+    return 0;
+  }
+  const destRoot = path.join(paths.removeCandidate, localDateString(), `pre-rollback-${runId}`);
+  let copied = 0;
+  for (const entry of entries) {
+    // `XY <path>`. rename은 `R  new\0old\0`라 두 번째 필드에 상태코드가 없다 — 그때는 통째로 경로다.
+    const rel = /^[ MADRCU?!]{2} /.test(entry) ? entry.slice(3) : entry;
+    if (!rel || rel.startsWith('.okf/')) continue;
+    const src = path.join(paths.home, rel);
+    const dest = path.join(destRoot, rel);
+    try {
+      if (!fs.statSync(src).isFile()) continue;
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(src, dest);
+      fs.chmodSync(dest, 0o600);
+      copied++;
+    } catch {
+      // 삭제된 파일(D 상태) 등 — 백업할 바이트가 없다. 원복을 막지 않는다.
+    }
+  }
+  if (copied > 0) log(okfHome, `원복 전 dirty 추적 파일 ${copied}개를 _remove_candidate로 백업`);
+  return copied;
+}
+
 // dirty 작업트리 판정: recoveredFromStaleLock이면 무조건 크래시 잔여물로 간주해 원복(§7-4 코덱스 2차 지적).
 // 정상적으로 락을 처음부터 획득했을 때만 "사용자 편집"으로 취급해 lint-gate 후 커밋.
-function handleDirtyWorkingTree(okfHome, recoveredFromStaleLock) {
+function handleDirtyWorkingTree(okfHome, recoveredFromStaleLock, runId) {
   const home = okfPaths(okfHome).home;
-  if (!isDirty(home)) return { ok: true };
+  if (!isDirty(home)) return { ok: true, report: null };
 
   if (recoveredFromStaleLock) {
     log(okfHome, '크래시 잔여물로 판단되는 dirty 작업트리 발견(stale lock 회수됨) — lint 결과 무관 무조건 원복');
+    backupDirtyTree(okfHome, runId);
     rollback(home);
-    return { ok: true };
+    return { ok: true, report: null };
   }
 
   const report = runLint(okfHome);
   if (report.errors.length === 0) {
     log(okfHome, '배치 시작 전 사용자 편집 발견, lint 통과 — pre-batch 커밋 후 진행');
     commitAll(home, 'okf: pre-batch: user edits');
-    return { ok: true };
+    return { ok: true, report };
   }
 
   log(okfHome, `배치 시작 전 dirty 작업트리가 lint 실패 — 배치 시작하지 않고 중단. rules=${summarizeLintForLog(report)}`);
-  return { ok: false };
+  return { ok: false, report };
 }
 
 // ---------- 3. purge ----------
@@ -712,6 +746,41 @@ function rollbackChunk(okfHome, chunk) {
   }
 }
 
+// 커밋 뒤의 archive 이동은 '이미 지불하고 이미 반영한' 다음에 오는 유일한 무방비 구간이었다
+// (T2.2 — 대조군인 빈-digest 이동 경로에는 try/catch가 있었다). 실패해도 지식은 커밋돼 있고,
+// 위험은 source가 staging에 남아 다음 회차가 **재과금**하는 것뿐이다. 그래서 실패 시 마커를
+// 남겨 '처리 완료됐으나 이동만 실패'로 구분한다 — recoverStagingLeftovers가 그것을 읽는다.
+function archiveChunk(okfHome, chunk, todayDir) {
+  let allMoved = true;
+  for (const dp of chunk) {
+    tryUnlink(dp.digest);
+    const dest = path.join(todayDir, path.basename(dp.source));
+    try {
+      fs.mkdirSync(todayDir, { recursive: true });
+      fs.renameSync(dp.source, dest);
+      continue;
+    } catch (err) {
+      log(okfHome, `아카이브 이동 실패(커밋은 완료됨): code=${safeErrorCode(err)} — 복사 폴백 시도`);
+    }
+    try {
+      fs.mkdirSync(todayDir, { recursive: true });
+      fs.copyFileSync(dp.source, dest);
+      tryUnlink(dp.source);
+      continue;
+    } catch {
+      // 마커로 넘어간다
+    }
+    try {
+      fs.writeFileSync(`${dp.source}${ARCHIVED_MARKER_SUFFIX}`, '', { mode: 0o600 });
+      log(okfHome, '아카이브 재시도 마커 기록 — 다음 회차가 LLM 호출 없이 이동만 재시도한다');
+    } catch (err) {
+      log(okfHome, `아카이브 마커 기록 실패: code=${safeErrorCode(err)}`);
+    }
+    allMoved = false;
+  }
+  return allMoved;
+}
+
 // ---------- 5.5 분석기 워크스페이스 ----------
 // 번들은 ~/.claude 아래에 살고, Claude Code는 그 경로의 모든 쓰기를 "sensitive file"로 차단한다.
 // 실측(E3/E5): headless에서 이 차단은 --settings allow 규칙으로도 --allowedTools로도 안 풀리고
@@ -793,7 +862,9 @@ function applyAnalyzerWorkspace(okfHome, wsRoot) {
   if (blocked > 0) {
     log(okfHome, `분석기 산출물 반영 거부 ${blocked}건 — SCHEMA.md/okf_seed 시드 수정 시도`);
   }
-  return applied;
+  // blocked를 함께 돌려준다 — NO-OP 판정이 "쓴 게 없다"와 "쓰려다 거부당했다"를 구분해야
+  // 하기 때문이다. 기존 호출부 두 곳은 반환값을 버리고 있었으므로 파급은 0이다.
+  return { applied, blocked };
 }
 
 // 리뷰 지적(사후 반영): regenerateIndex/runLint/commitAll 중 하나가 (git commit 실패,
@@ -802,6 +873,20 @@ function applyAnalyzerWorkspace(okfHome, wsRoot) {
 // 없다" -> 정상 신규 획득(recoveredFromStaleLock=false)으로 보고, 청크 도중 남은 dirty
 // 작업트리를 "사용자 편집"으로 오분류할 위험이 있었다(§7-4가 막으려던 바로 그 상황).
 // 여기서 즉시 잡아서 그 청크만 롤백하면, 다음 실행이 헷갈릴 dirty 상태 자체가 안 남는다.
+// NO-OP 선언을 자유 텍스트 완전일치에서 워크스페이스 마커 파일로 옮긴다. 실측: no-op 회차
+// 25번 중 9번(36%)이 프로토콜대로 정확히 'NO-OP' 한 줄을 내지 못해 실패로 오분류됐고,
+// 3회 연속 실패 구간까지 있었다. 도구 호출(파일 생성)은 문장 생성보다 훨씬 안정적이다.
+// 텍스트 폴백은 하위호환으로 남기되 **완전일치**를 유지한다(substring이면 설명문 속 언급이
+// 선언으로 오인돼 지식이 조용히 archive된다).
+function declaredNoOp(wsRoot, output) {
+  try {
+    if (fs.existsSync(path.join(wsRoot, NOOP_MARKER))) return true;
+  } catch {
+    // 텍스트 폴백으로
+  }
+  return output.trim() === 'NO-OP';
+}
+
 function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, config, runId) {
   const { wsRoot, wsChunk } = buildAnalyzerWorkspace(okfHome, runId, i, chunk);
   try {
@@ -814,20 +899,24 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
       effort: config.batch_effort,
     });
     if (!ingestResult.ok) {
+      // claude를 아예 못 부르는 상태라면 남은 청크도 15분씩 타임아웃만 태운다 — 치명 실패다.
       log(okfHome, `청크 ${i + 1} ingest 실패: ${describeClaudeError(ingestResult.error)} — 원복 후 배치 중단`);
-      return false;
+      return { ok: false, fatal: true };
     }
 
-    applyAnalyzerWorkspace(okfHome, wsRoot);
+    const applyResult = applyAnalyzerWorkspace(okfHome, wsRoot);
 
     // 실측(E3): 쓰기가 막히면 분석기는 성공 종료하지만 아무것도 못 쓰고, NO-OP 선언 대신 차단
     // 사정을 설명한다. 이를 NO-OP으로 오분류하면 지식이 조용히 유실된다(30일 뒤 삭제).
-    // "무변경 + NO-OP 미선언"은 실패다 — raw를 되돌려 재시도 대상으로 남기고, 상태에 드러낸다.
-    // 선언 판정은 정확히 'NO-OP' 한 줄(ingest.md 프로토콜) — 설명문 속 "언급"(substring)은
-    // 선언이 아니다(리뷰 확정: 유실 쪽이 아니라 재시도 쪽으로 기울어야 한다).
-    if (!isDirty(paths.home) && ingestResult.output.trim() !== 'NO-OP') {
-      log(okfHome, `청크 ${i + 1}: 무변경인데 NO-OP 선언 없음 — 쓰기 차단/유실 의심, 원복 후 중단`);
-      return false;
+    //
+    // NO-OP 선언은 '쓸 게 없었다'일 때만 유효하다. 분석기가 실제로 무언가를 썼는데(applied>0)
+    // 또는 게이트가 그 산출물을 거부했는데(blocked>0) 마커가 있으면, 그건 NO-OP이 아니라
+    // 실패이거나 오염된 digest의 지시를 따른 것이다 — 마커만 믿으면 지식이 조용히 archive된다.
+    const noOpDeclared = applyResult.applied === 0 && applyResult.blocked === 0
+      && declaredNoOp(wsRoot, ingestResult.output);
+    if (!isDirty(paths.home) && !noOpDeclared) {
+      log(okfHome, `청크 ${i + 1}: 무변경인데 NO-OP 마커·선언 모두 없음 — 쓰기 차단/유실 의심, 이 청크만 건너뛴다`);
+      return { ok: false, fatal: false };
     }
 
     regenerateIndex(okfHome);
@@ -852,7 +941,7 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
 
     if (report.errors.length > 0) {
       log(okfHome, `청크 ${i + 1} repair 후에도 lint 실패 — 원복. rules=${summarizeLintForLog(report)}`);
-      return false;
+      return { ok: false, fatal: false };
     }
 
     // ingest가 "재사용 가치 없음(NO-OP)" 판단으로 아무것도 안 썼을 수 있다 — 이 경우 커밋할 diff가
@@ -863,47 +952,65 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
     } else {
       log(okfHome, `청크 ${i + 1}: NO-OP (반영할 지식 없음)`);
     }
-    return true;
+    return { ok: true, fatal: false };
   } finally {
     fs.rmSync(wsRoot, { recursive: true, force: true });
   }
 }
 
+// 청크는 독립 트랜잭션이다. 예전엔 한 청크의 비치명 실패(NO-OP 판정 실패, repair 후 lint
+// 실패)가 배치 전체를 중단시켜 뒤 청크의 세션이 통째로 raw에 남았다 — 실측 2청크 픽스처에서
+// 처리 0/2, archive 0, raw 2. 치명 실패(claude 자체를 못 부름)만 중단하고 나머지는 건너뛴다.
 function processChunks(okfHome, chunks, pluginRootDir, config, runId) {
   const paths = okfPaths(okfHome);
   const todayDir = path.join(paths.removeCandidate, localDateString());
 
+  let succeededChunks = 0;
+  let skippedChunks = 0;
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     log(okfHome, `청크 ${i + 1}/${chunks.length} 처리 시작 (세션 ${chunk.length}개)`);
 
-    let succeeded;
+    let result;
     try {
-      succeeded = processChunkBody(okfHome, chunk, i, chunks.length, paths, pluginRootDir, config, runId);
+      result = processChunkBody(okfHome, chunk, i, chunks.length, paths, pluginRootDir, config, runId);
     } catch (err) {
       log(okfHome, `청크 ${i + 1} 처리 중 예외 발생: code=${safeErrorCode(err)} — 크래시로 간주해 원복 후 배치 중단`);
-      succeeded = false;
+      result = { ok: false, fatal: true };
     }
 
-    if (!succeeded) {
+    if (!result.ok) {
       rollbackChunk(okfHome, chunk);
-      return { processedChunks: i, aborted: true };
+      if (result.fatal) {
+        return { succeededChunks, skippedChunks, aborted: true, reason: 'fatal' };
+      }
+      skippedChunks++;
+      log(okfHome, `청크 ${i + 1} 건너뜀 — 나머지 청크는 계속 처리한다`);
+      continue;
     }
 
-    fs.mkdirSync(todayDir, { recursive: true });
-    for (const dp of chunk) {
-      fs.renameSync(dp.source, path.join(todayDir, path.basename(dp.source)));
-      tryUnlink(dp.digest);
-    }
+    archiveChunk(okfHome, chunk, todayDir);
+    succeededChunks++;
   }
-  return { processedChunks: chunks.length, aborted: false };
+  return {
+    succeededChunks,
+    skippedChunks,
+    aborted: skippedChunks > 0,
+    reason: skippedChunks > 0 ? 'skipped' : null,
+  };
 }
 
 // ---------- 7. last-batch.json 갱신 ----------
-function updateLastBatch(okfHome, result) {
+// extra는 이 함수의 유일한 확장 슬롯이다(비용 필드·blocked 등). 시그니처를 늘리지 마라 —
+// 인자 순서가 갈리면 호출부마다 다른 객체를 다른 자리에 넘기게 된다.
+function updateLastBatch(okfHome, result, extra = {}) {
   const paths = okfPaths(okfHome);
   const pendingAfter = safeReaddir(paths.raw).filter((f) => f.endsWith('.jsonl')).length;
-  writePrivateJsonAtomic(paths.lastBatch, { lastRunEpochMs: Date.now(), lastResult: result, pendingAfter });
+  // blocked는 매 회차 명시적으로 null로 덮는다 — 해소된 뒤에도 옛 값이 남으면
+  // /okf:okf-status가 이미 고쳐진 lint 실패를 영구히 보고한다.
+  writePrivateJsonAtomic(paths.lastBatch, {
+    lastRunEpochMs: Date.now(), lastResult: result, pendingAfter, blocked: null, ...extra,
+  });
   log(okfHome, `배치 종료: ${result} (잔여 raw: ${pendingAfter})`);
 }
 
@@ -914,8 +1021,8 @@ function runBatch() {
   const pluginRootDir = pluginRoot();
   const runId = `${Date.now()}-${process.pid}`;
 
-  const lockResult = acquireLock(okfHome);
-  // 다른 배치가 정상 진행 중이거나 경합 상한 초과 — 다음 스케줄에 재시도
+  const lockResult = acquireLock(okfHome, 'batch', { onLog: (m) => log(okfHome, m) });
+  // 다른 홀더(배치 또는 /okf:okf-deprecate)가 정상 진행 중이거나 경합 상한 초과 — 다음 스케줄에 재시도
   if (!lockResult.acquired) return { acquiredLock: false, freshPending: 0 };
 
   try {
@@ -945,9 +1052,22 @@ function runBatch() {
     if (skipSweepForBenchmark) log(okfHome, 'benchmark isolation: orphan sweep 생략');
     if (swept.recovered > 0) log(okfHome, `sweep: 세션 ${swept.recovered}개 수집`);
 
-    const dirtyResult = handleDirtyWorkingTree(okfHome, lockResult.recoveredFromStaleLock);
+    const dirtyResult = handleDirtyWorkingTree(okfHome, lockResult.recoveredFromStaleLock, runId);
     if (!dirtyResult.ok) {
-      updateLastBatch(okfHome, 'aborted: pre-batch dirty tree lint failed');
+      // pre-batch lint 실패는 배치를 **영구 정지**시키는데, 지금까지 그 사실이 어디에도
+      // 구조화돼 남지 않아 사용자가 알 방법이 없었다. since는 최초 발생 시각을 유지한다.
+      // lint message는 절대 넣지 마라 — js-yaml 파싱 에러 메시지는 위반한 YAML 원문을 포함한다.
+      // 규칙 코드와 파일 경로까지가 상한이고, 그것도 0600 상태 파일에만 들어간다.
+      const prev = readLastBatch(okfHome);
+      const since = prev?.blocked?.kind === 'pre-batch-lint' ? prev.blocked.since : Date.now();
+      updateLastBatch(okfHome, 'aborted: pre-batch dirty tree lint failed', {
+        blocked: {
+          kind: 'pre-batch-lint',
+          since,
+          rules: summarizeLintForLog(dirtyResult.report),
+          files: [...new Set(dirtyResult.report.errors.map((e) => e.file))].slice(0, 20),
+        },
+      });
       return { acquiredLock: true, freshPending: swept.freshPending };
     }
 
@@ -1018,7 +1138,7 @@ function runBatch() {
     log(okfHome, `이번 회차 처리 대상: 세션 ${selected.length}개, digest 합계 ${(totalBytes / 1024).toFixed(1)}KB`);
 
     const chunks = chunkBySize(selected, CHUNK_BYTE_LIMIT);
-    const { processedChunks, aborted } = processChunks(okfHome, chunks, pluginRootDir, config, runId);
+    const { succeededChunks, aborted } = processChunks(okfHome, chunks, pluginRootDir, config, runId);
 
     try {
       fs.rmdirSync(stagingDir);
@@ -1026,10 +1146,12 @@ function runBatch() {
       // no-op (혹시 남은 게 있으면 다음 실행의 크래시 복구 단계가 처리)
     }
 
-    updateLastBatch(okfHome, aborted ? `partial: ${processedChunks}/${chunks.length} chunks` : 'ok');
+    updateLastBatch(okfHome, aborted ? `partial: ${succeededChunks}/${chunks.length} chunks` : 'ok');
     return { acquiredLock: true, freshPending: swept.freshPending };
   } finally {
-    releaseLock(okfHome);
+    // token을 반드시 넘긴다 — 인자 없이 부르면 lib/lock.mjs의 단락 평가로 '남의 락도 무조건
+    // unlink'가 되살아난다.
+    releaseLock(okfHome, lockResult.token);
   }
 }
 
@@ -1069,4 +1191,19 @@ async function runLoop() {
   }
 }
 
-await runLoop();
+try {
+  await runLoop();
+} catch (err) {
+  // 예전엔 여기서 던진 예외가 unhandled rejection으로 사라져 상태 파일에 아무 흔적도 남지
+  // 않았다 — 사용자에겐 배치가 조용히 멈춘 것으로만 보인다. err.message는 절대 남기지 마라
+  // (전사 파생 문자열·YAML 원문이 섞일 수 있다) — 코드까지가 상한이다.
+  const crashedHome = resolveOkfHome();
+  log(crashedHome, `배치 루프 예외 종료: code=${safeErrorCode(err)}`);
+  try {
+    updateLastBatch(crashedHome, `error: batch loop crashed (${safeErrorCode(err)})`);
+  } catch {
+    // 상태 기록마저 실패하면 위 로그 한 줄이 마지막 신호다.
+  }
+  // process.exit()가 아니라 exitCode여야 한다 — pipe stdout 절단 전례(bin/session-start.mjs 하단).
+  process.exitCode = 1;
+}
