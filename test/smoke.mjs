@@ -4239,6 +4239,85 @@ if (process.platform !== 'win32') {
     logs.includes('전부 비었다'), logs.split('\n').slice(-6).join('|'));
 }
 
+// --- 적대적 검증 6차: 재시도 상한의 다중 청크 구멍 + 원장 값 검증 + .claim-* 크래시 창 ---
+{
+  // **신규 MAJOR**: 원장 정리의 live 집합이 staging의 `<runId>/` 아래로 안 내려갔다.
+  // snapshotRaw가 회차 시작에 모든 청크의 소스를 staging으로 옮기므로, 청크 1이 실패해
+  // saveRetryLedger가 도는 순간 뒤 청크의 세션이 전부 '없는 것'이 되어 원장에서 지워졌다 —
+  // 마지막 청크의 세션은 카운트가 매 회차 1로 리셋되어 영원히 상한에 닿지 않았다.
+  // 무한 재과금을 막으려던 기능이 **다중 청크 회차(=비용이 큰 쪽)에서 정확히 안 들었다.**
+  const home = bootstrapped('batch-multichunk-cap');
+  writeConfig(home, { claude_bin: FAKE_CLAUDE });
+  fs.mkdirSync(okfPaths(home).raw, { recursive: true });
+  const sample = fs.readFileSync(SAMPLE_TRANSCRIPT, 'utf8');
+  const ids = ['c1c1c1c1', 'c2c2c2c2', 'c3c3c3c3'];
+  for (const id of ids) {
+    fs.writeFileSync(path.join(okfPaths(home).raw, `2026-07-15--proj--${id}-1111-2222-3333-444444444444.jsonl`), sample);
+  }
+  // 청크당 1세션이 되도록 상한을 세션 하나보다 작게 준다 — 3청크가 보장된다.
+  const env = { FAKE_CLAUDE_MODE: 'blocked', OKF_CHUNK_BYTE_LIMIT: '1' };
+  runBatch({ okfHome: home, env });
+  runBatch({ okfHome: home, env });
+  const ledgerAfter2 = JSON.parse(fs.readFileSync(okfPaths(home).chunkRetries, 'utf8'));
+  const counts = Object.values(ledgerAfter2).sort();
+  ok('다중 청크에서도 모든 세션의 실패가 2회차까지 누적된다',
+    counts.length === 3 && counts.every((n) => n === 2), JSON.stringify(ledgerAfter2));
+  runBatch({ okfHome: home, env });
+  ok('다중 청크에서도 3회차에 전 세션이 격리된다(raw가 빈다)',
+    listRaw(home).length === 0 && listRemoveCandidate(home).length === 3,
+    `raw=${listRaw(home).length} quarantined=${listRemoveCandidate(home).length}`);
+}
+{
+  // 손상된 원장의 음수 값: Number.isInteger는 음수를 통과시킨다. 값 -1000000이면 attempts가
+  // 영원히 상한 아래에 머물러 상한이 통째로 무력화된다.
+  const home = setupBatchSandbox('ledger-negative');
+  const env = { FAKE_CLAUDE_MODE: 'blocked' };
+  runBatch({ okfHome: home, env });
+  const ledgerPath = okfPaths(home).chunkRetries;
+  const key = Object.keys(JSON.parse(fs.readFileSync(ledgerPath, 'utf8')))[0];
+  fs.writeFileSync(ledgerPath, JSON.stringify({ [key]: -1000000 }));
+  runBatch({ okfHome: home, env });
+  runBatch({ okfHome: home, env });
+  runBatch({ okfHome: home, env });
+  ok('음수로 손상된 원장이 상한을 무력화하지 못한다',
+    listRaw(home).length === 0 && listRemoveCandidate(home).length === 1,
+    `raw=${listRaw(home).length} ledger=${readIfExists(ledgerPath)}`);
+}
+{
+  // rename 클레임이 여는 유일한 새 창: 클레임 직후 크래시하면 락이 사라지고 `.claim-*`만 남아,
+  // 다음 배치가 recoveredFromStaleLock=false로 들어가 반쯤 반영된 산출물을 사용자 편집으로 보고
+  // 커밋한다(§7-4가 막으려던 오분류). `.claim-*`의 존재 자체를 회수 중단의 증거로 읽어야 한다.
+  const home = bootstrapped('lock-abandoned-claim');
+  const paths = okfPaths(home);
+  fs.mkdirSync(paths.state, { recursive: true });
+  fs.writeFileSync(`${paths.lock}.claim-12345-abcdef`,
+    JSON.stringify({ pid: 999999, startedEpochMs: Date.now(), holder: 'batch', token: 'STALE' }));
+  const logs = [];
+  const res = acquireLock(home, 'batch', { onLog: (m) => logs.push(m) });
+  ok('중단된 .claim-* 잔재는 크래시 잔여물로 읽힌다',
+    res.acquired === true && res.recoveredFromStaleLock === true,
+    `acquired=${res.acquired} recovered=${res.recoveredFromStaleLock}`);
+  ok('그리고 청소된다(회차마다 쌓이지 않는다)',
+    fs.readdirSync(paths.state).filter((n) => n.includes('.claim-')).length === 0,
+    fs.readdirSync(paths.state).join(','));
+  ok('그 사실이 로그에 남는다', logs.some((m) => m.includes('.claim-')), logs.join('|'));
+  releaseLock(home, res.token);
+}
+{
+  // 원장 정리(live 필터)는 안전 속성이 아니라 **위생** 속성이라 상한 테스트로는 안 잡힌다
+  // (독립 검증이 그 줄만 지우는 mutant의 생존을 보고했다). 정리가 없으면 원장이 무한히 자란다:
+  // 격리·빈-digest 아카이브·수동 삭제로 raw를 떠난 세션의 항목이 영원히 남는다.
+  const home = setupBatchSandbox('ledger-prune');
+  const ledgerPath = okfPaths(home).chunkRetries;
+  fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
+  fs.writeFileSync(ledgerPath, JSON.stringify({ '세션#deadbeef': 1, '세션#cafebabe': 2 }));
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'blocked' } });
+  const after = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+  ok('raw·staging 어디에도 없는 원장 항목은 저장 시 정리된다',
+    !('세션#deadbeef' in after) && !('세션#cafebabe' in after) && Object.keys(after).length === 1,
+    JSON.stringify(after));
+}
+
 // ---------------------------------------------------------------------------
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

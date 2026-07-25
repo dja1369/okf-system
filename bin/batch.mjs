@@ -935,8 +935,18 @@ function readRetryLedger(paths) {
 // 오인하는 것도 이 정리가 막는다.
 function saveRetryLedger(paths, ledger) {
   const live = new Set();
-  for (const dir of [paths.raw, paths.staging]) {
-    for (const f of safeReaddir(dir)) if (f.endsWith('.jsonl')) live.add(sessionLabel(f));
+  for (const f of safeReaddir(paths.raw)) if (f.endsWith('.jsonl')) live.add(sessionLabel(f));
+  // **staging은 `<runId>/` 한 단계 아래에 .jsonl을 담는다.** 여기서 내려가지 않으면 staging이
+  // live에 아무것도 기여하지 않고, 회차 시작에 snapshotRaw가 **모든 청크의 소스**를 staging으로
+  // 옮기므로 청크 1이 실패하는 순간 아직 처리 대기 중인 뒤 청크의 세션이 전부 '없는 것'으로
+  // 판정돼 원장에서 지워진다 → 그 세션들의 attempts가 매 회차 0부터 다시 센다.
+  // 독립 검증 실측(5세션 3청크): 마지막 청크의 세션은 카운트가 영원히 1에 머물러 상한에 닿지
+  // 않았고, 5회차 뒤에도 raw에 남아 매 회차 재과금됐다 — 무한 재과금을 막으려던 기능이
+  // **다중 청크 회차(=비용이 큰 쪽)에서 정확히 안 들었다.**
+  for (const runId of safeReaddir(paths.staging)) {
+    for (const f of safeReaddir(path.join(paths.staging, runId))) {
+      if (f.endsWith('.jsonl')) live.add(sessionLabel(f));
+    }
   }
   for (const k of Object.keys(ledger)) if (!live.has(k)) delete ledger[k];
   try {
@@ -953,7 +963,11 @@ function rollbackChunk(okfHome, chunk) {
   let quarantined = 0;
   for (const dp of chunk) {
     const label = sessionLabel(dp.source);
-    const attempts = (Number.isInteger(ledger[label]) ? ledger[label] : 0) + 1;
+    // `> 0`을 빼지 마라 — Number.isInteger는 음수를 통과시키고, 손상된 원장에 음수가 들어가면
+    // attempts가 영원히 상한 아래에 머물러 상한이 통째로 무력화된다(독립 검증 실측: 값 -1000000).
+    // 공격자 통제는 아니지만 부분 쓰기·디스크 손상으로 도달 가능하다.
+    const prior = ledger[label];
+    const attempts = (Number.isInteger(prior) && prior > 0 ? prior : 0) + 1;
     const giveUp = attempts >= MAX_CHUNK_ATTEMPTS;
     const destDir = giveUp ? path.join(paths.removeCandidate, localDateString()) : paths.raw;
     try {
