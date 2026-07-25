@@ -2370,7 +2370,10 @@ console.log('\n=== plugin contract and docs ===');
   const pluginManifest = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
   ok('command docs never suggest bare /okf-status', !/\/okf-status\b/.test(batchCommand + configCommand));
   ok('status command explains idle-based collection (수집은 sweep 소관)', statusCommand.includes('sweep_min_idle_minutes'));
-  ok('behavior changes advance the distributable plugin version', pluginManifest.version === '0.1.6');
+  // 릴리스 통합: 이 브랜치는 릴리스 1(0.2.0 신뢰성)과 릴리스 2(0.2.1 OKF 스펙 v0.2 대응)를
+  // 하나의 PR로 싣는다. 별도 통합 커밋이 존재하지 않으므로 이 줄과 plugin.json은 같은
+  // 커밋에서만 함께 움직인다 — 개별 작업패키지는 둘 중 어느 것도 건드리지 않는다.
+  ok('behavior changes advance the distributable plugin version', pluginManifest.version === '0.2.1');
 
   const readmes = fs.readdirSync(PLUGIN_ROOT).filter((name) => /^README(?:\.[^.]+)?\.md$/.test(name));
   ok('all localized READMEs document the safe 9000-byte gate default', readmes.length === 8 && readmes.every((name) => {
