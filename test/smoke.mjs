@@ -4964,6 +4964,31 @@ if (process.platform !== 'win32') {
     text.slice(0, 300));
 }
 
+{
+  // W14: `SCHEMA.md`·`prompts/ingest.md`가 분석기에게 금지한 신뢰 필드에 **코드 적용 지점이
+  // 없었다**(독립 리뷰 지적). `generated`는 fail-closed 스탬핑이, `status`는 은퇴 상한이
+  // 코드로 시행하는데 이 셋만 순수 프롬프트 규범이었다.
+  // 지금은 기능적 영향 0이지만(소비 코드가 없다), 릴리스 3에서 신뢰 신호를 읽기 시작하면
+  // **그 이전에 커밋된 위조 값이 소급 탐지 없이 "확인됨"으로 읽힌다** — 소급은 불가능하니
+  // 동시 탐지를 지금 건다.
+  const home = bootstrapped('lint-w14-trust-fields');
+  fs.writeFileSync(path.join(home, 'decisions', 'forged.md'),
+    '---\ntype: decision\ntitle: "t"\ndescription: "d"\ntimestamp: 2026-07-15\nverified:\n  - by: "human:someone"\n    at: "2026-07-15T00:00:00Z"\nsources:\n  - "https://example.com"\n---\n본문\n');
+  fs.writeFileSync(path.join(home, 'decisions', 'clean.md'),
+    '---\ntype: decision\ntitle: "t2"\ndescription: "d2"\ntimestamp: 2026-07-15\n---\n본문\n');
+  const report = runLint(home);
+  const w14 = report.warnings.filter((x) => x.rule === 'W14');
+  ok('분석기가 쓰면 안 되는 신뢰 필드는 W14로 드러난다',
+    w14.length === 2 && w14.every((x) => x.file.includes('forged.md')),
+    w14.map((x) => `${x.file}:${x.message}`).join('|'));
+  ok('정상 concept은 W14를 만들지 않는다(과잉 경고 가드)',
+    !w14.some((x) => x.file.includes('clean.md')));
+  // **차단이 아니라 경고다.** OKF 스펙 §11이 미지·추가 필드를 이유로 문서를 거부하지 말라고
+  // 하고, 사람이나 외부 도구가 이 필드를 쓰는 것은 정당하다 — 배치를 세우면 안 된다.
+  ok('W14는 배치를 세우지 않는다(에러가 아니다)',
+    report.errors.length === 0, JSON.stringify(report.errors));
+}
+
 // ---------------------------------------------------------------------------
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
