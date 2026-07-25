@@ -315,6 +315,7 @@ Dabei wurden ein Swift-Standard-`Error`, das fälschlich auf einen gleichnamigen
 | `batch_digest_cap_kb` | `150` | Digest-Obergrenze pro Sitzung für das LLM; raw bleibt vollständig |
 | `remove_candidate_ttl_days` | `30` | Aufbewahrungsdauer vor Löschung verarbeiteter raw-Daten |
 | `inject_max_lines` / `inject_max_bytes` | `120` / `9000` | Inline-Gate-Grenzen unterhalb von Claude Codes 10.000-Zeichen-Schwelle |
+| `sweep_backfill_days` | `0` | Tage **vor** dem Installationsmarker, bis zu denen der Sweep zurückgreifen darf; `0` (Standard) = nur Konversationen nach der Installation. Das harte 7-Tage-Fenster begrenzt es weiterhin. |
 | `batch_max_usd_per_day` | `0` | Tägliche LLM-Ausgabenobergrenze in USD; `0` = unbegrenzt (Standard). Die Kosten werden ohnehin erfasst und angezeigt. Nur Best-Effort — der Zähler liegt in `.okf/last-batch.json`. |
 
 ```sh

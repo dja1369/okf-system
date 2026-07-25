@@ -213,7 +213,7 @@ Swift 標準 `Error` と同名 nested type の誤接続、C standard header と 
 
 ## 設定・削除
 
-`~/.claude/okf/.okf/config.md` または `/okf:okf-config` を使います。主要 default は `enabled: true`、`batch_interval_hours: 1`、`batch_max_digest_kb: 600`、`sweep_min_idle_minutes: 60`（最後の活動からこの時間が経つと収集対象になります。`0` なら即時収集）、`batch_digest_cap_kb: 150`、`remove_candidate_ttl_days: 30`、`inject_max_lines` / `inject_max_bytes`: `120` / `9000`、`batch_max_usd_per_day: 0`（1 日あたりの LLM 支出上限（USD）。`0` は無制限で、これが default です。上限に関係なくコストは常に記録・表示されます。best-effort のガードであり、累計は `.okf/last-batch.json` にあります）です。無効・未知の値は安全な default に戻ります。
+`~/.claude/okf/.okf/config.md` または `/okf:okf-config` を使います。主要 default は `enabled: true`、`batch_interval_hours: 1`、`batch_max_digest_kb: 600`、`sweep_min_idle_minutes: 60`（最後の活動からこの時間が経つと収集対象になります。`0` なら即時収集）、`batch_digest_cap_kb: 150`、`remove_candidate_ttl_days: 30`、`inject_max_lines` / `inject_max_bytes`: `120` / `9000`、`sweep_backfill_days: 0`（インストール時刻より **前** に何日さかのぼって収集するか。default の `0` は「インストール以降の会話のみ」。ハードな 7 日ウィンドウが引き続き上限です）、`batch_max_usd_per_day: 0`（1 日あたりの LLM 支出上限（USD）。`0` は無制限で、これが default です。上限に関係なくコストは常に記録・表示されます。best-effort のガードであり、累計は `.okf/last-batch.json` にあります）です。無効・未知の値は安全な default に戻ります。
 
 ```sh
 claude plugin uninstall okf

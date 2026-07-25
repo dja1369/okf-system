@@ -14,6 +14,8 @@ inject_max_lines: 120           # 게이트 주입 줄 캡
 inject_max_bytes: 9000          # 훅 10,000자 한도 안에 inline 유지하는 안전 바이트 캡
 claude_bin: ""                  # 비면 PATH의 'claude'. GUI 런치 PATH 문제 시 절대경로
 node_bin: ""
+sweep_backfill_days: 0          # 설치 시각 이전으로 며칠까지 소급 수집할지. 0=설치 이후만(기본).
+                                # SWEEP_LOOKBACK_DAYS(7일) 창은 그대로라 7 초과는 추가 효과 없음
 batch_max_usd_per_day: 0        # 일일 지출 상한(USD). 0=무제한(기본). best-effort 가드다 —
                                 # last-batch.json의 당일 누계 기반이라 그 파일이 지워지면 0부터 다시 센다
 ---

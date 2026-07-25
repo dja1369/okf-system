@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { resolveOkfHome, okfPaths, pluginRoot, claudeConfigDir, isOkfTestSessionDir, sanitizeForFilename, SCAN_EXCLUDE_DIRS } from '../lib/paths.mjs';
+import { resolveOkfHome, okfPaths, pluginRoot, claudeConfigDir, isOkfTestSessionDir, sanitizeForFilename, SCAN_EXCLUDE_DIRS, BUILTIN_EXCLUDE_CWD } from '../lib/paths.mjs';
+import { readInstalledAt } from '../lib/installed-at.mjs';
 import { readConfig, DEFAULT_CONFIG } from '../lib/config.mjs';
 import { git, isDirty, commitAll, rollback } from '../lib/git.mjs';
 import { runLint, formatReport } from '../lib/lint.mjs';
@@ -199,7 +200,23 @@ function transcriptCwdIsOkfHome(transcriptPath, okfHome) {
 //   못박아 후반 대화를 영영 잃던 버그의 해법이기도 하다.
 // CLAUDE_CONFIG_DIR 존중(리뷰 지적 사후 반영): OKF_HOME 해석과 같은 루트를 봐야 한다.
 // collect=false면 판정만 하고 복사하지 않는다 — 링거의 probe용.
-function scanOrphanSessions(okfHome, config, collect) {
+// 설치 하한. 소급된 마커(git-root-commit/last-batch/unknown)에서는 기존 7일 창을 좁히면 안 된다 —
+// 루트 커밋이 7일 이내인 번들에서 4~7일 전 미처리 transcript가 **영구** 배제되기 때문이다
+// (SWEEP_LOOKBACK_DAYS는 하드 창이라 다음 회차에도 돌아오지 않는다). Math.max로 쓰면
+// 문제가 발생하는 구간(설치 3일 된 번들)을 정확히 비켜간다 — 반드시 Math.min이다.
+// readInstalledAt은 git 서브프로세스를 띄울 수 있으므로 **회차당 1회**만 부르고 링거 probe에도
+// 같은 값을 재사용한다(그러지 않으면 8시간 동안 5분마다 git이 뜬다).
+function computeInstallFloorMs(okfHome, config) {
+  const windowStartMs = Date.now() - SWEEP_LOOKBACK_DAYS * 86400_000;
+  const marker = readInstalledAt(okfHome);
+  const rawFloorMs = marker.installedAtEpochMs - config.sweep_backfill_days * 86400_000;
+  // 마커를 실제로 읽지 못했으면(쓰기 실패 등) 클램프하지 않는다 — 신규 설치인데 마커만
+  // 실패한 경우가 소급 경로를 타고 설치 전 7일치를 끌어오는 구멍을 닫는다(lib/installed-at.mjs).
+  const skipClamp = marker.source === 'bootstrap' || marker.persisted === false;
+  return skipClamp ? rawFloorMs : Math.min(rawFloorMs, windowStartMs);
+}
+
+function scanOrphanSessions(okfHome, config, collect, installFloorMs) {
   const projectsDir = path.join(claudeConfigDir(), 'projects');
   let projectDirs;
   try {
@@ -236,10 +253,15 @@ function scanOrphanSessions(okfHome, config, collect) {
   }
   const selfSessionIds = batchSessionIds(okfHome);
 
-  const cutoff = Date.now() - SWEEP_LOOKBACK_DAYS * 86400_000;
+  const windowStartMs = Date.now() - SWEEP_LOOKBACK_DAYS * 86400_000;
+  const floorMs = Number.isFinite(installFloorMs) ? installFloorMs : windowStartMs;
   let recovered = 0;
   let freshPending = 0;
   let unknownCwdHeld = 0;
+  let outsideWindow = 0;
+  let beforeInstall = 0;
+  let builtinExcluded = 0;
+  const builtinPatternHits = new Set();
 
   for (const dirent of projectDirs) {
     // OKF 자신의 테스트·벤치가 임시 디렉토리에서 남긴 세션은 사용자 지식이 아니다. 이 필터가
@@ -259,7 +281,10 @@ function scanOrphanSessions(okfHome, config, collect) {
       } catch {
         continue;
       }
-      if (st.size === 0 || st.mtimeMs < cutoff) continue;
+      if (st.size === 0) continue;
+      if (st.mtimeMs < windowStartMs) { outsideWindow++; continue; }
+      // 설치 하한: 사용자가 이 플러그인을 넣기 **전**의 대화는 동의 범위 밖이다.
+      if (st.mtimeMs < floorMs) { beforeInstall++; continue; }
 
       const queued = queuedById.get(sessionId);
       const knownSize = Math.max(queued?.size ?? 0, archivedMaxById.get(sessionId) ?? 0);
@@ -267,6 +292,16 @@ function scanOrphanSessions(okfHome, config, collect) {
 
       const cwd = readTranscriptCwd(full);
       if (cwd != null && samePath(cwd, okfHome)) continue; // 분석기 자신의 세션(2차 가드는 세션ID 레지스트리)
+      // 내장 제외(OKF 자신의 개발·벤치·테스트 작업 디렉토리)는 위생 필터이므로 fail-closed
+      // 분기를 켜지 않는다 — 프라이버시 약속은 사용자 목록(capture_exclude_cwd) 쪽의 것이다.
+      if (cwd != null) {
+        const builtinIdx = BUILTIN_EXCLUDE_CWD.findIndex((pattern) => matchGlob(cwd, [pattern]));
+        if (builtinIdx >= 0) {
+          builtinExcluded++;
+          builtinPatternHits.add(builtinIdx);
+          continue;
+        }
+      }
       if (config.capture_exclude_cwd.length > 0) {
         // 리뷰 확정(major): 제외는 프라이버시 약속이다 — cwd를 확인할 수 없으면 수집하지
         // 않는 쪽(fail-closed)이 맞다. 모르는 채로 LLM에 실어 보내는 것보다 보류가 낫다.
@@ -304,11 +339,19 @@ function scanOrphanSessions(okfHome, config, collect) {
   if (collect && unknownCwdHeld > 0) {
     log(okfHome, `cwd 미확인 transcript ${unknownCwdHeld}개 수집 보류 — 수집 제외 설정이 활성이라 fail-closed`);
   }
-  return { recovered, freshPending };
+  // 진단 로그는 **개수와 설정값만**. 경로·세션ID는 절대 남기지 않는다. 내장 제외는 어떤 규칙이
+  // 걸렸는지 알아야 오탐을 신고할 수 있으므로 경로 대신 **패턴 인덱스**를 남긴다.
+  if (collect && beforeInstall > 0) {
+    log(okfHome, `설치 시각 이전 transcript ${beforeInstall}개 수집 제외 (sweep_backfill_days=${config.sweep_backfill_days})`);
+  }
+  if (collect && builtinExcluded > 0) {
+    log(okfHome, `내장 제외 transcript ${builtinExcluded}개 (패턴 #${[...builtinPatternHits].sort((a, b) => a - b).join(',#')})`);
+  }
+  return { recovered, freshPending, outsideWindow, beforeInstall, builtinExcluded };
 }
 
-function sweepOrphanSessions(okfHome, config) {
-  return scanOrphanSessions(okfHome, config, true);
+function sweepOrphanSessions(okfHome, config, installFloorMs) {
+  return scanOrphanSessions(okfHome, config, true, installFloorMs);
 }
 
 // ---------- 2. 크래시 복구 ----------
@@ -1138,7 +1181,10 @@ function runBatch() {
     // history from entering the synthetic condition; normal production batches always sweep.
     const skipSweepForBenchmark = process.env.OKF_BENCH_SKIP_SWEEP === '1'
       && Boolean(process.env.OKF_BENCH_USAGE_FILE);
-    const swept = skipSweepForBenchmark ? { recovered: 0, freshPending: 0 } : sweepOrphanSessions(okfHome, config);
+    const installFloorMs = computeInstallFloorMs(okfHome, config);
+    const swept = skipSweepForBenchmark
+      ? { recovered: 0, freshPending: 0 }
+      : sweepOrphanSessions(okfHome, config, installFloorMs);
     if (skipSweepForBenchmark) log(okfHome, 'benchmark isolation: orphan sweep 생략');
     if (swept.recovered > 0) log(okfHome, `sweep: 세션 ${swept.recovered}개 수집`);
 
@@ -1287,6 +1333,9 @@ async function runLoop() {
     if (cycle.freshPending === 0) return;
     const okfHome = resolveOkfHome();
     const config = readConfig(okfHome);
+    // 링거 probe가 회차마다 readInstalledAt을 부르면 마커 쓰기가 실패한 번들에서 8시간 동안
+    // 5분마다 git 서브프로세스가 뜬다 — 진입 시 한 번만 계산해 재사용한다.
+    const lingerInstallFloorMs = computeInstallFloorMs(okfHome, config);
     log(okfHome, `링거: 활동 직후 세션 ${cycle.freshPending}개 — 유휴 도달까지 대기 (poll ${Math.round(LINGER_POLL_MS / 1000)}s)`);
     for (;;) {
       if (Date.now() - startedMs >= LINGER_MAX_MS) {
@@ -1294,7 +1343,7 @@ async function runLoop() {
         return;
       }
       await sleep(LINGER_POLL_MS);
-      const probe = scanOrphanSessions(okfHome, config, false);
+      const probe = scanOrphanSessions(okfHome, config, false, lingerInstallFloorMs);
       if (probe.recovered > 0) break; // 유휴에 도달한 세션이 생겼다 — 전체 사이클 재실행
       if (probe.freshPending === 0) return; // 기다리던 세션이 사라졌다(제외 판명, 정리 등)
     }

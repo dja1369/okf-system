@@ -17,6 +17,8 @@ import { regenerateIndex } from '../lib/index-gen.mjs';
 import { digestFile } from '../lib/digest.mjs';
 import { git } from '../lib/git.mjs';
 import { isLockStale, releaseLock } from '../lib/lock.mjs';
+import { readInstalledAt } from '../lib/installed-at.mjs';
+import { matchGlob } from '../lib/glob.mjs';
 import { analyzeProject } from '../lib/analyze.mjs';
 import { buildGraph, renderHtml } from '../lib/viz.mjs';
 import { auditBenchmarkBundle, matchesBenchmarkAnswer } from '../lib/bench-audit.mjs';
@@ -144,6 +146,16 @@ function runBatchDetached({ okfHome, env = {} }) {
     },
     stdio: 'ignore',
   });
+}
+
+// 설치 하한(R1)은 "mtime을 과거로 밀어 유휴를 만든다"는 기존 sweep 픽스처 관용구와 정면으로
+// 부딪힌다. 이 헬퍼는 "이 번들은 오래전에 설치됐다"를 만들어 그 픽스처들이 원래 검사하려던
+// 축만 남긴다. **'비수집을 기대하는' 블록에도 반드시 넣어야 한다** — 안 넣으면 테스트는 계속
+// 통과하지만 설치 하한이 먼저 막아 원래 검사하려던 필터를 더 이상 검증하지 않는다(공허한 참).
+function installedLongAgo(okfHome, daysAgo = 30) {
+  fs.mkdirSync(path.dirname(okfPaths(okfHome).installedAt), { recursive: true });
+  fs.writeFileSync(okfPaths(okfHome).installedAt,
+    JSON.stringify({ installedAtEpochMs: Date.now() - daysAgo * 86400_000, source: 'test-fixture' }));
 }
 
 function lastBatch(okfHome) {
@@ -319,6 +331,7 @@ console.log('\n=== config validation ===');
     node_bin: 'node.exe | calc',
     seed_language: 'xx-NOPE',
     batch_max_usd_per_day: -1,
+    sweep_backfill_days: -1,
     unexpected_key: 'must not escape normalization',
   });
   const warnings = [];
@@ -899,6 +912,7 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   writeConfig(home, { claude_bin: FAKE_CLAUDE });
   const fakeHome = sandbox('fake-home-staging-dedup');
   const sessionId = 'd6d6d6d6-1111-2222-3333-444444444444';
+  installedLongAgo(home); // 기존 sweep 픽스처 보호(R1 설치 하한)
   const projectsDir = path.join(fakeHome, '.claude', 'projects', 'my-slug');
   fs.mkdirSync(projectsDir, { recursive: true });
   const stagingTranscript = path.join(projectsDir, `${sessionId}.jsonl`);
@@ -918,6 +932,7 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   const home = bootstrapped('exclude-failclosed');
   writeConfig(home, { claude_bin: FAKE_CLAUDE, capture_exclude_cwd: ['/Users/tester/excluded/**'] });
   const fakeHome = sandbox('fake-home-exclude-failclosed');
+  installedLongAgo(home); // 기존 sweep 픽스처 보호(R1 설치 하한)
   const projectsDir = path.join(fakeHome, '.claude', 'projects', 'excluded-proj');
   fs.mkdirSync(projectsDir, { recursive: true });
   const bigFirst = path.join(projectsDir, 'a1a1a1a1-1111-2222-3333-444444444444.jsonl');
@@ -1006,6 +1021,7 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   writeConfig(home, { claude_bin: FAKE_CLAUDE });
   const fakeHome = sandbox('fake-home-for-sweep');
   const orphanSessionId = 'f1f1f1f1-1111-2222-3333-444444444444';
+  installedLongAgo(home); // 기존 sweep 픽스처 보호(R1 설치 하한)
   const projectsDir = path.join(fakeHome, '.claude', 'projects', 'my-slug');
   fs.mkdirSync(projectsDir, { recursive: true });
   const orphanPath = path.join(projectsDir, `${orphanSessionId}.jsonl`);
@@ -1030,6 +1046,7 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   writeConfig(home, { claude_bin: FAKE_CLAUDE });
   const fakeHome = sandbox('fake-home-for-active-sweep');
   const activeSessionId = 'a2a2a2a2-1111-2222-3333-444444444444';
+  installedLongAgo(home); // 기존 sweep 픽스처 보호(R1 설치 하한)
   const projectsDir = path.join(fakeHome, '.claude', 'projects', 'my-slug');
   fs.mkdirSync(projectsDir, { recursive: true });
   fs.copyFileSync(SAMPLE_TRANSCRIPT, path.join(projectsDir, `${activeSessionId}.jsonl`)); // fresh mtime = "just touched"
@@ -1499,6 +1516,7 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
     capture_exclude_cwd: ['/secret/**'], batch_digest_cap_kb: 120, sweep_min_idle_minutes: 30,
     remove_candidate_ttl_days: 14, inject_max_lines: 100, inject_max_bytes: 8000,
     claude_bin: '/usr/local/bin/claude', node_bin: '/usr/local/bin/node', batch_max_usd_per_day: 2.5,
+    sweep_backfill_days: 7,
   };
   const unvalidated = Object.keys(DEFAULT_CONFIG).filter((k) => !(k in validValues));
   writeConfig(validHome, validValues);
@@ -1509,6 +1527,191 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   ok('every DEFAULT_CONFIG key has a matching validator (no silently dead knobs)',
     unvalidated.length === 0 && notApplied.length === 0 && validWarnings.length === 0,
     `unvalidated=${unvalidated.join(',')} notApplied=${notApplied.join(',')} warnings=${validWarnings.map((w) => w.key).join(',')}`);
+}
+// --- R1: 캡처 경계 (설치 하한 · glob 제외 루트 · 내장 제외) ---
+{
+  // T1.2 실행 확인: matchGlob('/Users/me/secret', ['/Users/me/secret/**'])가 false였다 —
+  // 유일한 옵트아웃이 **가장 흔한 경우**(cwd가 정확히 제외 루트)를 못 막았고, 스모크는
+  // 하위 경로만 봐서 이것을 놓쳤다.
+  ok('capture_exclude_cwd <p>/** excludes the pattern root itself',
+    matchGlob('/Users/x/secret', ['/Users/x/secret/**']) === true);
+  ok('capture_exclude_cwd <p>/** still excludes descendants and never a sibling prefix',
+    matchGlob('/Users/x/secret/deep/inner', ['/Users/x/secret/**']) === true
+    && matchGlob('/Users/x/secretive', ['/Users/x/secret/**']) === false
+    // 기존 4패턴 회귀 0: 중간의 `/**/`, 단독 `**`, 접두 `**/`, 리터럴 경로
+    && matchGlob('/a/mid/b', ['/a/**/b']) === true
+    && matchGlob('/anything/at/all', ['**']) === true
+    && matchGlob('/deep/x', ['**/x']) === true
+    && matchGlob('/p', ['/p']) === true && matchGlob('/p/q', ['/p']) === false);
+}
+{
+  // T1.1: 설치 버튼 한 번에 지난 7일치 **전 프로젝트** 대화가 유료 배치로 나갔다. 유일한
+  // 옵트아웃인 capture_exclude_cwd는 기본 []이고 config.md 자체가 바로 그 SessionStart에서
+  // 처음 생성되므로 설정할 창이 물리적으로 없다.
+  const home = setupBatchSandbox('install-floor');
+  fs.rmSync(path.join(okfPaths(home).raw, fs.readdirSync(okfPaths(home).raw)[0]), { force: true });
+  const fakeHome = sandbox('fake-home-install-floor');
+  const projectsDir = path.join(fakeHome, '.claude', 'projects', 'preexisting-proj');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  for (let i = 0; i < 20; i++) {
+    const p = path.join(projectsDir, `aa${String(i).padStart(2, '0')}0000-1111-2222-3333-444444444444.jsonl`);
+    fs.writeFileSync(p, `${JSON.stringify({ type: 'user', cwd: `/Users/tester/proj${i}`, message: { role: 'user', content: `설치 이전 대화 ${i}` } })}\n`);
+    const past = new Date(Date.now() - 2 * 86400_000);
+    fs.utimesSync(p, past, past);
+  }
+  const argvDump = path.join(sandbox('install-floor-argv'), 'argv.json');
+  runBatch({
+    okfHome: home,
+    env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome, FAKE_CLAUDE_DUMP_ARGV_TO: argvDump },
+  });
+  ok('설치 이전 transcript 20개는 기본 설정에서 한 건도 수집되지 않는다',
+    listRaw(home).length === 0 && listRemoveCandidate(home).length === 0,
+    `raw=${listRaw(home).length} archived=${listRemoveCandidate(home).length}`);
+  ok('설치 이전만 있는 회차는 유료 호출 없이 noop으로 끝난다',
+    lastBatch(home).lastResult === 'noop' && !fs.existsSync(argvDump),
+    `${lastBatch(home).lastResult} argvDump=${fs.existsSync(argvDump)}`);
+
+  // 옵트인하면 같은 20개가 전부 들어온다 — 기능이 꺼진 게 아니라 기본값이 보수적일 뿐이다.
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, sweep_backfill_days: 7 });
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  ok('sweep_backfill_days=7이면 같은 20개가 전부 수집·처리된다',
+    listRemoveCandidate(home).length === 20, `archived=${listRemoveCandidate(home).length}`);
+}
+{
+  // 신규 번들의 마커는 '지금'이다.
+  const home = bootstrapped('installed-at-fresh');
+  const marker = JSON.parse(fs.readFileSync(okfPaths(home).installedAt, 'utf8'));
+  const modeOk = process.platform === 'win32'
+    || (fs.statSync(okfPaths(home).installedAt).mode & 0o777) === 0o600;
+  ok('fresh bootstrap records the install floor as its own moment',
+    marker.source === 'bootstrap' && Math.abs(Date.now() - marker.installedAtEpochMs) < 60_000 && modeOk,
+    JSON.stringify(marker));
+
+  // 기존 번들: 마커가 없으면 번들 git 루트 커밋에서 소급한다. `%ct`는 **초**다 —
+  // `* 1000`을 빠뜨리면 하한이 1970년이 되어 기능이 통째로 무효화되고 아무 테스트도 못 잡는다.
+  fs.rmSync(okfPaths(home).installedAt, { force: true });
+  const rootCt = Number(git(['log', '--max-parents=0', '--format=%ct', 'HEAD'], home).trim().split('\n')[0]);
+  const recomputed = readInstalledAt(home);
+  ok('기존 번들의 설치 시각은 번들 git 루트 커밋에서 소급된다',
+    recomputed.source === 'git-root-commit' && recomputed.installedAtEpochMs === rootCt * 1000,
+    JSON.stringify(recomputed));
+}
+{
+  // 클램프 회귀 가드. 30일 전 케이스만으로는 Math.max()가 하한을 무력화해도 통과해버려
+  // **문제가 발생하는 구간을 정확히 비켜간다** — 루트 커밋이 창 안(3일 전)인 번들이 핵심이다.
+  const home = setupBatchSandbox('installed-at-recent-upgrade');
+  fs.rmSync(path.join(okfPaths(home).raw, fs.readdirSync(okfPaths(home).raw)[0]), { force: true });
+  fs.rmSync(okfPaths(home).installedAt, { force: true });
+  const threeDaysAgo = new Date(Date.now() - 3 * 86400_000).toISOString();
+  // %ct는 committer date다 — 둘 다 넘겨야 한다.
+  git(['commit', '--amend', '--no-edit', '--date', threeDaysAgo], home, {
+    stdio: 'ignore',
+    env: { ...process.env, GIT_AUTHOR_DATE: threeDaysAgo, GIT_COMMITTER_DATE: threeDaysAgo },
+  });
+  ensureBootstrap(home);
+  const fakeHome = sandbox('fake-home-recent-upgrade');
+  const projectsDir = path.join(fakeHome, '.claude', 'projects', 'upgrade-proj');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  const sessionId = 'ba110000-1111-2222-3333-444444444444';
+  const p = path.join(projectsDir, `${sessionId}.jsonl`);
+  fs.writeFileSync(p, `${JSON.stringify({ type: 'user', cwd: '/Users/tester/upgrade', message: { role: 'user', content: '업그레이드 전 미처리 대화' } })}\n`);
+  const fourDaysAgo = new Date(Date.now() - 4 * 86400_000);
+  fs.utimesSync(p, fourDaysAgo, fourDaysAgo);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  ok('설치 3일 된 기존 번들에서 4일 전 세션이 여전히 수집된다(7일 창 불변)',
+    listRemoveCandidate(home).some((f) => f.includes(sessionId)),
+    `marker=${JSON.stringify(readInstalledAt(home))} archived=${listRemoveCandidate(home).join(',')}`);
+}
+{
+  // 30일 전 설치(업그레이드 번들)도 7일 창 안의 세션을 계속 수집한다.
+  const home = setupBatchSandbox('installed-at-old-upgrade');
+  fs.rmSync(path.join(okfPaths(home).raw, fs.readdirSync(okfPaths(home).raw)[0]), { force: true });
+  fs.writeFileSync(okfPaths(home).installedAt,
+    JSON.stringify({ installedAtEpochMs: Date.now() - 30 * 86400_000, source: 'git-root-commit' }));
+  const fakeHome = sandbox('fake-home-old-upgrade');
+  const projectsDir = path.join(fakeHome, '.claude', 'projects', 'old-upgrade-proj');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  const sessionId = 'b0110000-1111-2222-3333-444444444444';
+  const p = path.join(projectsDir, `${sessionId}.jsonl`);
+  fs.writeFileSync(p, `${JSON.stringify({ type: 'user', cwd: '/Users/tester/old', message: { role: 'user', content: '창 안의 대화' } })}\n`);
+  const twoDaysAgo = new Date(Date.now() - 2 * 86400_000);
+  fs.utimesSync(p, twoDaysAgo, twoDaysAgo);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  ok('업그레이드 번들(루트 커밋 30일 전)은 7일 창 안의 세션을 계속 수집한다',
+    listRemoveCandidate(home).some((f) => f.includes(sessionId)));
+
+  // 7일 창은 하드 상한이다 — backfill을 30으로 올려도 10일 전 세션은 오지 않는다.
+  writeConfig(home, { claude_bin: FAKE_CLAUDE, sweep_backfill_days: 30 });
+  const oldSessionId = 'b0220000-1111-2222-3333-444444444444';
+  const q = path.join(projectsDir, `${oldSessionId}.jsonl`);
+  fs.writeFileSync(q, `${JSON.stringify({ type: 'user', cwd: '/Users/tester/old', message: { role: 'user', content: '창 밖의 대화' } })}\n`);
+  const tenDaysAgo = new Date(Date.now() - 10 * 86400_000);
+  fs.utimesSync(q, tenDaysAgo, tenDaysAgo);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  ok('sweep_backfill_days가 7을 넘어도 7일 창이 상한으로 남는다',
+    !listRemoveCandidate(home).some((f) => f.includes(oldSessionId))
+    && !listRaw(home).some((f) => f.includes(oldSessionId)));
+}
+{
+  // 내장 제외: OKF 자신의 개발·벤치 워크트리 세션은 사용자 지식이 아니다. **반대 방향이 더
+  // 중요하다** — 사용자의 진짜 okf-* 프로젝트는 끌 방법 없이 배제되면 안 된다(과차단 대조군).
+  const home = setupBatchSandbox('builtin-exclude');
+  fs.rmSync(path.join(okfPaths(home).raw, fs.readdirSync(okfPaths(home).raw)[0]), { force: true });
+  installedLongAgo(home);
+  const fakeHome = sandbox('fake-home-builtin-exclude');
+  const projectsDir = path.join(fakeHome, '.claude', 'projects', 'mixed');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  const plant = (sessionId, cwd) => {
+    const p = path.join(projectsDir, `${sessionId}.jsonl`);
+    fs.writeFileSync(p, `${JSON.stringify({ type: 'user', cwd, message: { role: 'user', content: `대화 ${sessionId}` } })}\n`);
+    const past = new Date(Date.now() - 2 * 3600_000);
+    fs.utimesSync(p, past, past);
+  };
+  const benchId = 'cc110000-1111-2222-3333-444444444444';
+  const userProjId = 'cc220000-1111-2222-3333-444444444444';
+  const mainCheckoutId = 'cc330000-1111-2222-3333-444444444444';
+  plant(benchId, '/Users/tester/side_project/okf-system/.claude/worktrees/bench-v4');
+  plant(userProjId, '/Users/tester/work/okf-benchmark-harness'); // 임시 경로가 아니다 — 진짜 작업
+  plant(mainCheckoutId, '/Users/tester/side_project/okf-system'); // 메인 체크아웃도 진짜 작업
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  const seen = listRemoveCandidate(home).join(' ');
+  ok('sweep이 OKF 자신의 벤치 워크트리 세션을 기본으로 수집하지 않는다', !seen.includes(benchId), seen);
+  ok('내장 제외가 사용자의 실제 okf-* 프로젝트를 막지 않는다',
+    seen.includes(userProjId) && seen.includes(mainCheckoutId), seen);
+  const builtinLogs = fs.readdirSync(okfPaths(home).logs)
+    .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8')).join('\n');
+  ok('내장 제외 로그는 개수와 패턴 인덱스만 남긴다',
+    /내장 제외 transcript 1개 \(패턴 #\d/.test(builtinLogs)
+    && !builtinLogs.includes('worktrees') && !builtinLogs.includes(benchId),
+    builtinLogs.split('\n').filter((l) => l.includes('내장 제외')).join(' | '));
+}
+{
+  // 마커를 **읽지 못한** 회차는 클램프 없이 fail-closed로 간다. 그러지 않으면 신규 설치인데
+  // 마커 쓰기만 실패한 경우가 소급 경로를 타고 설치 전 7일치를 통째로 끌어온다.
+  const home = setupBatchSandbox('installed-at-unwritable');
+  fs.rmSync(path.join(okfPaths(home).raw, fs.readdirSync(okfPaths(home).raw)[0]), { force: true });
+  fs.rmSync(okfPaths(home).installedAt, { force: true });
+  fs.mkdirSync(okfPaths(home).installedAt, { recursive: true }); // 파일 자리에 디렉토리 → 읽기·쓰기 모두 실패
+  const fakeHome = sandbox('fake-home-unwritable');
+  const projectsDir = path.join(fakeHome, '.claude', 'projects', 'unwritable-proj');
+  fs.mkdirSync(projectsDir, { recursive: true });
+  const sessionId = 'dd110000-1111-2222-3333-444444444444';
+  const p = path.join(projectsDir, `${sessionId}.jsonl`);
+  fs.writeFileSync(p, `${JSON.stringify({ type: 'user', cwd: '/Users/tester/unwritable', message: { role: 'user', content: '설치 이전 대화' } })}\n`);
+  const twoDaysAgo = new Date(Date.now() - 2 * 86400_000);
+  fs.utimesSync(p, twoDaysAgo, twoDaysAgo);
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', HOME: fakeHome, USERPROFILE: fakeHome } });
+  ok('마커 기록이 실패해도 배치가 fail-closed로 끝난다',
+    listRemoveCandidate(home).length === 0 && listRaw(home).length === 0
+    && lastBatch(home).lastResult === 'noop',
+    `${lastBatch(home).lastResult} archived=${listRemoveCandidate(home).length}`);
+}
+{
+  const surfaces = ['README.md', 'README.ko.md', 'README.de.md', 'README.es.md', 'README.fr.md',
+    'README.ja.md', 'README.pt-BR.md', 'README.zh-CN.md', 'docs/USAGE.md',
+    'commands/okf-config.md', 'templates/config.md'];
+  const missing = surfaces.filter((f) => !fs.readFileSync(path.join(PLUGIN_ROOT, f), 'utf8').includes('sweep_backfill_days'));
+  ok('sweep_backfill_days is documented on every config surface', missing.length === 0, missing.join(', '));
 }
 // ---------------------------------------------------------------------------
 console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가 아니라 "마지막 활동 후 N분" ===');
@@ -1525,6 +1728,7 @@ console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가
   writeConfig(home, { claude_bin: FAKE_CLAUDE, sweep_min_idle_minutes: 0 });
   const fakeHome = sandbox('fake-home-idle-zero');
   const sessionId = 'b3b3b3b3-1111-2222-3333-444444444444';
+  installedLongAgo(home); // 기존 sweep 픽스처 보호(R1 설치 하한)
   const projectsDir = path.join(fakeHome, '.claude', 'projects', 'my-slug');
   fs.mkdirSync(projectsDir, { recursive: true });
   fs.copyFileSync(SAMPLE_TRANSCRIPT, path.join(projectsDir, `${sessionId}.jsonl`)); // 방금 활동한 세션
@@ -1538,6 +1742,7 @@ console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가
   writeConfig(home, { claude_bin: FAKE_CLAUDE, sweep_min_idle_minutes: 0 });
   const fakeHome = sandbox('fake-home-regrow');
   const sessionId = 'c9c9c9c9-1111-2222-3333-444444444444';
+  installedLongAgo(home); // 기존 sweep 픽스처 보호(R1 설치 하한)
   const projectsDir = path.join(fakeHome, '.claude', 'projects', 'my-slug');
   fs.mkdirSync(projectsDir, { recursive: true });
   const transcript = path.join(projectsDir, `${sessionId}.jsonl`);
@@ -1562,6 +1767,7 @@ console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가
   writeConfig(home, { claude_bin: FAKE_CLAUDE, capture_exclude_cwd: ['/Users/tester/excluded/**'] });
   const fakeHome = sandbox('fake-home-sweep-exclude');
   const sessionId = 'e7e7e7e7-1111-2222-3333-444444444444';
+  installedLongAgo(home); // 기존 sweep 픽스처 보호(R1 설치 하한)
   const projectsDir = path.join(fakeHome, '.claude', 'projects', 'excluded-proj');
   fs.mkdirSync(projectsDir, { recursive: true });
   const excludedTranscript = path.join(projectsDir, `${sessionId}.jsonl`);
@@ -1581,6 +1787,7 @@ console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가
   writeConfig(home, { claude_bin: FAKE_CLAUDE, sweep_min_idle_minutes: 0.1 }); // 6초
   const fakeHome = sandbox('fake-home-linger');
   const sessionId = 'f8f8f8f8-1111-2222-3333-444444444444';
+  installedLongAgo(home); // 기존 sweep 픽스처 보호(R1 설치 하한)
   const projectsDir = path.join(fakeHome, '.claude', 'projects', 'my-slug');
   fs.mkdirSync(projectsDir, { recursive: true });
   fs.copyFileSync(SAMPLE_TRANSCRIPT, path.join(projectsDir, `${sessionId}.jsonl`)); // 방금 활동(유휴 전)
@@ -1599,6 +1806,7 @@ console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가
   ensureBootstrap(home);
   writeConfig(home, { claude_bin: FAKE_CLAUDE });
   const cfgSessionId = 'c3c3c3c3-1111-2222-3333-444444444444';
+  installedLongAgo(home); // 기존 sweep 픽스처 보호(R1 설치 하한)
   const projectsDir = path.join(customConfigDir, 'projects', 'my-slug');
   fs.mkdirSync(projectsDir, { recursive: true });
   const cfgPath = path.join(projectsDir, `${cfgSessionId}.jsonl`);
@@ -1618,6 +1826,7 @@ console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가
   const fakeHome = sandbox('fake-home-for-bench-isolated-sweep');
   const configDir = path.join(fakeHome, '.claude');
   const foreignSessionId = 'd4d4d4d4-1111-2222-3333-444444444444';
+  installedLongAgo(home); // 기존 sweep 픽스처 보호(R1 설치 하한)
   const projectsDir = path.join(configDir, 'projects', 'foreign');
   fs.mkdirSync(projectsDir, { recursive: true });
   const foreignPath = path.join(projectsDir, `${foreignSessionId}.jsonl`);
@@ -1644,6 +1853,7 @@ console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가
   const registryPath = okfPaths(home).batchSessions;
   const registryText = registryPath && fs.existsSync(registryPath) ? fs.readFileSync(registryPath, 'utf8') : '';
   ok('batch records its own Claude session id in a privacy-safe registry', registryText.includes(batchSessionId) && !registryText.includes('[OKF-BATCH]'));
+  installedLongAgo(home); // 기존 sweep 픽스처 보호(R1 설치 하한)
   const projectsDir = path.join(configDir, 'projects', 'batch-home');
   fs.mkdirSync(projectsDir, { recursive: true });
   const transcript = path.join(projectsDir, `${batchSessionId}.jsonl`);
@@ -1662,6 +1872,7 @@ console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가
   ensureBootstrap(home);
   writeConfig(home, { claude_bin: FAKE_CLAUDE });
   const sessionId = 'c5c5c5c5-1111-2222-3333-444444444444';
+  installedLongAgo(home); // 기존 sweep 픽스처 보호(R1 설치 하한)
   const projectsDir = path.join(configDir, 'projects', 'isolated-okf-home');
   fs.mkdirSync(projectsDir, { recursive: true });
   const transcript = path.join(projectsDir, `${sessionId}.jsonl`);
