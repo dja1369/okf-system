@@ -377,14 +377,19 @@ function recoverStagingLeftovers(okfHome) {
     for (const f of safeReaddir(runDir)) {
       const full = path.join(runDir, f);
       if (f.endsWith(ARCHIVED_MARKER_SUFFIX)) {
-        tryUnlink(full);
+        // **마커를 여기서 지우지 마라.** 짝 파일 이동이 이번에도 실패하면 마커까지 사라져,
+        // 다음 회차가 그 세션을 '미처리'로 오판해 raw로 되돌리고 **이미 지불한 ingest를
+        // 다시 지불한다** — 마커가 막으려던 바로 그 재과금이다. 짝을 성공적으로 옮긴 뒤에만,
+        // 그리고 짝이 아예 없는 고아 마커일 때만 지운다(아래 두 경로).
+        if (!fs.existsSync(full.slice(0, -ARCHIVED_MARKER_SUFFIX.length))) tryUnlink(full);
       } else if (f.endsWith('.jsonl') && archivedMarkers.has(f)) {
         // 이미 처리·커밋된 세션이다. raw가 아니라 _remove_candidate로 회수한다(LLM 호출 0회).
         try {
           fs.mkdirSync(todayDir, { recursive: true });
           fs.renameSync(full, path.join(todayDir, f));
+          tryUnlink(`${full}${ARCHIVED_MARKER_SUFFIX}`); // 이동에 성공했을 때만 마커를 회수한다
         } catch (err) {
-          log(okfHome, `아카이브 재시도 실패 ${path.basename(full)}: code=${safeErrorCode(err)}`);
+          log(okfHome, `아카이브 재시도 실패 ${path.basename(full)}: code=${safeErrorCode(err)} — 마커를 유지해 다음 회차가 다시 시도한다`);
         }
       } else if (f.endsWith('.jsonl')) {
         try {
@@ -705,8 +710,12 @@ function extractSpend(result) {
   };
 }
 
-function roundUsd(v) {
-  return Math.round(v * 10000) / 10000; // 소수 4자리 고정 — 테스트가 오차 0을 단언한다
+// 표시용은 4자리로 고정한다(테스트가 오차 0을 단언한다). **누계는 4자리로 반올림하면 안 된다** —
+// 회차당 $0.00004씩 쓰면 매번 0으로 반올림돼 누계가 영원히 0이 되고 상한이 결코 발동하지 않는다
+// (실측: 20회차 $0.0008이 0으로 남았다). 누계는 6자리로 두어 소액이 살아남게 한다.
+function roundUsd(v, digits = 4) {
+  const f = 10 ** digits;
+  return Math.round(v * f) / f;
 }
 
 // 누계기는 **가변 객체를 통과**시킨다. processChunks의 catch가 processChunkBody를 삼켜도
@@ -739,7 +748,7 @@ function spendExtra(okfHome, spend) {
   const runCost = Number.isFinite(spend?.costUsd) ? spend.costUsd : 0;
   return {
     costUsd: roundUsd(runCost),
-    spendTodayUsd: roundUsd(carried + runCost),
+    spendTodayUsd: roundUsd(carried + runCost, 6),
     spendDate: today,
     tokens: { ...(spend?.usage ?? {}) },
     llmCalls: spend?.calls ?? 0,
@@ -1004,7 +1013,7 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null, chunkBudget = { d
       // 리뷰 확정(minor): 규칙서(SCHEMA.md)와 okf_seed 시드는 "수정 금지"가 프롬프트 규범으로만
       // 있었다 — 오염된 digest에 넘어간 분석기가 규칙서를 영구 교체할 수 있는 경계 구멍이라
       // 여기 드라이버가 시행한다. SCHEMA는 bootstrap 버전 동기화가 유일한 갱신 경로다.
-      if (childRel === 'SCHEMA.md' || (prev && /^okf_seed:\s*true\b/m.test(prev.subarray(0, 2048).toString('utf8')))) {
+      if (childRel === 'SCHEMA.md' || (prev && /^okf_seed[ \t]*:\s*true\b/m.test(prev.subarray(0, 2048).toString('utf8')))) {
         blocked++;
         continue;
       }

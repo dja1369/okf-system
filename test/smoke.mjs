@@ -21,7 +21,7 @@ import { readInstalledAt } from '../lib/installed-at.mjs';
 import { matchGlob } from '../lib/glob.mjs';
 import { BUILTIN_EXCLUDE_CWD } from '../lib/paths.mjs';
 import { parseFrontmatter, setFrontmatterStatus } from '../lib/frontmatter.mjs';
-import { toIsoDate, toIsoDateTime, generatedAt, conceptStatus } from '../lib/trust.mjs';
+import { toIsoDateTime, generatedAt, conceptStatus } from '../lib/trust.mjs';
 import { stampGenerated } from '../lib/generated-stamp.mjs';
 import { analyzeProject } from '../lib/analyze.mjs';
 import { buildGraph, renderHtml } from '../lib/viz.mjs';
@@ -989,10 +989,11 @@ if (process.platform !== 'win32' && process.getuid?.() !== 0) {
 
   const unq = fm('stale_after: 2026-12-31');
   const q = fm('stale_after: "2026-12-31"');
-  ok('trust: toIsoDate collapses an unquoted YAML date and a quoted string to the same value',
+  ok('trust: an unquoted YAML date and a quoted string collapse to the same value',
     // 대조군: 지뢰의 존재 자체를 고정한다. 이 단언이 깨지면 벤더드 파서가 바뀐 것이다.
     unq.stale_after instanceof Date && typeof q.stale_after === 'string'
-    && toIsoDate(unq.stale_after) === '2026-12-31' && toIsoDate(q.stale_after) === '2026-12-31',
+    && toIsoDateTime(unq.stale_after) === '2026-12-31T00:00:00Z'
+    && toIsoDateTime(q.stale_after) === '2026-12-31T00:00:00Z',
     `${Object.prototype.toString.call(unq.stale_after)} / ${Object.prototype.toString.call(q.stale_after)}`);
 
   ok('trust: toIsoDateTime treats an offset-less timestamp as UTC',
@@ -1082,16 +1083,24 @@ if (process.platform !== 'win32' && process.getuid?.() !== 0) {
     schemaFindings.some((w) => w.rule === 'W3'), JSON.stringify(schemaFindings));
 }
 {
-  // 소비자 0인 export를 테스트가 살려두는 상태를 만들지 않는다: S3a가 4개(isPlainObject /
-  // toIsoDateTime / toIsoDate / generatedAt)를 만들고, S4가 첫 소비자와 함께 conceptStatus를
-  // 더한다. normalizeVerified·isStale은 첫 소비자(viz)가 생기는 릴리스에서 추가한다.
+  // 소비자 0인 export를 테스트가 살려두는 상태를 만들지 않는다: S3a가 isPlainObject /
+  // toIsoDateTime / generatedAt을 만들고, S4가 첫 소비자와 함께 conceptStatus를 더한다.
+  // normalizeVerified·isStale·toIsoDate는 첫 소비자(viz의 isStale)가 생기는 릴리스에서 추가한다.
   const trustSrc = readIfExists(path.join(PLUGIN_ROOT, 'lib', 'trust.mjs'));
   const trustExports = (trustSrc.match(/^export function (\w+)/gm) || []).map((m) => m.split(' ')[2]);
-  ok('lib/trust.mjs exports exactly the functions this release consumes',
-    trustExports.length === 5
-    && ['isPlainObject', 'toIsoDateTime', 'toIsoDate', 'generatedAt', 'conceptStatus']
+  // 이름 목록만 비교하면 **소비 코드를 전부 지워도 통과하는 자기충족 단언**이 된다.
+  // 판정 기준은 "프로덕션에서 도달 가능한가"다: 다른 모듈이 직접 import하거나, 그렇게 import된
+  // 다른 export가 호출하거나. trust.mjs 자신도 haystack에 넣되 **자기 정의 헤더는 지운다** —
+  // 안 지우면 아무도 안 부르는 함수가 자기 이름만으로 통과한다(실제로 toIsoDate가 그랬다).
+  const trustBody = trustSrc.replace(/^export function \w+/gm, 'export function');
+  const consumers = ['lib/lint.mjs', 'lib/index-gen.mjs', 'lib/generated-stamp.mjs', 'bin/deprecate.mjs', 'bin/batch.mjs']
+    .map((f) => readIfExists(path.join(PLUGIN_ROOT, f))).concat(trustBody).join('\n');
+  const unconsumed = trustExports.filter((fn) => !new RegExp(`\\b${fn}\\b`).test(consumers));
+  ok('every lib/trust.mjs export is reachable from production code (no dead exports)',
+    trustExports.length === 4 && unconsumed.length === 0
+    && ['isPlainObject', 'toIsoDateTime', 'generatedAt', 'conceptStatus']
       .every((f) => trustExports.includes(f)),
-    trustExports.join(','));
+    `exports=${trustExports.join(',')} unconsumed=${unconsumed.join(',')}`);
   // 판정자는 lib/trust.mjs 한 곳에만 있어야 한다.
   const statusOwners = ['lint.mjs', 'index-gen.mjs', 'viz.mjs', 'frontmatter.mjs']
     .filter((f) => /CONCEPT_STATUSES|function conceptStatus/.test(readIfExists(path.join(PLUGIN_ROOT, 'lib', f))));
@@ -1703,6 +1712,113 @@ function runDeprecate(okfHome, args) {
   const statuslineSrc = readIfExists(path.join(PLUGIN_ROOT, 'bin', 'statusline.mjs'));
   ok('statusline never parses concept frontmatter',
     !statuslineSrc.includes('frontmatter') && !/readFileSync\([^)]*\.md/.test(statuslineSrc));
+}
+// --- 독립 검증(codex 1차)에서 나온 결함들의 회귀 고정 ---
+{
+  // YAML은 `key : value`처럼 콜론 앞 공백을 허용한다. 파서는 인식하는데 정규식이 못 잡으면
+  // "읽기는 되고 쓰기는 안 되는" 비대칭이 생긴다 — 조용한 실패, 중복 키, 보호 게이트 우회.
+  const spaced = '---\ntype : decision\nstatus : deprecated\ntitle: t\ndescription: d\n---\n본문\n';
+  ok('frontmatter surgery handles a space before the colon (status)',
+    conceptStatus(parseFrontmatter(spaced).data) === 'deprecated'
+    && !setFrontmatterStatus(spaced, null).includes('deprecated'),
+    JSON.stringify(setFrontmatterStatus(spaced, null)));
+
+  // 읽기(파서)는 승격을 트리거하는데 쓰기(정규식)가 줄을 못 찾으면 같은 키가 두 번 생기고,
+  // 다음 파싱이 duplicated mapping key로 실패해 자기 치유가 미지 키까지 버린다.
+  const home = bootstrapped('okf-version-spaced');
+  fs.writeFileSync(okfPaths(home).rootIndex,
+    '---\nokf_version : "0.1"\nx_tool_state: keep-me\n---\n# OKF Knowledge Bundle\n');
+  regenerateIndex(home);
+  const after = readIfExists(okfPaths(home).rootIndex);
+  ok('a space before the colon does not duplicate okf_version or drop unknown keys',
+    (after.match(/okf_version/g) || []).length === 1 && after.includes('okf_version: "0.2"')
+    && after.includes('x_tool_state: keep-me')
+    && parseFrontmatter(after).parseError === null,
+    after.slice(0, 120));
+
+  // 보안 경계: okf_seed 보호도 같은 결함을 공유했다 — 오염된 분석기가 `okf_seed : true`로
+  // 적힌 시드를 덮어쓸 수 있었다.
+  ok('the okf_seed protection gate is not bypassed by a space before the colon',
+    /^okf_seed[ \t]*:\s*true\b/m.test('okf_seed : true')
+    && readIfExists(path.join(PLUGIN_ROOT, 'bin', 'batch.mjs')).includes('okf_seed[ \\t]*:')
+    && readIfExists(path.join(PLUGIN_ROOT, 'bin', 'deprecate.mjs')).includes('okf_seed[ \\t]*:'));
+
+  // schema_version도 같은 결함 — 0으로 읽히면 매 SessionStart마다 템플릿이 재배포돼
+  // 사용자 로컬 편집을 반복 파괴한다.
+  ok('schema_version is still read when written with a space before the colon',
+    /^schema_version[ \t]*:\s*(\d+)\s*$/m.exec('schema_version : 2')?.[1] === '2'
+    && readIfExists(path.join(PLUGIN_ROOT, 'lib', 'bootstrap.mjs')).includes('schema_version[ \\t]*:'));
+}
+{
+  // 달력에 없는 날짜·시각을 그럴듯한 값으로 **보정**하면 안 된다. JS Date는 2026-02-30을
+  // 3월 2일로, 24:00을 다음날로 조용히 바꾼다 — 이 계층의 존재 이유를 정면으로 배반한다.
+  const bogus = ['2026-02-30', '2026-00-10', '2026-13-01', '2026-07-32',
+    '2026-07-25T24:00:00', '2026-07-25T23:59:60', '2026-07-25T12:60:00'];
+  ok('trust: impossible dates and times are rejected, never silently corrected',
+    bogus.every((v) => toIsoDateTime(v) === null),
+    bogus.filter((v) => toIsoDateTime(v) !== null).map((v) => `${v}->${toIsoDateTime(v)}`).join(' | '));
+  // 정상값은 그대로 통과해야 한다(과차단 0).
+  const valid = [['2026-02-28', '2026-02-28T00:00:00Z'], ['2024-02-29', '2024-02-29T00:00:00Z'],
+    ['2026-12-31', '2026-12-31T00:00:00Z'], ['2026-07-25T23:59:59', '2026-07-25T23:59:59Z']];
+  ok('trust: real dates including leap days still normalize',
+    valid.every(([v, want]) => toIsoDateTime(v) === want),
+    valid.filter(([v, want]) => toIsoDateTime(v) !== want).map(([v]) => v).join(','));
+}
+{
+  // 회차당 소액을 4자리로 반올림하면 누계가 영원히 0이 되어 상한이 결코 발동하지 않는다.
+  const home = setupBatchSandbox('spend-tiny');
+  let total = 0;
+  for (let round = 0; round < 3; round++) {
+    if (round > 0) {
+      fs.copyFileSync(SAMPLE_TRANSCRIPT,
+        path.join(okfPaths(home).raw, `2026-07-1${round}--proj--e${round}e0e0e0-1111-2222-3333-444444444444.jsonl`));
+    }
+    runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_COST_USD: '0.00004' } });
+    total = lastBatch(home).spendTodayUsd;
+  }
+  ok('tiny per-round spend accumulates instead of rounding away to zero',
+    total === 0.00012, `spendTodayUsd=${total} (기대 0.00012)`);
+}
+{
+  // releaseLock은 token 없이 부르면 아무것도 지우지 않아야 한다 — 예전엔 단락 평가로
+  // 조건이 !current만 남아 남의 락까지 지웠다.
+  const home = bootstrapped('release-lock-strict');
+  const lockPath = okfPaths(home).lock;
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  const payload = JSON.stringify({ pid: process.pid, startedEpochMs: Date.now(), holder: 'batch', token: 'theirs' });
+  fs.writeFileSync(lockPath, payload);
+  const noToken = releaseLock(home);
+  const wrongToken = releaseLock(home, 'mine');
+  ok('releaseLock refuses to unlink without the owning token',
+    noToken === false && wrongToken === false && fs.existsSync(lockPath));
+  ok('releaseLock still unlinks when the token matches',
+    releaseLock(home, 'theirs') === true && !fs.existsSync(lockPath));
+}
+{
+  // 커밋은 끝났는데 이동만 실패한 세션의 마커를, 이동 재시도가 **또** 실패했을 때 지우면
+  // 다음 회차가 그 세션을 미처리로 오판해 이미 지불한 ingest를 다시 지불한다.
+  const home = setupBatchSandbox('archive-marker-persist');
+  const counter = path.join(sandbox('archive-marker-counter'), 'calls.txt');
+  const blocker = path.join(okfPaths(home).removeCandidate, new Date().toLocaleDateString('en-CA'));
+  fs.mkdirSync(path.dirname(blocker), { recursive: true });
+  fs.writeFileSync(blocker, 'not a directory');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_CALL_COUNTER: counter } });
+  // 2회차: 방해물이 그대로라 이동이 **다시** 실패한다. 마커가 살아남아야 한다.
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_CALL_COUNTER: counter } });
+  const stagingRuns = fs.existsSync(okfPaths(home).staging) ? fs.readdirSync(okfPaths(home).staging) : [];
+  const markersLeft = stagingRuns.flatMap((r) => fs.readdirSync(path.join(okfPaths(home).staging, r)))
+    .filter((f) => f.endsWith('.archived'));
+  ok('a repeatedly failing archive move keeps its marker instead of re-billing the session',
+    markersLeft.length === 1 && listRaw(home).length === 0
+    && readIfExists(counter).split('\n').filter(Boolean).length === 1,
+    `markers=${markersLeft.length} raw=${listRaw(home).length} calls=${readIfExists(counter).split('\n').filter(Boolean).length}`);
+  // 3회차: 방해물을 치우면 마커가 LLM 호출 없이 이동만 재시도한다.
+  fs.rmSync(blocker, { force: true });
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_CALL_COUNTER: counter } });
+  ok('once the obstruction clears, the marked session archives without another paid call',
+    listRemoveCandidate(home).length === 1
+    && readIfExists(counter).split('\n').filter(Boolean).length === 1,
+    `archived=${listRemoveCandidate(home).length} calls=${readIfExists(counter).split('\n').filter(Boolean).length}`);
 }
 {
   // 회차당 유료 호출 상한. R3의 청크 독립 트랜잭션은 **실제 지출을 올린다** — 예전엔 첫 청크가
