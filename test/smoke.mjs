@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { ensureBootstrap } from '../lib/bootstrap.mjs';
@@ -127,6 +127,24 @@ function runBatch({ okfHome, env = {} }) {
   });
 }
 
+// runBatch는 execFileSync라 두 배치를 겹칠 수 없다. 락 계약을 바꾸는 작업패키지(R3)는
+// '실제로 겹쳤을 때 무슨 일이 나는가'를 증명할 수단 없이 착지하면 안 된다(reliability §5 항목 6).
+function runBatchDetached({ okfHome, env = {} }) {
+  const home = env.HOME || isolatedHome();
+  return spawn(process.execPath, [path.join(PLUGIN_ROOT, 'bin', 'batch.mjs')], {
+    cwd: okfHome,
+    env: {
+      ...process.env,
+      OKF_HOME: okfHome,
+      HOME: home,
+      USERPROFILE: home,
+      CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
+      ...env,
+    },
+    stdio: 'ignore',
+  });
+}
+
 function lastBatch(okfHome) {
   return JSON.parse(fs.readFileSync(okfPaths(okfHome).lastBatch, 'utf8'));
 }
@@ -146,6 +164,99 @@ function listRemoveCandidate(okfHome) {
     const sub = path.join(dir, d);
     return fs.statSync(sub).isDirectory() ? fs.readdirSync(sub).map((f) => `${d}/${f}`) : [];
   });
+}
+
+// ---------------------------------------------------------------------------
+// live-shape 동결 픽스처(R0). 라이브 번들의 **줄 바이트 벡터만** 담는다 — 전사 텍스트 0바이트.
+// 라이브 번들 수치를 통과 규칙으로 쓰면 재현 불가능하다(배치가 계속 돌아 concept 수가 움직인다).
+// 커밋 가능한 합성 픽스처가 유일한 CI 근거다.
+const LIVE_SHAPE = JSON.parse(
+  fs.readFileSync(path.join(PLUGIN_ROOT, 'test', 'fixtures', 'live-shape-2026-07-25.json'), 'utf8')
+);
+const SHAPE_TYPE_OF = {
+  projects: 'project', decisions: 'decision', preferences: 'preference',
+  patterns: 'pattern', references: 'reference', troubleshooting: 'troubleshooting',
+};
+
+// 정확히 n바이트인 더미 문자열. '가'는 UTF-8 3바이트이므로 3의 배수를 채우고 나머지만 ASCII로 맞춘다.
+function padBytes(n) {
+  if (n <= 0) return '';
+  return '가'.repeat(Math.floor(n / 3)) + 'x'.repeat(n % 3);
+}
+
+// 형상 픽스처로 번들을 합성한다.
+//
+// 고정해야 하는 것은 head 바이트 자체가 아니라 **index에 남는 예산**이다(G3-0b 예산 동형).
+// head는 홈 경로 길이에 비례하는데 mkdtemp 경로 길이는 OS마다 다르다(macOS 임시 경로만 76B라
+// 라이브의 head 686B를 이미 넘는다) — 경로를 패딩해 head를 맞추는 것은 원리적으로 불가능하다.
+// 대신 head가 라이브보다 긴/짧은 만큼 tail을 줄여/늘려 `cap - head - tail`을 라이브와 정확히
+// 같게 만든다. 그러면 index 조립 산술 전체가 라이브와 동형이 되고 절단 바이트도 재현된다.
+function buildShapeBundle(label, shape = LIVE_SHAPE) {
+  const INDEX_MARKER = '--- index.md ---\n';
+  const home = path.join(sandbox(label), 'h');
+  fs.mkdirSync(home, { recursive: true });
+  ensureBootstrap(home);
+  const probeCtx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  const headBytes = Buffer.byteLength(
+    probeCtx.slice(0, probeCtx.indexOf(INDEX_MARKER) + INDEX_MARKER.length), 'utf8'
+  );
+
+  for (const cat of shape.categories) {
+    const dir = path.join(home, cat.dir);
+    fs.mkdirSync(dir, { recursive: true });
+    // 부트스트랩 시드를 지우면 훅 안의 ensureBootstrap이 writeIfMissing으로 되살린다 —
+    // 지우는 대신 형상 값으로 덮어써서 시드가 형상을 흔들지 않게 한다.
+    const existing = fs.readdirSync(dir).filter((f) => f.endsWith('.md') && f !== 'index.md').sort();
+    const names = [...existing];
+    for (let i = existing.length; i < cat.lineBytes.length; i++) names.push(`s${String(i).padStart(2, '0')}.md`);
+    for (const extra of names.slice(cat.lineBytes.length)) fs.rmSync(path.join(dir, extra), { force: true });
+
+    names.slice(0, cat.lineBytes.length).forEach((name, i) => {
+      const title = `T${String(i).padStart(2, '0')}`;
+      const link = `/${cat.dir}/${name}`;
+      // index 줄 형태: `- [title](link): description`
+      const fixed = 3 + Buffer.byteLength(title, 'utf8') + 2 + Buffer.byteLength(link, 'utf8') + 3;
+      fs.writeFileSync(path.join(dir, name),
+        `---\ntype: ${SHAPE_TYPE_OF[cat.dir]}\ntitle: ${title}\ndescription: ${padBytes(cat.lineBytes[i] - fixed)}\ntimestamp: 2026-07-15\n---\n본문\n`);
+    });
+  }
+
+  // tail(log.md 최근 섹션)을 head 차이만큼 보정해 index 예산을 라이브와 동형으로 만든다.
+  const TAIL_HEADER = '--- 최근 변경 (log.md) ---\n';
+  const tailTarget = shape.tailBytes - (headBytes - shape.headBytes);
+  // extractLatestLogSection이 섹션을 15줄로 캡한다 — heading 1줄을 빼고 14불릿이어야 캡에
+  // 걸리지 않는다. 넘기면 tail이 줄 단위로 잘려 "절단 0"을 원리적으로 만족할 수 없다.
+  const logBullets = Math.max(1, Math.min(14, shape.tailLines - 4));
+  const heading = '## 2026-07-25';
+  // tail = 헤더 + latestLog + '\n'. latestLog = heading + '\n' + 불릿들(사이 개행만).
+  // 루프가 매회 |bullet|+1을 깎아 0에 도달하므로 Σ|bullet| + n = 초기 budget이다.
+  // 목표는 Σ|bullet| + (n-1)이므로 초기값은 목표보다 정확히 1 크게 잡는다.
+  let budget = tailTarget - Buffer.byteLength(TAIL_HEADER, 'utf8') - Buffer.byteLength(`${heading}\n`, 'utf8');
+  const bullets = [];
+  for (let i = 0; i < logBullets; i++) {
+    const share = Math.floor(budget / (logBullets - i)) - 3; // '- ' 접두 2 + 개행 1
+    const bullet = `- ${padBytes(Math.max(1, share))}`;
+    bullets.push(bullet);
+    budget -= Buffer.byteLength(bullet, 'utf8') + 1;
+  }
+  fs.writeFileSync(path.join(home, 'log.md'), `# Log\n\n${heading}\n${bullets.join('\n')}\n`);
+  regenerateIndex(home);
+  return { home, headBytes, tailTarget, indexBudget: shape.expected.injectMaxBytes - headBytes - tailTarget };
+}
+
+// 게이트 컨텍스트를 head / index / tail로 갈라 예산 산술을 검사 가능하게 만든다.
+function splitGateContext(ctx) {
+  const INDEX_MARKER = '--- index.md ---\n';
+  const TAIL_MARKER = '--- 최근 변경 (log.md) ---\n';
+  const iAt = ctx.indexOf(INDEX_MARKER) + INDEX_MARKER.length;
+  const tAt = ctx.indexOf(TAIL_MARKER);
+  return {
+    headBytes: Buffer.byteLength(ctx.slice(0, iAt), 'utf8'),
+    index: tAt >= 0 ? ctx.slice(iAt, tAt) : ctx.slice(iAt),
+    tailBytes: tAt >= 0 ? Buffer.byteLength(ctx.slice(tAt), 'utf8') : 0,
+    // 주입된 concept 줄 수 — 카테고리 heading·마커·빈 줄을 뺀 bullet만 센다.
+    taken: (tAt >= 0 ? ctx.slice(iAt, tAt) : ctx.slice(iAt)).split('\n').filter((l) => l.startsWith('- ')).length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -354,6 +465,150 @@ console.log('\n=== session-start.mjs (subprocess) ===');
   // WHERE they are is a dead end — it knows something is missing and cannot reach it. The
   // truncated category must name its own index.md as the way down.
   ok('a truncated category points to its own index.md so the rest stays reachable', ctx.includes('/decisions/index.md'));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n=== 게이트 예산 회계 (R5: 마커·heading 선차감 + starvation 제거) ===');
+{
+  // 조립 시점에 이미 캡 이하가 돼야 truncateUtf8Bytes가 '진짜 안전망'이 된다. 지금은 생략
+  // 마커(카테고리당 최대 ~60B)와 절단 heading의 여분 2B가 선차감되지 않아 조립이 캡을 넘고,
+  // 안전망이 **문서 끝부터** 자른다 — 잘리는 곳은 언제나 log.md tail이다(라이브 절단 218B 전량).
+  //
+  // 60개인 이유: 12개로는 5개 cap 전부에서 절단이 안 나 수정 전에도 통과한다(= 회귀를 못 짚는다).
+  const home = bootstrapped('gate-budget-marker');
+  const decisionsDir = path.join(home, 'decisions');
+  fs.mkdirSync(decisionsDir, { recursive: true });
+  for (let i = 0; i < 60; i++) {
+    const name = `d${String(i).padStart(2, '0')}.md`;
+    const title = `게이트 예산 확인 결정 ${String(i).padStart(2, '0')}`;
+    // index 줄이 정확히 190바이트가 되도록 설명을 채운다(라이브 한국어 concept 줄 규모).
+    const fixed = 3 + Buffer.byteLength(title, 'utf8') + 2 + Buffer.byteLength(`/decisions/${name}`, 'utf8') + 3;
+    fs.writeFileSync(path.join(decisionsDir, name),
+      `---\ntype: decision\ntitle: ${title}\ndescription: ${padBytes(190 - fixed)}\ntimestamp: 2026-07-15\n---\n본문\n`);
+  }
+  const TAIL_MARK = '- 게이트 tail 보존 확인용 마지막 줄';
+  fs.writeFileSync(path.join(home, 'log.md'), `# Log\n\n## 2026-07-15\n${TAIL_MARK}\n`);
+  regenerateIndex(home);
+
+  for (const cap of [5000, 6000, 7000, 8000, 9000]) {
+    writeConfig(home, { inject_max_bytes: cap });
+    const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+    ok(`gate injection stays within inject_max_bytes=${cap} without the safety net cutting`,
+      Buffer.byteLength(ctx, 'utf8') <= cap && ctx.trimEnd().endsWith(TAIL_MARK),
+      `bytes=${Buffer.byteLength(ctx, 'utf8')} tail=${JSON.stringify(ctx.trimEnd().slice(-40))}`);
+  }
+  writeConfig(home, { inject_max_bytes: 9000 });
+  const ctx9000 = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  // 선차감이 마커를 통째로 굶기면 "일부만 실렸다"는 신호 자체가 사라진다 — 그건 막다른 길이다.
+  ok('생략 마커가 붙는 예산에서도 마커 자체는 살아남는다',
+    /\.\.\.\(\d+개 생략 — 전체 목록은 \/decisions\/index\.md 를 Read\)/.test(ctx9000));
+  // capLines의 기본 마커('...(생략)')는 게이트 마커와 문자열이 다르므로 구분 가능하다.
+  ok('the safety net cuts zero lines, not just zero bytes',
+    ctx9000.split('\n').length < DEFAULT_CONFIG.inject_max_lines && !ctx9000.includes('...(생략)'),
+    `lines=${ctx9000.split('\n').length}`);
+}
+{
+  // starvation: 한 카테고리의 다음 줄이 예산을 넘는다고 바깥 루프까지 끝내면, 남은 예산에
+  // 들어갈 짧은 줄이 전부 버려진다. cap 5000인 이유 — 6000에서는 b-huge가 예산에 들어가버려
+  // 수정 후에도 t3/t4가 안 실린다.
+  const home = bootstrapped('gate-budget-starvation');
+  fs.mkdirSync(path.join(home, 'decisions'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'troubleshooting'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'decisions', 'a-short.md'),
+    '---\ntype: decision\ntitle: 짧은 결정\ndescription: 짧다\ntimestamp: 2026-07-15\n---\n본문\n');
+  fs.writeFileSync(path.join(home, 'decisions', 'b-huge.md'),
+    `---\ntype: decision\ntitle: 거대한 결정\ndescription: ${'나'.repeat(1200)}\ntimestamp: 2026-07-15\n---\n본문\n`);
+  for (let i = 0; i < 5; i++) {
+    fs.writeFileSync(path.join(home, 'troubleshooting', `t${i}.md`),
+      `---\ntype: troubleshooting\ntitle: 트러블슈팅 ${i}\ndescription: 트러블슈팅 설명 ${i}\ntimestamp: 2026-07-15\n---\n본문\n`);
+  }
+  writeConfig(home, { inject_max_bytes: 5000 });
+  regenerateIndex(home);
+  const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  ok('an unaffordable line in one category no longer starves the later categories',
+    ctx.includes('트러블슈팅 3') && ctx.includes('트러블슈팅 4'),
+    `bytes=${Buffer.byteLength(ctx, 'utf8')}`);
+  ok('the unaffordable line itself is still reported as omitted', ctx.includes('decisions (결정) — 1/2개'));
+  ok('starvation fix still respects the byte cap', Buffer.byteLength(ctx, 'utf8') <= 5000);
+}
+{
+  // 환급: 어떤 카테고리를 끝까지 다 담아 마커가 출력되지 않게 되면 선차감분을 돌려줘야 한다.
+  // 돌려주지 않으면 최악값 선차감과 같아져 라이브에서 concept 하나가 축출된다(12→11 실측).
+  //
+  // 이 픽스처는 **환급을 빼면 반드시 실패하도록** 설계했다: 전량 수용되는 작은 카테고리 5개가
+  // 각각 마커 비용(≈60~70B)을 돌려주므로, 환급이 없으면 그 합만큼 decisions 줄이 덜 실린다.
+  // 마커 1개분(≈70B)만으로는 190B 줄의 경계에 걸릴 확률이 낮아 가드가 되지 않는다.
+  const home = bootstrapped('gate-budget-refund');
+  fs.mkdirSync(path.join(home, 'decisions'), { recursive: true });
+  for (let s = 0; s < 5; s++) {
+    const dir = path.join(home, `smallcat${s}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'only.md'),
+      `---\ntype: reference\ntitle: 소형 ${s}\ndescription: 전량 수용되어 마커가 사라진다\ntimestamp: 2026-07-15\n---\n본문\n`);
+  }
+  for (let i = 0; i < 200; i++) {
+    const name = `d${String(i).padStart(3, '0')}.md`;
+    const title = `환급 확인 결정 ${String(i).padStart(3, '0')}`;
+    const fixed = 3 + Buffer.byteLength(title, 'utf8') + 2 + Buffer.byteLength(`/decisions/${name}`, 'utf8') + 3;
+    fs.writeFileSync(path.join(home, 'decisions', name),
+      `---\ntype: decision\ntitle: ${title}\ndescription: ${padBytes(100 - fixed)}\ntimestamp: 2026-07-15\n---\n본문\n`);
+  }
+  // 줄 예산이 먼저 물리면 바이트 환급이 결과를 못 바꾼다 — 줄 캡을 풀어 바이트가 물게 한다.
+  writeConfig(home, { inject_max_lines: 1000 });
+  regenerateIndex(home);
+  const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  const taken = splitGateContext(ctx).taken;
+  // REFUND_MIN_TAKEN은 환급이 있을 때의 실측값이다(환급 제거 변형에서는 이보다 작아진다).
+  // 실측: 환급 있음 73 / 환급 제거 변형 68 — 5개 차이라 경계 흔들림에 안전하다.
+  const REFUND_MIN_TAKEN = 73;
+  ok('fully-consumed category refunds its marker budget to another category',
+    !/소형.*생략|smallcat\d+ .*— \d+\/\d+개/.test(ctx) && taken >= REFUND_MIN_TAKEN
+      && Buffer.byteLength(ctx, 'utf8') <= DEFAULT_CONFIG.inject_max_bytes,
+    `taken=${taken} (환급 시 기대 ≥${REFUND_MIN_TAKEN}) bytes=${Buffer.byteLength(ctx, 'utf8')}`);
+}
+{
+  // 구조적 바닥: 검증기 최소값(1024B)에서도 훅은 유효 JSON을 내고 예외를 던지지 않아야 한다.
+  // 이 구간은 head+tail+heading+마커 고정 구조만으로 이미 캡을 넘으므로 '절단 0' 대상이 아니다.
+  const home = bootstrapped('gate-budget-floor');
+  fs.mkdirSync(path.join(home, 'decisions'), { recursive: true });
+  for (let i = 0; i < 10; i++) {
+    fs.writeFileSync(path.join(home, 'decisions', `f${i}.md`),
+      `---\ntype: decision\ntitle: 바닥 결정 ${i}\ndescription: 바닥 설명 ${i}\ntimestamp: 2026-07-15\n---\n본문\n`);
+  }
+  writeConfig(home, { inject_max_bytes: 1024 });
+  regenerateIndex(home);
+  const raw = runHook('bin/session-start.mjs', { okfHome: home });
+  let ctxFloor = null;
+  try { ctxFloor = JSON.parse(raw).hookSpecificOutput.additionalContext; } catch { /* 아래 단언이 잡는다 */ }
+  ok('gate stays valid below the structural floor',
+    typeof ctxFloor === 'string' && Buffer.byteLength(ctxFloor, 'utf8') <= 1024,
+    `raw=${raw.slice(0, 80)}`);
+}
+{
+  // 마커 선차감은 카테고리마다 `lines -= 1`도 한다. 카테고리가 많은 번들에서 그 줄 예산
+  // 잠식이 concept를 밀어내면 안 된다(환급이 그것을 되돌린다).
+  const home = bootstrapped('gate-budget-many-cats');
+  for (let d = 0; d < 10; d++) {
+    const dir = path.join(home, `domain${d}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'c0.md'),
+      `---\ntype: reference\ntitle: 도메인 ${d} concept\ndescription: 카테고리 수만큼 마커가 예약되는 경로\ntimestamp: 2026-07-15\n---\n본문\n`);
+  }
+  regenerateIndex(home);
+  const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  const taken = splitGateContext(ctx).taken;
+  ok('many-category bundle does not lose lines to marker reservation', taken >= 10, `taken=${taken}`);
+}
+{
+  // R0의 동결 형상 픽스처. 수정 전에는 조립 9,218B / 절단 218B(전량 tail)였다.
+  const shaped = buildShapeBundle('live-shape-r5');
+  const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: shaped.home })).hookSpecificOutput.additionalContext;
+  const parts = splitGateContext(ctx);
+  const truncated = shaped.tailTarget - parts.tailBytes;
+  ok('live-shape fixture reproduces the frozen budget after the fix',
+    truncated === 0 && parts.taken >= LIVE_SHAPE.expected.taken
+      && Buffer.byteLength(ctx, 'utf8') <= LIVE_SHAPE.expected.injectMaxBytes,
+    `truncated=${truncated} taken=${parts.taken} bytes=${Buffer.byteLength(ctx, 'utf8')} indexBudget=${shaped.indexBudget}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -808,6 +1063,44 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
     ['11111111', '22222222', '33333333'].every((id) => listRemoveCandidate(home).some((f) => f.includes(id)))
   );
   ok('hygiene: raw가 비워진다', listRaw(home).length === 0);
+}
+{
+  // R0 — 동시 프로세스 락 경합. reliability §5 항목 6: 이 테스트는 항목 11(락 재설계, R3)보다
+  // **먼저** 작성돼야 한다. 잘못 만들면 "중복 spawn은 안전하다"가 "아무 배치도 못 돈다"가 되고,
+  // 그것을 잡을 테스트가 없다. 이 블록은 R3 **이전** 코드에서 통과해야 한다 — 현행 안전성을
+  // 고정하는 것이 목적이다. 실패하면 R3 착수 전에 원인을 규명하라.
+  //
+  // 자식 종료는 이벤트 루프로만 전달된다 — 동기 폴링(Atomics.wait/spawnSync sleep)은 exitCode를
+  // 영원히 null로 두므로 여기서는 반드시 'exit' 이벤트를 await 해야 한다.
+  const home = setupBatchSandbox('lock-race');
+  const counter = path.join(sandbox('lock-race-counter'), 'calls.txt');
+  const raceHome = isolatedHome();
+  const raceEnv = {
+    FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_CALL_COUNTER: counter,
+    HOME: raceHome, USERPROFILE: raceHome,
+  };
+  const racers = [runBatchDetached({ okfHome: home, env: raceEnv }), runBatchDetached({ okfHome: home, env: raceEnv })];
+  await Promise.race([
+    Promise.all(racers.map((c) => new Promise((res) => c.on('exit', res)))),
+    new Promise((res) => { setTimeout(res, 60_000); }),
+  ]);
+  const archived = listRemoveCandidate(home);
+  ok('lock-race: a session is archived exactly once under two concurrent batches',
+    archived.length === 1, `archived=${archived.join(', ')}`);
+  const paidCalls = readIfExists(counter).split('\n').filter(Boolean);
+  ok('lock-race: concurrent batches never exceed two paid calls',
+    paidCalls.length <= 2, `calls=${paidCalls.length}`);
+  ok('lock-race: the tree is clean and no lock file survives the race',
+    git(['status', '--porcelain'], home).trim() === '' && !fs.existsSync(okfPaths(home).lock),
+    `status=${JSON.stringify(git(['status', '--porcelain'], home))} lock=${fs.existsSync(okfPaths(home).lock)}`);
+}
+{
+  // R0 — 동결 픽스처의 프라이버시 계약. 이 파일은 숫자와 디렉토리 이름만 담는다. 누군가
+  // 라이브 index 줄 원문을 붙여넣으면(=사용자 지식 발행) 즉시 실패해야 한다.
+  const shapeRaw = fs.readFileSync(path.join(PLUGIN_ROOT, 'test', 'fixtures', 'live-shape-2026-07-25.json'), 'utf8');
+  const allInts = LIVE_SHAPE.categories.every((c) => Array.isArray(c.lineBytes) && c.lineBytes.every(Number.isInteger));
+  ok('live-shape fixture carries byte counts only, never transcript text',
+    allInts && !shapeRaw.includes('](/'), `allInts=${allInts}`);
 }
 // ---------------------------------------------------------------------------
 console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가 아니라 "마지막 활동 후 N분" ===');

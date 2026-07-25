@@ -13,6 +13,14 @@ const prompt = positionalPrompt || fs.readFileSync(0, 'utf8');
 const mode = process.env.FAKE_CLAUDE_MODE || 'success';
 const isRepairCall = prompt.includes('lint 오류 리포트');
 
+// 청크마다 새 프로세스로 뜨므로 프로세스 내 변수로는 셀 수 없다. 파일 카운터로
+// '이 경로에서 유료 호출이 몇 번 났는가'를 무과금으로 단언한다.
+if (process.env.FAKE_CLAUDE_CALL_COUNTER) {
+  try {
+    fs.appendFileSync(process.env.FAKE_CLAUDE_CALL_COUNTER, `${isRepairCall ? 'repair' : 'ingest'}\n`);
+  } catch { /* 텔레메트리가 스텁을 막지 않는다 */ }
+}
+
 function emitResult(subtype = 'success', isError = false, resultText = 'done') {
   process.stdout.write(JSON.stringify({
     type: 'result',

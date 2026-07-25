@@ -33,17 +33,48 @@ function buildInjectedIndex(okfHome, budgetLines, budgetBytes) {
   if (!cats.length) return '';
 
   const headingFor = (c, count) => `## ${c.dir} (${c.label}) — ${count}`;
-  // heading은 카테고리 수만큼 고정 비용이다 — 항목보다 먼저 예약해야 카테고리 자체가 사라지지 않는다.
+  // 예약과 렌더가 같은 문자열을 쓰도록 마커 생성을 한 곳으로 모은다 — 둘이 갈리면 선차감이
+  // 실제 비용과 어긋나 다시 캡을 넘는다. 문구는 바꾸지 마라(스모크가 '생략'과
+  // '/decisions/index.md'를 단언한다).
+  const markerFor = (c, omitted) => `\n...(${omitted}개 생략 — 전체 목록은 /${c.dir}/index.md 를 Read)`;
+
+  // heading과 생략 마커는 카테고리 수만큼 고정 비용이다 — 항목보다 먼저 예약해야 조립 결과가
+  // 캡을 넘어 아래 안전망(:truncateUtf8Bytes)에서 뒤로 잘리지 않는다. 잘리는 곳은 문서 끝,
+  // 즉 log.md tail이다(라이브 실측 절단 218B 전량이 tail이었다).
   let lines = budgetLines - cats.length * 2;
-  let bytes = budgetBytes - cats.reduce((sum, c) => sum + Buffer.byteLength(`${headingFor(c, `${c.lines.length}개`)}\n\n`, 'utf8'), 0);
+  // heading은 절단된 카테고리에서 `2/6개`로 길어진다(아래 렌더 참조). 짧은 `6개`로 예약하면
+  // 카테고리당 최대 2바이트가 모자라 조립이 캡을 넘는다. 최악값으로 예약해도 주입 concept
+  // 총합은 변하지 않는다(4,000~14,000B 201샘플 실측: 2,262로 동일).
+  let bytes = budgetBytes - cats.reduce(
+    (sum, c) => sum + Buffer.byteLength(`${headingFor(c, `${c.lines.length}/${c.lines.length}개`)}\n\n`, 'utf8'), 0);
+
+  // 마커는 최악값을 그냥 깎으면 손해가 난다(전 카테고리 생략 가정 → 라이브에서 12→11 실측).
+  // 환급식으로 간다: 카테고리마다 마커 비용을 미리 깎아두고, 그 카테고리를 끝까지 다 담아
+  // 마커가 출력되지 않게 되는 순간 되돌려준다.
+  const reservedMarker = new Map();
+  for (const c of cats) {
+    if (c.lines.length === 0) continue;
+    const cost = Buffer.byteLength(markerFor(c, c.lines.length), 'utf8');
+    reservedMarker.set(c.dir, cost);
+    bytes -= cost;
+    lines -= 1;
+  }
 
   for (let progress = true; progress && lines > 0 && bytes > 0; ) {
     progress = false;
     for (const c of cats) {
       if (c.taken >= c.lines.length) continue;
       const cost = Buffer.byteLength(`${c.lines[c.taken]}\n`, 'utf8');
-      if (lines < 1 || bytes < cost) { lines = 0; break; }
+      // 한 카테고리의 다음 줄이 예산을 넘는다고 나머지를 굶기지 않는다. 옛 `lines = 0; break;`는
+      // 바깥 루프까지 끝내 남은 예산에 들어갈 짧은 줄을 전부 버렸다(4,000~14,000B 201샘플 중
+      // 102건에서 발생, 누적 손실 concept 160개). 종료는 progress 플래그가 보장한다 —
+      // 어느 카테고리도 한 줄을 못 담으면 false로 남는다.
+      // `lines < 1` 안쪽 검사를 남겨야 한다 — 환급으로 lines가 루프 도중 늘어난다.
+      if (lines < 1 || bytes < cost) continue;
       c.taken += 1; lines -= 1; bytes -= cost; progress = true;
+      if (c.taken === c.lines.length && reservedMarker.has(c.dir)) {
+        bytes += reservedMarker.get(c.dir); lines += 1; reservedMarker.delete(c.dir);
+      }
     }
   }
 
@@ -55,7 +86,7 @@ function buildInjectedIndex(okfHome, budgetLines, budgetBytes) {
     // OKF 스펙의 점진적 공개: index.md는 자기 디렉토리의 내용물을 열거하므로, 잘린 카테고리는
     // 자기 index.md를 내려가는 길로 제시해야 한다. "159개 생략"만 알리고 위치를 안 주면 모델은
     // 빠진 게 있다는 것만 알고 도달할 수단이 없다 — 그건 막다른 길이지 점진적 공개가 아니다.
-    const marker = omitted > 0 ? `\n...(${omitted}개 생략 — 전체 목록은 /${c.dir}/index.md 를 Read)` : '';
+    const marker = omitted > 0 ? markerFor(c, omitted) : '';
     return `${heading}${body ? `\n${body}` : ''}${marker}`;
   }).join('\n\n');
 }
@@ -92,6 +123,9 @@ ${latestLog}
   // 예산은 index를 만들기 전에 계산해 넘긴다. 전체를 뒤에서 자르면 번들이 커질수록 log.md
   // 섹션이 통째로 밀려나 조용히 사라지고("지난 세션 이후 번들이 움직였다"는 신호는 index만큼
   // 중요하다), 잘라내는 위치도 카테고리 경계를 무시해 한 카테고리가 나머지를 굶긴다.
+  // 2026-07-25: 이 방지 로직 자신이 생략 마커와 heading 최악값을 선차감하지 않아 정확히 그
+  // 현상을 만들고 있었다 — 라이브 실측 절단 218B 전량이 tail이었다. buildInjectedIndex가
+  // 조립 시점에 이미 캡 이하가 되게 고쳤고, 아래 truncateUtf8Bytes는 진짜 안전망으로 남는다.
   const idx = buildInjectedIndex(
     okfHome,
     Math.max(1, injectMaxLines - head.split('\n').length - tail.split('\n').length),

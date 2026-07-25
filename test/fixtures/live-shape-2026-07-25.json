@@ -1,0 +1,24 @@
+{
+  "measuredAt": "2026-07-25",
+  "note": "라이브 번들의 형상만 동결한다. concept 제목·설명 원문은 담지 않는다(사용자 지식 발행 금지).",
+  "headBytes": 686,
+  "headLines": 10,
+  "tailBytes": 1358,
+  "tailLines": 18,
+  "categories": [
+    { "dir": "decisions",       "lineBytes": [423, 413] },
+    { "dir": "patterns",        "lineBytes": [1546, 489, 660, 549, 379, 466] },
+    { "dir": "preferences",     "lineBytes": [510, 206, 1207] },
+    { "dir": "projects",        "lineBytes": [503, 321, 283] },
+    { "dir": "references",      "lineBytes": [602, 554, 222, 202, 219, 944] },
+    { "dir": "troubleshooting", "lineBytes": [973, 126] }
+  ],
+  "expected": {
+    "injectMaxBytes": 9000,
+    "injectMaxLines": 120,
+    "taken": 12,
+    "assembledBytes": 9218,
+    "truncatedBytes": 218,
+    "leftoverBytes": 58
+  }
+}
