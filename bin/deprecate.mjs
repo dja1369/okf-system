@@ -79,7 +79,7 @@ function main() {
     return fail(4, `대상 파일을 읽을 수 없다: ${relNorm}`);
   }
   // bin/batch.mjs의 SCHEMA/okf_seed 차단과 같은 경계다.
-  if (/^okf_seed[ \t]*:\s*true\b/m.test(original)) return fail(4, 'okf_seed 시드는 은퇴 대상이 아니다');
+  if (/^[ \t]*(?:"okf_seed"|'okf_seed'|okf_seed)[ \t]*:\s*true\b/m.test(original)) return fail(4, 'okf_seed 시드는 은퇴 대상이 아니다');
 
   const lock = acquireLock(okfHome, 'deprecate', { onLog: (m) => console.error(m) });
   if (!lock.acquired) {

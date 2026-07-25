@@ -1738,16 +1738,32 @@ function runDeprecate(okfHome, args) {
 
   // 보안 경계: okf_seed 보호도 같은 결함을 공유했다 — 오염된 분석기가 `okf_seed : true`로
   // 적힌 시드를 덮어쓸 수 있었다.
-  ok('the okf_seed protection gate is not bypassed by a space before the colon',
-    /^okf_seed[ \t]*:\s*true\b/m.test('okf_seed : true')
-    && readIfExists(path.join(PLUGIN_ROOT, 'bin', 'batch.mjs')).includes('okf_seed[ \\t]*:')
-    && readIfExists(path.join(PLUGIN_ROOT, 'bin', 'deprecate.mjs')).includes('okf_seed[ \\t]*:'));
+  // 소스에 특정 문자열이 있는지 보는 단언은 **정규식을 개선하기만 해도 깨지고, 보호를
+  // 되돌려도 문자열만 남기면 통과한다**(독립 검증 지적). 배치를 실제로 돌려 보호를 확인한다.
+  const seedHome = setupBatchSandbox('okf-seed-spaced');
+  const seedPath = path.join(seedHome, 'preferences', 'okf-bundle-rules.md');
+  const seedText = readIfExists(seedPath);
+  // 시드의 okf_seed 표기를 유효한 다른 YAML 형태로 바꿔둔다 — 보호가 표기에 의존하면 뚫린다.
+  fs.writeFileSync(seedPath, seedText.replace(/^okf_seed:\s*true\s*$/m, '"okf_seed" : true'));
+  git(['add', '-A'], seedHome, { stdio: 'ignore' });
+  git(['commit', '-m', 'test: seed with quoted okf_seed key'], seedHome, { stdio: 'ignore' });
+  runBatch({ okfHome: seedHome, env: { FAKE_CLAUDE_MODE: 'hostile-workspace' } });
+  ok('the okf_seed protection gate holds for every valid YAML spelling of the key',
+    !readIfExists(seedPath).includes('변조된 시드') && readIfExists(seedPath).includes('"okf_seed" : true'),
+    readIfExists(seedPath).slice(0, 120));
 
   // schema_version도 같은 결함 — 0으로 읽히면 매 SessionStart마다 템플릿이 재배포돼
   // 사용자 로컬 편집을 반복 파괴한다.
-  ok('schema_version is still read when written with a space before the colon',
-    /^schema_version[ \t]*:\s*(\d+)\s*$/m.exec('schema_version : 2')?.[1] === '2'
-    && readIfExists(path.join(PLUGIN_ROOT, 'lib', 'bootstrap.mjs')).includes('schema_version[ \\t]*:'));
+  // ensureBootstrap을 실제로 돌린다. 버전을 못 읽으면 0으로 보고 템플릿을 **재배포**하므로
+  // 사용자의 로컬 편집이 사라지는 것으로 드러난다.
+  const svHome = bootstrapped('schema-version-spaced');
+  const current = readIfExists(okfPaths(svHome).schema);
+  fs.writeFileSync(okfPaths(svHome).schema,
+    `${current.replace(/^schema_version:\s*(\d+)\s*$/m, '"schema_version" : $1')}\n<!-- 사용자 로컬 편집 -->\n`);
+  ensureBootstrap(svHome);
+  ok('schema_version is read for every valid YAML spelling (no spurious re-deploy)',
+    readIfExists(okfPaths(svHome).schema).includes('<!-- 사용자 로컬 편집 -->'),
+    readIfExists(okfPaths(svHome).schema).slice(0, 80));
 }
 {
   // 달력에 없는 날짜·시각을 그럴듯한 값으로 **보정**하면 안 된다. JS Date는 2026-02-30을
@@ -1757,6 +1773,35 @@ function runDeprecate(okfHome, args) {
   ok('trust: impossible dates and times are rejected, never silently corrected',
     bogus.every((v) => toIsoDateTime(v) === null),
     bogus.filter((v) => toIsoDateTime(v) !== null).map((v) => `${v}->${toIsoDateTime(v)}`).join(' | '));
+
+  // **실제 입력 경로는 문자열이 아니라 js-yaml이다.** 무따옴표 `at: 2026-02-30`은 파서 단계에서
+  // 이미 Date(2026-03-02)로 보정되므로 toIsoDateTime이 받을 때는 복원할 방법이 없다 —
+  // 이 한계를 테스트로 **고정**해 다음 사람이 "검증했으니 안전하다"고 오해하지 않게 한다.
+  // 진짜 방어는 파싱 전 원문 단계(lint W11)에 있다.
+  const yamlDate = (v) => parseFrontmatter(`---\nat: ${v}\n---\n본문\n`).data.at;
+  ok('trust: a YAML-coerced Date cannot be un-corrected (documented limitation)',
+    yamlDate('2026-02-30') instanceof Date
+    && toIsoDateTime(yamlDate('2026-02-30')) === '2026-03-02T00:00:00Z'
+    && toIsoDateTime('2026-02-30') === null,
+    `${toIsoDateTime(yamlDate('2026-02-30'))}`);
+
+  // 그래서 진짜 방어는 **파싱 전 원문**에 있다(W11). 파서를 통과한 뒤에는 아무도 못 잡는다.
+  const dh = bootstrapped('lint-w11');
+  const w = (name, y) => fs.writeFileSync(path.join(dh, 'decisions', name), `---\ntype: decision\ntitle: t\ndescription: d\n${y}\n---\n본문\n`);
+  w('bad-unquoted.md', 'timestamp: 2026-02-30');
+  w('bad-quoted.md', 'generated:\n  by: "okf-system/x"\n  at: "2026-13-01T00:00:00Z"');
+  w('bad-time.md', 'timestamp: 2026-07-25T24:00:00Z');
+  w('good-leap.md', 'timestamp: 2024-02-29');
+  w('good-plain.md', 'timestamp: 2026-02-28');
+  const dr = runLint(dh);
+  const w11 = dr.warnings.filter((x) => x.rule === 'W11');
+  ok('lint W11 catches impossible dates in the raw text, where they are still recoverable',
+    w11.length === 3 && dr.errors.length === 0
+    && !w11.some((x) => x.file.includes('good-')),
+    w11.map((x) => `${x.file}`).join(',') || formatReport(dr));
+  // 값 원문을 리포트에 싣는다 — 날짜는 그 자체가 진단이고 전사 파생 텍스트가 아니다.
+  ok('lint W11 stays a warning so an existing bundle never stalls its batch',
+    w11.every((x) => x.rule === 'W11') && dr.errors.length === 0);
   // 정상값은 그대로 통과해야 한다(과차단 0).
   const valid = [['2026-02-28', '2026-02-28T00:00:00Z'], ['2024-02-29', '2024-02-29T00:00:00Z'],
     ['2026-12-31', '2026-12-31T00:00:00Z'], ['2026-07-25T23:59:59', '2026-07-25T23:59:59Z']];
@@ -1785,10 +1830,17 @@ function runDeprecate(okfHome, args) {
   ok('frontmatterKeyLineRe refuses keys that are not safe to interpolate',
     accepted.length === 0, `accepted=${JSON.stringify(accepted)}`);
   // 그리고 정상 키에서는 접두 충돌·들여쓴 하위 키를 잡지 않아야 한다.
-  ok('frontmatterKeyLineRe matches only the exact top-level key',
-    frontmatterKeyLineRe('status').test('status : x')
-    && !frontmatterKeyLineRe('status').test('statusline: x')
-    && !frontmatterKeyLineRe('by').test('  by: "x"'));
+  // 유효한 YAML 표기는 전부 잡고, 다른 키는 하나도 잡지 않아야 한다.
+  const shouldMatch = ['status: x', 'status : x', ' status: x', '"status" : x', "'status': x", 'status:'];
+  const shouldNot = ['statusline: x', 'status:: x', 'mystatus: x', '  by: "x"', 'statusx: 1'];
+  const re = () => frontmatterKeyLineRe('status');
+  ok('frontmatterKeyLineRe covers every valid spelling and over-matches nothing',
+    shouldMatch.every((l) => re().test(l)) && shouldNot.every((l) => !re().test(l)),
+    `miss=${shouldMatch.filter((l) => !re().test(l)).join('|')} over=${shouldNot.filter((l) => re().test(l)).join('|')}`);
+  // `status:: x`의 실제 YAML 키는 `status:`다 — 그 줄을 status로 오인해 지우면 남의 키를 지운다.
+  const doubled = '---\ntype: decision\nstatus:: keep-me\ntitle: t\n---\n본문\n';
+  ok('a double-colon key is not mistaken for the key it prefixes',
+    setFrontmatterStatus(doubled, null) === doubled, JSON.stringify(setFrontmatterStatus(doubled, null)));
 }
 // --- 적대적 검증이 지목한 커버리지 공백 + 이번 라운드 수정의 회귀 고정 ---
 {

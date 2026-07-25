@@ -14,7 +14,7 @@ import { matchGlob } from '../lib/glob.mjs';
 import { acquireLock, releaseLock } from '../lib/lock.mjs';
 import { ensurePrivateDir, securePrivateFile, writePrivateJsonAtomic } from '../lib/permissions.mjs';
 import { safeErrorCode } from '../lib/status.mjs';
-import { stampGenerated } from '../lib/generated-stamp.mjs';
+import { stampGenerated, STAMP_UNSTAMPABLE } from '../lib/generated-stamp.mjs';
 import { parseFrontmatter } from '../lib/frontmatter.mjs';
 import { conceptStatus } from '../lib/trust.mjs';
 
@@ -759,7 +759,10 @@ function spendExtra(okfHome, spend) {
   const runCost = Number.isFinite(spend?.costUsd) ? spend.costUsd : 0;
   return {
     costUsd: roundUsd(runCost),
-    spendTodayUsd: roundUsd(carried + runCost, 6),
+    // **반올림하며 누적하지 않는다.** 어떤 자릿수를 골라도 그보다 작은 회차 비용은 매번
+    // 0으로 접혀 영원히 사라진다(6자리로 올려도 $0.0000004는 같은 운명이다). 정수
+    // 마이크로달러로 더한 뒤 마지막에만 나눈다 — 표시용 반올림은 소비자 쪽에서 한다.
+    spendTodayUsd: (Math.round(carried * 1e6) + Math.round(runCost * 1e6)) / 1e6,
     spendDate: today,
     tokens: { ...(spend?.usage ?? {}) },
     llmCalls: spend?.calls ?? 0,
@@ -938,7 +941,10 @@ function archiveChunk(okfHome, chunk, todayDir) {
     try {
       fs.mkdirSync(todayDir, { recursive: true });
       fs.copyFileSync(dp.source, dest);
-      tryUnlink(dp.source);
+      // **삭제 성공을 확인해야 한다.** tryUnlink가 오류를 삼키면 원본이 staging에 남는데
+      // 마커는 안 생겨서, 다음 회차가 그것을 '미처리'로 보고 raw로 되돌려 **이미 커밋·복사된
+      // 세션을 다시 유료 처리**한다. 복사만 성공한 상태는 '이동 성공'이 아니다.
+      fs.unlinkSync(dp.source);
       continue;
     } catch {
       // 마커로 넘어간다
@@ -1000,6 +1006,7 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null, chunkBudget = { d
   let blocked = 0;
   let stamped = 0;
   let blockedDeprecations = 0;
+  let blockedUnstampable = 0;
   const walk = (dir, rel) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       if (rel === '' && (SCAN_EXCLUDE_DIRS.has(e.name) || e.name === INGEST_INBOX_DIR)) continue;
@@ -1024,7 +1031,7 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null, chunkBudget = { d
       // 리뷰 확정(minor): 규칙서(SCHEMA.md)와 okf_seed 시드는 "수정 금지"가 프롬프트 규범으로만
       // 있었다 — 오염된 digest에 넘어간 분석기가 규칙서를 영구 교체할 수 있는 경계 구멍이라
       // 여기 드라이버가 시행한다. SCHEMA는 bootstrap 버전 동기화가 유일한 갱신 경로다.
-      if (childRel === 'SCHEMA.md' || (prev && /^okf_seed[ \t]*:\s*true\b/m.test(prev.subarray(0, 2048).toString('utf8')))) {
+      if (childRel === 'SCHEMA.md' || (prev && /^[ \t]*(?:"okf_seed"|'okf_seed'|okf_seed)[ \t]*:\s*true\b/m.test(prev.subarray(0, 2048).toString('utf8')))) {
         blocked++;
         continue;
       }
@@ -1049,6 +1056,7 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null, chunkBudget = { d
       // log.md 제외를 빼지 마라 — 지금은 프론트매터가 없어 우연히 안전하지만, 누군가
       // log.md에 프론트매터를 붙이는 순간 조용히 깨진다.
       let out = next;
+      let stampSkip = null;
       if (stamp && e.name !== 'log.md') {
         // trustExisting은 **prev에 이미 generated가 있었는가**로 판정한다. `prev !== null`만
         // 보면 구멍이 남는다: 기존 파일을 고치면서 분석기가 `by: human:...`을 새로 써넣으면
@@ -1057,7 +1065,8 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null, chunkBudget = { d
         // 반대 방향으로 같은 회피가 열리므로, 기준은 언제나 prev의 **내용**이다.
         const prevHadGenerated = prev !== null
           && Object.hasOwn(parseFrontmatter(prev.toString('utf8')).data ?? {}, 'generated');
-        const stampedText = stampGenerated(next.toString('utf8'), stamp, { trustExisting: prevHadGenerated });
+        const stampedText = stampGenerated(next.toString('utf8'), stamp,
+          { trustExisting: prevHadGenerated, onSkip: (reason) => { stampSkip = reason; } });
         if (stampedText !== null) {
           out = Buffer.from(stampedText, 'utf8');
           stamped++;
@@ -1066,6 +1075,14 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null, chunkBudget = { d
           // 되어, repair가 건드리지도 않은 파일의 at까지 새 시각으로 갈아엎힌다.
           try { fs.writeFileSync(abs, out); } catch { /* 번들 반영은 이미 안전하다 */ }
         }
+      }
+      // **fail-closed**: 스탬핑이 '남의 generated 존중' 이외의 이유로 실패했다면 그 파일은
+      // 반영하지 않는다. 정규식이 모든 유효 YAML 표기를 커버한다는 가정에 안전을 걸면,
+      // 그 가정이 깨지는 순간(`"generated" :`, 선행 공백, flow 형태 …) 위조된 출처가 조용히
+      // 번들에 실린다 — 독립 검증이 정확히 그 경로를 재현했다. 못 찍으면 안 싣는다.
+      if (stampSkip === STAMP_UNSTAMPABLE) {
+        blockedUnstampable++;
+        continue;
       }
       fs.mkdirSync(path.dirname(destAbs), { recursive: true });
       fs.writeFileSync(destAbs, out);
@@ -1079,6 +1096,9 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null, chunkBudget = { d
   // 숫자만 남긴다 — 파일명·스탬프 값은 로그에 싣지 않는다. N이 그 회차 변경 파일 수보다
   // 크면 전 번들 일괄 스탬핑(= 유실 백스톱 무력화)이라는 뜻이니 즉시 롤백하라.
   if (stamped > 0) log(okfHome, `generated 스탬프 ${stamped}건`);
+  if (blockedUnstampable > 0) {
+    log(okfHome, `출처 스탬프 불가로 반영 거부 ${blockedUnstampable}건 — frontmatter 표기를 확인하라`);
+  }
   if (blockedDeprecations > 0) {
     log(okfHome, `은퇴 상한(청크당 ${MAX_DEPRECATIONS_PER_CHUNK}건) 초과 — ${blockedDeprecations}건 반영 거부`);
   }
