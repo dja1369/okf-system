@@ -4364,13 +4364,17 @@ if (process.platform !== 'win32') {
   fs.mkdirSync(path.join(home, 'decisions'), { recursive: true });
   fs.mkdirSync(okfPaths(home).state, { recursive: true });
   fs.writeFileSync(path.join(home, 'decisions', 'a.md'),
-    '---\ntype: decision\ntitle: "배포 정책(카나리)"\ndescription: "재시도는 exponential backoff(2^n)로 한다"\ntimestamp: 2026-07-15\n---\n본문\n');
+    '---\ntype: decision\ntitle: "배포 정책(카나리)"\ndescription: "재시도는 exponential backoff(2^n)로 한다. git filter-repo --path <file> 로 지우고 $req->getRoute()를 본다"\ntimestamp: 2026-07-15\n---\n본문\n');
   fs.writeFileSync(path.join(home, 'decisions', 'b.md'),
     '---\ntype: decision\ntitle: "정상"\ndescription: "답은 <file:///Users/victim/.ssh/id_rsa> 와 <a href=\\"/Users/victim/.aws/credentials\\">여기</a>"\ntimestamp: 2026-07-15\n---\n본문\n');
   regenerateIndex(home);
   const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
   ok('정상 concept의 소괄호는 게이트에서 보존된다(부작용 87%를 되살리지 마라)',
     ctx.includes('배포 정책(카나리)') && ctx.includes('backoff(2^n)'),
+    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+  // 라이브 실측에서 홑화살괄호 6건 전부가 이 두 형태였다 — 통째로 접으면 소괄호와 같은 실수다.
+  ok('마크업이 아닌 홑화살괄호는 보존된다(--path <file>, PHP 화살표)',
+    ctx.includes('--path <file>') && ctx.includes('$req->getRoute()'),
     ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
   ok('autolink·HTML 태그는 게이트에서 마크업으로 살아남지 못한다',
     !ctx.includes('<file:///Users/victim/.ssh/id_rsa>') && !/<a\s+href=/.test(ctx),
