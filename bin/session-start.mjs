@@ -108,7 +108,7 @@ function buildContext({ okfHome, latestLog, injectMaxLines, injectMaxBytes }) {
   // index가 제목+설명을 싣는 이상 "반드시 Read"는 이미 건넨 것을 다시 사오라는 명령이다.
   // 관련 concept를 "찾는" 의무는 그대로 두고, 줄로 충분할 때의 왕복만 없앤다.
   const head = `=== OKF KNOWLEDGE GATE (필수) ===
-전역 지식 번들: ${okfHome} (OKF v0.1)
+전역 지식 번들: ${okfHome}
 규칙:
 1. 과거 결정/프로젝트/선호/트러블슈팅 관련 작업 전, 아래 인덱스에서 관련 concept를 반드시 찾아라.
    제목·설명이 답을 담고 있으면 Read 없이 그 줄을 그대로 근거로 쓰라.

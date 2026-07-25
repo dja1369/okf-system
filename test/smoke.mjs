@@ -1083,6 +1083,117 @@ if (process.platform !== 'win32' && process.getuid?.() !== 0) {
   ok('lib/trust.mjs exports exactly the four functions this release consumes',
     (readIfExists(path.join(PLUGIN_ROOT, 'lib', 'trust.mjs')).match(/^export function /gm) || []).length === 4);
 }
+// --- S5: SCHEMA v2 · ingest/repair 프롬프트 v0.2 · 버전 문자열 정리 ---
+{
+  const schemaTemplate = readIfExists(path.join(PLUGIN_ROOT, 'templates', 'SCHEMA.md'));
+  const manifest = JSON.parse(readIfExists(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json')));
+  const ingestPrompt = readIfExists(path.join(PLUGIN_ROOT, 'prompts', 'ingest.md'));
+  const repairPrompt = readIfExists(path.join(PLUGIN_ROOT, 'prompts', 'repair.md'));
+
+  // lib/bootstrap.mjs의 schemaVersionOf는 export가 아니므로 **같은 정규식을 복제**해 검사한다.
+  // 값이 따옴표 있는 문자열이면 0으로 읽혀 매 SessionStart마다 템플릿이 재배포된다.
+  const bumpMatch = /^schema_version:\s*(\d+)\s*$/m.exec(schemaTemplate);
+  ok('SCHEMA 템플릿의 schema_version이 따옴표 없는 정수 한 줄로 남아 bootstrap 정규식에 잡힌다',
+    bumpMatch !== null && Number(bumpMatch[1]) >= 2, JSON.stringify(bumpMatch?.[1]));
+
+  ok('SCHEMA 템플릿이 자기 frontmatter에서 폐기된 timestamp를 버렸다',
+    !/^timestamp:/m.test(schemaTemplate) && /^generated:$/m.test(schemaTemplate)
+    && /^\s+at: "\d{4}-\d{2}-\d{2}"$/m.test(schemaTemplate));
+
+  // 이 한 줄이 "선언과 생산이 같은 릴리스에 있어야 한다"를 범프마다 자동 재확인한다.
+  ok('SCHEMA 템플릿의 generated.by가 배포 플러그인 버전과 일치한다',
+    new RegExp(`^\\s+by: "okf-system/${manifest.version.replace(/\./g, '\\.')}"$`, 'm').test(schemaTemplate),
+    schemaTemplate.slice(0, 200));
+
+  // 프롬프트 텍스트 단언은 행동 단언의 프록시다 — 실제 생산 금지는 S1의 스탬핑 테스트가 행동으로 증명한다.
+  ok('SCHEMA 템플릿이 generated·verified·sources 직접 작성을 금지한다',
+    ['`generated`', '`verified`', '`sources`', '`timestamp`', '`status`'].every((f) => schemaTemplate.includes(f))
+    && schemaTemplate.includes('네가 쓰지 않는 필드'));
+
+  // 이름을 소개하면 모델이 채운다. 자동 부여 금지 결정에 따라 계약 표면 어디에도 등장시키지 않는다.
+  ok('stale_after는 LLM 계약 표면 어디에도 등장하지 않는다',
+    !schemaTemplate.includes('stale_after') && !ingestPrompt.includes('stale_after')
+    && !repairPrompt.includes('stale_after'));
+
+  ok('ingest 프롬프트가 v0.2 번들의 사서로 자기를 선언하고 트러스트 필드 작성을 금지한다',
+    ingestPrompt.includes('OKF v0.2 번들의 지식 사서')
+    && ingestPrompt.includes('네가 쓰지 않는 필드') && ingestPrompt.includes('`verified`'));
+
+  // 이 두 문자열을 고치면 벤치 usage 라벨이 전부 'ingest'로 오분류되고(예외가 통째로 삼켜져
+  // 경고조차 없다) fake-claude의 repair 시나리오가 동시에 죽는다.
+  ok('repair 프롬프트가 단계 판정 문자열을 그대로 유지한다',
+    repairPrompt.includes('lint 오류 리포트') && repairPrompt.includes('{{LINT_REPORT}}')
+    && repairPrompt.includes('규정에 없는 필드는 수리가 아니라 새 오염이다'));
+
+  // templates/seed/**는 뺀다 — 시드는 이번 릴리스에서 의도적으로 동결한다(okf_seed: true라
+  // 배치 수정이 물리 차단되고 writeIfMissing이라 재부트스트랩도 못 고친다. 템플릿만 고치면
+  // 신규 설치에만 갈라진 서술이 생긴다).
+  const runtimeSurfaces = ['prompts/ingest.md', 'prompts/repair.md', 'templates/SCHEMA.md',
+    'templates/config.md', 'bin/session-start.mjs'];
+  ok('런타임 표면에 옛 스펙 버전 문자열이 남지 않았다',
+    runtimeSurfaces.every((f) => !/v0\.1/.test(readIfExists(path.join(PLUGIN_ROOT, f)))),
+    runtimeSurfaces.filter((f) => /v0\.1/.test(readIfExists(path.join(PLUGIN_ROOT, f)))).join(','));
+
+  // 플러그인 상수를 보간하는 '수정'도 이 단언에 걸려 실패한다 — 제거가 유일한 통과 경로다.
+  // (readExistingOkfVersion이 외부 도구의 "0.3"을 보존하므로 상수를 박으면 실제 선언과 갈라진다.)
+  ok('gate context does not hardcode an OKF spec version',
+    !/OKF v0\.\d/.test(readIfExists(path.join(PLUGIN_ROOT, 'bin', 'session-start.mjs')).split('=== OKF KNOWLEDGE GATE')[1] || ''));
+
+  const readmeFiles = fs.readdirSync(PLUGIN_ROOT).filter((f) => /^README(\.[\w-]+)?\.md$/.test(f));
+  const badged = readmeFiles.filter((f) => readIfExists(path.join(PLUGIN_ROOT, f)).includes('badge/OKF-'));
+  // badged.length === 2가 **없던 6종에 배지를 새로 만드는 것도 실패로 만든다**(번역 부채 방지).
+  ok('OKF 배지는 원래 배지가 있던 2종에만 있고 둘 다 스펙 v0.2를 발행한다',
+    readmeFiles.length === 8 && badged.length === 2
+    && badged.every((f) => readIfExists(path.join(PLUGIN_ROOT, f)).includes('badge/OKF-v0.2-'))
+    && badged.every((f) => !readIfExists(path.join(PLUGIN_ROOT, f)).includes('OKF-v0.1')),
+    `readmes=${readmeFiles.length} badged=${badged.join(',')}`);
+
+  // 통과 규칙에 수치만 있고 테스트가 없으면 다음 사람이 프롬프트를 늘려도 CI가 침묵한다.
+  // 캡은 실측값 + 소폭 여유다. 계획서의 추정치(5,600 / 7,600)보다 ingest가 큰 이유는
+  // R3의 NO-OP 프로토콜 + R4의 인용·길이 규칙 + S5의 트러스트 필드 금지가 모두 같은 파일에
+  // 들어갔기 때문이고, 그 사실은 릴리스 노트에 수치로 남긴다.
+  ok('SCHEMA·ingest·repair가 회차당 바이트 예산 안에 있다',
+    Buffer.byteLength(schemaTemplate) <= 5600 && Buffer.byteLength(ingestPrompt) <= 8200
+    && Buffer.byteLength(repairPrompt) <= 1700,
+    `schema=${Buffer.byteLength(schemaTemplate)} ingest=${Buffer.byteLength(ingestPrompt)} repair=${Buffer.byteLength(repairPrompt)}`);
+}
+{
+  // 기존 설치 전파: schema_version 1 번들이 v2 템플릿으로 교체된다.
+  const home = bootstrapped('schema-v2');
+  fs.writeFileSync(okfPaths(home).schema,
+    '---\ntype: schema\nschema_version: 1\ntitle: 옛 규정\ndescription: 옛 것\ntimestamp: 2026-01-01\n---\n# 옛 본문\n');
+  ensureBootstrap(home);
+  const synced = readIfExists(okfPaths(home).schema);
+  ok('schema_version 1 번들이 v2 템플릿으로 교체된다',
+    /^schema_version:\s*2$/m.test(synced) && !synced.includes('옛 본문'));
+  // 비전역 replace라 두 번째 플레이스홀더는 치환되지 않은 채 사용자 번들에 남는다.
+  ok('교체된 SCHEMA.md에 미치환 플레이스홀더가 남지 않는다', !synced.includes('{{'));
+
+  // **W2가 새로 생기지 않는 것이 핵심** — S3a가 없으면 여기서 실패하고, 그 실패가 곧
+  // 릴리스 원자성 경보다(규칙서가 자기 자신에게 영구 경고를 받는 상태).
+  const report = runLint(home);
+  const schemaFindings = [...report.errors, ...report.warnings].filter((f) => f.file === 'SCHEMA.md');
+  ok('v2 SCHEMA.md가 lint 에러 0건이고 경고는 기존 W3 하나뿐이다',
+    report.errors.length === 0 && schemaFindings.length <= 1
+    && schemaFindings.every((f) => f.rule === 'W3'),
+    formatReport(report));
+
+  // S5의 SCHEMA 본문 개편에서 `# 절대 규칙` 헤딩이 사라지면 '로컬 편집 보존' 테스트의
+  // replace가 no-op이 되어 조용히 무의미해진다 — 그 무의미화를 먼저 실패로 만든다.
+  ok('schema-sync fixture anchor still exists in the SCHEMA template',
+    synced.replace('# 절대 규칙', '# 절대 규칙 (로컬 편집)') !== synced);
+}
+{
+  // SCHEMA v2 배포 후 배치 1회에 반영 거부가 0건이어야 한다 — 규칙서가 자기 자신을 고치려
+  // 드는 진동(B3)이 실제로 없는지 행동으로 확인한다.
+  const home = setupBatchSandbox('schema-v2-batch');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
+  const logs = fs.readdirSync(okfPaths(home).logs)
+    .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8')).join('\n');
+  ok('SCHEMA v2 배포 후 배치 1회 로그에 반영 거부가 0건이다',
+    !logs.includes('반영 거부') && lastBatch(home).lastResult === 'ok',
+    logs.split('\n').filter((l) => l.includes('거부')).join(' | '));
+}
 
 // ---------------------------------------------------------------------------
 console.log('\n=== batch.mjs (subprocess, fake claude) ===');
