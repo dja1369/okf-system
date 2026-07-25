@@ -232,8 +232,10 @@ function buildShapeBundle(label, shape = LIVE_SHAPE) {
     names.slice(0, cat.lineBytes.length).forEach((name, i) => {
       const title = `T${String(i).padStart(2, '0')}`;
       const link = `/${cat.dir}/${name}`;
-      // index 줄 형태: `- [title](link): description`
-      const fixed = 3 + Buffer.byteLength(title, 'utf8') + 2 + Buffer.byteLength(link, 'utf8') + 3;
+      // 주입되는 index 줄 형태: `* [title](link) - description`
+      // (파일 안에서는 링크가 상대경로지만 게이트가 `absolutizeLinks`로 절대경로를 되살리므로,
+      //  예산이 보는 바이트는 절대형이다. 구분자만 `: `(3B) → ` - `(4B)로 늘었다.)
+      const fixed = 3 + Buffer.byteLength(title, 'utf8') + 2 + Buffer.byteLength(link, 'utf8') + 4;
       fs.writeFileSync(path.join(dir, name),
         `---\ntype: ${SHAPE_TYPE_OF[cat.dir]}\ntitle: ${title}\ndescription: ${padBytes(cat.lineBytes[i] - fixed)}\ntimestamp: 2026-07-15\n---\n본문\n`);
     });
@@ -273,7 +275,8 @@ function splitGateContext(ctx) {
     index: tAt >= 0 ? ctx.slice(iAt, tAt) : ctx.slice(iAt),
     tailBytes: tAt >= 0 ? Buffer.byteLength(ctx.slice(tAt), 'utf8') : 0,
     // 주입된 concept 줄 수 — 카테고리 heading·마커·빈 줄을 뺀 bullet만 센다.
-    taken: (tAt >= 0 ? ctx.slice(iAt, tAt) : ctx.slice(iAt)).split('\n').filter((l) => l.startsWith('- ')).length,
+    // bullet 문자는 `*`다(OKF 공식 번들 규범).
+    taken: (tAt >= 0 ? ctx.slice(iAt, tAt) : ctx.slice(iAt)).split('\n').filter((l) => l.startsWith('* ')).length,
   };
 }
 
@@ -502,7 +505,7 @@ console.log('\n=== 게이트 예산 회계 (R5: 마커·heading 선차감 + star
     const name = `d${String(i).padStart(2, '0')}.md`;
     const title = `게이트 예산 확인 결정 ${String(i).padStart(2, '0')}`;
     // index 줄이 정확히 190바이트가 되도록 설명을 채운다(라이브 한국어 concept 줄 규모).
-    const fixed = 3 + Buffer.byteLength(title, 'utf8') + 2 + Buffer.byteLength(`/decisions/${name}`, 'utf8') + 3;
+    const fixed = 3 + Buffer.byteLength(title, 'utf8') + 2 + Buffer.byteLength(`/decisions/${name}`, 'utf8') + 4; // `) - ` (구 `): `에서 +1B)
     fs.writeFileSync(path.join(decisionsDir, name),
       `---\ntype: decision\ntitle: ${title}\ndescription: ${padBytes(190 - fixed)}\ntimestamp: 2026-07-15\n---\n본문\n`);
   }
@@ -569,7 +572,7 @@ console.log('\n=== 게이트 예산 회계 (R5: 마커·heading 선차감 + star
   for (let i = 0; i < 200; i++) {
     const name = `d${String(i).padStart(3, '0')}.md`;
     const title = `환급 확인 결정 ${String(i).padStart(3, '0')}`;
-    const fixed = 3 + Buffer.byteLength(title, 'utf8') + 2 + Buffer.byteLength(`/decisions/${name}`, 'utf8') + 3;
+    const fixed = 3 + Buffer.byteLength(title, 'utf8') + 2 + Buffer.byteLength(`/decisions/${name}`, 'utf8') + 4; // `) - ` (구 `): `에서 +1B)
     fs.writeFileSync(path.join(home, 'decisions', name),
       `---\ntype: decision\ntitle: ${title}\ndescription: ${padBytes(100 - fixed)}\ntimestamp: 2026-07-15\n---\n본문\n`);
   }
@@ -662,17 +665,18 @@ console.log('\n=== index-gen: nested domains (OKF spec) ===');
   ok('a domain nested two levels deep gets an index.md too', deep.includes('원장 테이블은 append-only'));
   const parent = readIfExists(path.join(home, 'decisions', 'index.md'));
   ok('the parent index still lists its own concepts', parent.includes('최상위 결정'));
-  ok('the parent index links down to the nested domain (progressive disclosure)', parent.includes('/decisions/sales/index.md'));
-  ok('the nested index links further down', nested.includes('/decisions/sales/tables/index.md'));
-  // 링크는 번들 루트 기준 절대경로여야 한다 — 게이트 규칙 2가 그렇게 약속한다.
-  ok('nested concept links are bundle-root absolute', nested.includes('/decisions/sales/orders.md'));
+  ok('the parent index links down to the nested domain (progressive disclosure)', parent.includes('(sales/index.md)'));
+  ok('the nested index links further down', nested.includes('(tables/index.md)'));
+  // **파일 안의 링크는 상대경로다**(OKF 공식 번들 규범). 게이트 규칙 2가 약속하는 루트 기준
+  // 절대경로는 주입 시점에 `absolutizeLinks`가 되살린다 — 포맷은 스펙, 해석은 소비자.
+  ok('nested concept links are relative to their own index', nested.includes('](orders.md)'));
   // 배치가 문서를 쓰면 그 문서를 품은 인덱스 사슬 전체가 역으로 갱신돼야 한다. 3단계 아래
   // ledger.md 하나가 중간 인덱스의 하위 도메인 개수와 루트의 카테고리 개수까지 올라오지 않으면,
   // 게이트는 "decisions 1개"라고 믿고 나머지 2개를 영영 모른다. 여기서 총 3개다:
   // top-level.md + sales/orders.md + sales/tables/ledger.md.
   ok('an intermediate index counts the concepts inside its nested domain', parent.includes('concept 2개'));
   const rootIdx = readIfExists(path.join(home, 'index.md'));
-  ok('a concept three levels deep propagates its count to the root index', /\/decisions\/index\.md\) — 3개/.test(rootIdx));
+  ok('a concept three levels deep propagates its count to the root index', /\(decisions\/index\.md\) - .*concept 3개/.test(rootIdx));
 }
 
 // ---------------------------------------------------------------------------
@@ -766,7 +770,7 @@ console.log('\n=== index-gen.mjs ===');
   const dirIndex = fs.readFileSync(path.join(home, 'decisions', 'index.md'), 'utf8');
   ok('per-directory index.md has no frontmatter', !dirIndex.startsWith('---'));
   ok('per-directory index.md lists the concept with title+description', dirIndex.includes('A 결정') && dirIndex.includes('설명 A'));
-  ok('per-directory index.md link uses .md extension + absolute path', dirIndex.includes('(/decisions/a.md)'));
+  ok('per-directory index.md link is relative and keeps the .md extension', dirIndex.includes('](a.md)'));
 
   // (구 단언 `root index.md preserves okf_version`은 S2의 승격과 함께 깨진다 — 리터럴만
   //  바꾸면 회귀 커버리지가 소멸하므로 아래 S2 블록에서 보존/승격 두 축으로 분리했다.)
@@ -1460,13 +1464,13 @@ function runDeprecate(okfHome, args) {
   regenerateIndex(home);
   const catIndex = readIfExists(path.join(home, 'decisions', 'index.md'));
   ok('deprecated concept stays in its category index.md (링크 보존)',
-    catIndex.includes('/decisions/b-tomb.md'), catIndex);
+    catIndex.includes('](b-tomb.md)'), catIndex);
   ok('deprecated concept is marked and sorted after the live ones',
-    catIndex.includes('- [deprecated] [묘비 제목]')
+    catIndex.includes('* [deprecated] [묘비 제목]')
     && catIndex.indexOf('현역 제목') < catIndex.indexOf('묘비 제목'), catIndex);
   // 카운트의 목적은 "지금 유효한 지식이 몇 개인가"다 — 은퇴는 빠진다(줄 수와 어긋나는 건 의도).
   ok('gate and root counts exclude deprecated concepts',
-    /\/decisions\/index\.md\) — 1개/.test(readIfExists(path.join(home, 'index.md'))),
+    /\(decisions\/index\.md\) - .*concept 1개/.test(readIfExists(path.join(home, 'index.md'))),
     readIfExists(path.join(home, 'index.md')));
   ok('a nested deprecated concept is excluded from the parent and root counts',
     catIndex.includes('concept 0개'), catIndex);
@@ -1504,8 +1508,8 @@ function runDeprecate(okfHome, args) {
     after.includes('현역 제목') && Buffer.byteLength(after, 'utf8') <= 2000,
     `${Buffer.byteLength(after)}`);
   // index.md의 링크 집합은 100% 동일해야 한다 — 순서와 접두만 변한다.
-  const links = (t) => [...t.matchAll(/\]\((\/[^)]+)\)/g)].map((m) => m[1]).sort().join(',');
-  ok('은퇴 concept의 index.md 줄 소실 0건', links(readIfExists(path.join(refs, 'index.md'))).includes('/references/a-tomb-0.md'));
+  const links = (t) => [...t.matchAll(/\]\(([^)]+)\)/g)].map((m) => m[1]).sort().join(',');
+  ok('은퇴 concept의 index.md 줄 소실 0건', links(readIfExists(path.join(refs, 'index.md'))).includes('a-tomb-0.md'));
 }
 {
   // 위 블록만으로는 게이트 필터가 discriminating하지 않다: 은퇴 줄이 index 꼬리로 밀리면
@@ -1588,7 +1592,7 @@ function runDeprecate(okfHome, args) {
   regenerateIndex(home);
   ok('--restore returns the concept to the gate',
     r3.status === 0 && !readIfExists(target).includes('status: deprecated')
-    && readIfExists(path.join(home, 'decisions', 'index.md')).includes('- [은퇴 대상]'), r3.stdout);
+    && readIfExists(path.join(home, 'decisions', 'index.md')).includes('* [은퇴 대상]'), r3.stdout);
   // 이 스크립트는 stdout/stderr 전용이라는 프라이버시 계약.
   ok('--restore leaves _remove_candidate, raw and .okf/logs untouched',
     listRemoveCandidate(home).length === 0 && listRaw(home).length === 0
@@ -1864,7 +1868,7 @@ function runDeprecate(okfHome, args) {
   regenerateIndex(home);
   const catIndex = readIfExists(path.join(home, 'decisions', 'index.md'));
   ok('a newline in title/description cannot forge an extra index entry',
-    catIndex.trim().split('\n').filter((l) => l.startsWith('- ')).length === 2, catIndex);
+    catIndex.trim().split('\n').filter((l) => l.startsWith('* ')).length === 2, catIndex);
   const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
   ok('the injected gate reports the real concept count, not the forged one',
     ctx.includes('decisions (결정) — 2개') && !/— 4개/.test(ctx),
@@ -3527,7 +3531,7 @@ console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가
   ok('seed ships bundle rules', fs.existsSync(path.join(home, 'preferences', 'okf-bundle-rules.md')));
   ok('seed defaults to English', fs.readFileSync(path.join(home, 'references', 'okf-format.md'), 'utf8').includes('What OKF'));
   const rootIndex = fs.readFileSync(okfPaths(home).rootIndex, 'utf8');
-  ok('seeded concepts appear in the generated root index', /references.*index\.md\) — 3개/s.test(rootIndex));
+  ok('seeded concepts appear in the generated root index', /\(references\/index\.md\) - .*concept 3개/s.test(rootIndex));
 
   // user edits to a seed file must survive re-bootstrap (a reinstall must not revert them)
   const seedFile = path.join(home, 'references', 'okf-format.md');
@@ -3715,7 +3719,7 @@ description: Routes every synthetic benchmark fact
 SQLite; repository pattern; default exports are prohibited; busy_timeout=5000; Korean; concise;
 src/config.mjs; npm run deploy:canary
 `);
-  const audit = auditBenchmarkBundle(auditHome, '- [target](/decisions/bench-target.md)');
+  const audit = auditBenchmarkBundle(auditHome, '* [target](/decisions/bench-target.md)');
   ok('live benchmark preflight proves all target facts exist and are gate-routed', audit.ready && audit.presentFacts === 8 && audit.routedFacts === 8);
   ok('live benchmark grading accepts semantically identical constrained answers',
     matchesBenchmarkAnswer('export_style', 'named export only (default export 금지)', 'named export only')
@@ -4133,10 +4137,10 @@ console.log('\n=== viz.mjs ===');
   const projectsIndex = fs.readFileSync(path.join(home, 'projects', 'index.md'), 'utf8');
   const nestedIndexPath = path.join(nestedDir, 'index.md');
   ok('중첩 예약어 디렉토리도 하위 도메인으로 열거된다',
-    projectsIndex.includes('/projects/raw/index.md'), projectsIndex.slice(0, 300));
+    projectsIndex.includes('(raw/index.md)'), projectsIndex.slice(0, 300));
   ok('그 안의 concept도 index에 나타난다(게이트에서 발견 가능해진다)',
     fs.existsSync(nestedIndexPath)
-    && fs.readFileSync(nestedIndexPath, 'utf8').includes('/projects/raw/nested-knowledge.md'));
+    && fs.readFileSync(nestedIndexPath, 'utf8').includes('](nested-knowledge.md)'));
   ok('lint도 같은 파일을 본다(비대칭이 사라졌다)',
     runLint(home).errors.length === 0);
 }
@@ -4214,7 +4218,7 @@ console.log('\n=== viz.mjs ===');
     links.length === 1 && links[0] === '/decisions/x.md', JSON.stringify(links));
   ok('위조 시도 경로가 게이트 텍스트에 링크로 실리지 않는다',
     !ctx.includes('](/Users/victim/.ssh/id_rsa)') && !ctx.includes('](/Users/victim/.aws/credentials)'),
-    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+    ctx.split('\n').filter((l) => l.startsWith('* ')).join('\n'));
 }
 if (process.platform !== 'win32') {
   // 같은 번들 안에서 index.md만 0644였다 — writeAtomic이 기본 모드를 썼다.
@@ -4443,25 +4447,25 @@ if (process.platform !== 'win32') {
   const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
   ok('정상 concept의 소괄호는 게이트에서 보존된다(부작용 87%를 되살리지 마라)',
     ctx.includes('배포 정책(카나리)') && ctx.includes('backoff(2^n)'),
-    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+    ctx.split('\n').filter((l) => l.startsWith('* ')).join('\n'));
   // 라이브 실측에서 홑화살괄호 6건 전부가 이 두 형태였다 — 통째로 접으면 소괄호와 같은 실수다.
   ok('마크업이 아닌 홑화살괄호는 보존된다(--path <file>, PHP 화살표)',
     ctx.includes('--path <file>') && ctx.includes('$req->getRoute()'),
-    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+    ctx.split('\n').filter((l) => l.startsWith('* ')).join('\n'));
   ok('autolink·HTML 태그는 게이트에서 마크업으로 살아남지 못한다',
     !ctx.includes('<file:///Users/victim/.ssh/id_rsa>') && !/<a\s+href=/.test(ctx),
-    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+    ctx.split('\n').filter((l) => l.startsWith('* ')).join('\n'));
   // 이메일 autolink는 콜론·슬래시·등호를 하나도 안 써서 `[:/=]`만으로는 통째로 새어나갔다.
   // 그렇다고 `@`를 통째로 잡으면 산문의 `@담당자`가 걸린다 — 도메인 모양을 요구해 가른다.
   ok('이메일 autolink도 게이트에서 마크업으로 살아남지 못한다',
     !ctx.includes('<security-team@evil.example>'),
-    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+    ctx.split('\n').filter((l) => l.startsWith('* ')).join('\n'));
   // `<cmd @reboot>`는 홑화살괄호 **안**의 `@`인데 도메인이 아니다 — 이메일 autolink가 아니므로
   // 접으면 안 된다. `담당자 @팀명`은 `<`가 없어 어느 구현에서도 안 접히므로 이 단언만으로는
   // 도메인 요건이 고정되지 않는다(mutation이 그것을 드러냈다). crontab의 `@reboot`은 실재하는 표기다.
   ok('산문의 @ 용법은 보존된다(세 번째 과잉 방어를 만들지 마라)',
     ctx.includes('담당자 @팀명') && ctx.includes('<cmd @reboot>'),
-    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+    ctx.split('\n').filter((l) => l.startsWith('* ')).join('\n'));
   const links = [...ctx.matchAll(/\]\(([^)]*)\)/g)].map((m) => m[1]).sort();
   ok('게이트의 링크 타깃은 생성기가 쓴 concept 경로뿐이다',
     links.length === 2 && links[0] === '/decisions/a.md' && links[1] === '/decisions/b.md',
@@ -4552,14 +4556,14 @@ if (process.platform !== 'win32') {
   const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
   ok('번들 내부 상호참조는 게이트에서 보존된다(ingest가 지시한 형식이다)',
     ctx.includes('[/references/target.md](/references/target.md)'),
-    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+    ctx.split('\n').filter((l) => l.startsWith('* ')).join('\n'));
   ok('같은 값 안의 위조 타깃은 여전히 접힌다',
     !ctx.includes('](/Users/victim/.aws/credentials)'),
-    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
-  // 위조가 성공하면 b.md 줄이 `- [deprecated] `로 시작해 게이트에서 통째로 빠진다.
+    ctx.split('\n').filter((l) => l.startsWith('* ')).join('\n'));
+  // 위조가 성공하면 b.md 줄이 `* [deprecated] `로 시작해 게이트에서 통째로 빠진다.
   ok('deprecated 접두사 위조로 정상 concept를 게이트에서 지울 수 없다',
     ctx.includes('/decisions/b.md'),
-    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+    ctx.split('\n').filter((l) => l.startsWith('* ')).join('\n'));
 }
 {
   // lint 리포트 메시지는 게이트와 같은 신뢰 경계의 값을 담는데, 그 값이 `{{LINT_REPORT}}`로
@@ -4655,7 +4659,7 @@ if (process.platform !== 'win32') {
   regenerateIndex(home);
   const idx = readIfExists(path.join(home, 'decisions', 'index.md'));
   ok('제어문자 이름의 파일은 index에 열거되지 않는다(링크가 여러 줄로 깨진다)',
-    !planted || idx.trim().split('\n').length === 1, JSON.stringify(idx));
+    !planted || idx.split('\n').filter((l) => l.startsWith('* ')).length === 1, JSON.stringify(idx));
   // 디렉토리 이름도 같은 필터를 거쳐야 한다 — 파일만 거르면 하위 도메인 링크가 여러 줄로 깨진다.
   let plantedDir = true;
   try {
@@ -4667,7 +4671,7 @@ if (process.platform !== 'win32') {
   regenerateIndex(home);
   const idx2 = readIfExists(path.join(home, 'decisions', 'index.md'));
   ok('제어문자 이름의 디렉토리도 index에 열거되지 않는다',
-    !plantedDir || idx2.trim().split('\n').length === 1, JSON.stringify(idx2));
+    !plantedDir || idx2.split('\n').filter((l) => l.startsWith('* ')).length === 1, JSON.stringify(idx2));
 }
 {
   // `/okf:okf-deprecate`는 번들에 쓰는 **두 번째 입구**다. 경계 도입 전에 들어온 오염 파일을
@@ -4691,7 +4695,7 @@ if (process.platform !== 'win32') {
 }
 {
   // 내부 링크 예외는 description 전용이다. title에 허용하면 생성 줄이
-  // `- [see [a](/x.md)](/decisions/f.md)`가 되어 **그 concept 자신의 링크가 깨진다**
+  // `* [see [a](/x.md)](f.md)`가 되어 **그 concept 자신의 링크가 깨진다**
   // (CommonMark는 링크 텍스트 안의 링크를 허용하지 않는다). 위조가 아니라 자해다.
   const home = sandbox('gate-title-nested-link');
   fs.mkdirSync(path.join(home, 'decisions'), { recursive: true });
@@ -4701,7 +4705,7 @@ if (process.platform !== 'win32') {
   regenerateIndex(home);
   const line = readIfExists(path.join(home, 'decisions', 'index.md')).trim();
   ok('title의 링크는 접혀서 concept 자신의 링크가 깨지지 않는다',
-    /^- \[[^[\]]*\]\(\/decisions\/f\.md\):/.test(line), JSON.stringify(line));
+    /^\* \[[^[\]]*\]\(f\.md\) - /m.test(line), JSON.stringify(line));
 }
 {
   // 게이트의 log 절단이 문장 한가운데서 끊기고 복구 경로를 안 줬다(감사 실측: 라이브 최신
@@ -4883,9 +4887,9 @@ if (process.platform !== 'win32') {
   regenerateIndex(home);
   const projIndex = readIfExists(path.join(home, 'projects', 'index.md'));
   ok('중첩 log.md는 concept로 열거되지 않는다(lint는 log로 안다)',
-    !projIndex.includes('/projects/log.md'), projIndex.slice(0, 200));
+    !projIndex.includes('](log.md)'), projIndex.slice(0, 200));
   ok('중첩 예약어 디렉토리의 concept는 그대로 열거된다(과잉 차단 가드)',
-    readIfExists(path.join(home, 'projects', 'raw', 'index.md')).includes('/projects/raw/nested.md'));
+    readIfExists(path.join(home, 'projects', 'raw', 'index.md')).includes('](nested.md)'));
 
   // bench-audit은 recall@cap 측정 경로다 — 릴리스 3의 착수 조건이 그 측정치라 왜곡되면
   // 잘못된 판단을 게이트한다. 루트가 아닌 `raw/`는 정상 스캔 대상이어야 한다.
@@ -5011,6 +5015,48 @@ if (process.platform !== 'win32') {
     !promptText.includes('W6'), promptText.slice(0, 400));
   ok('그래도 에러는 실린다(필터가 과잉이 아니다)',
     /E\d/.test(promptText), promptText.slice(0, 400));
+}
+
+{
+  // --- OKF 공식 번들 규범과의 정합 ---
+  //
+  // 공식 번들(`GoogleCloudPlatform/knowledge-catalog`의 `okf/bundles/acme_retail`)의 index.md는
+  //   최상위: `# Subdirectories` + `* [tables](tables/index.md) - BigQuery tables the bundle …`
+  //   말단:   `# BigQuery Table`  + `* [Customer Orders](orders.md) - One row per completed …`
+  // 세 가지가 규범이다: **의미 라벨 heading** · **`* ` bullet** · **상대경로 링크 + ` - ` 설명**.
+  // 예전 우리 포맷은 `## dir (설명)` heading + `- [t](/abs): desc`라 셋 다 어긋났다.
+  const home = bootstrapped('okf-official-format');
+  fs.mkdirSync(path.join(home, 'projects', 'manna'), { recursive: true });
+  const C = (t, d) => `---\ntype: project\ntitle: "${t}"\ndescription: "${d}"\ntimestamp: 2026-07-15\n---\n본문\n`;
+  fs.writeFileSync(path.join(home, 'projects', 'manna', 'api.md'), C('manna API 설계', 'REST + STOMP 혼합'));
+  regenerateIndex(home);
+
+  const leaf = readIfExists(path.join(home, 'projects', 'manna', 'index.md'));
+  ok('말단 index는 의미 라벨 heading으로 시작한다',
+    /^# \S/.test(leaf), JSON.stringify(leaf.slice(0, 80)));
+  ok('항목은 `* ` bullet이다(공식 규범)',
+    leaf.split('\n').some((l) => l.startsWith('* [')), JSON.stringify(leaf));
+  ok('링크는 상대경로이고 설명은 ` - `로 잇는다',
+    leaf.includes('* [manna API 설계](api.md) - REST + STOMP 혼합'), JSON.stringify(leaf));
+  ok('index 안에 루트 기준 절대경로 링크가 남지 않는다(파일은 상대경로가 규범)',
+    !/\]\(\//.test(leaf), JSON.stringify(leaf));
+
+  const parent = readIfExists(path.join(home, 'projects', 'index.md'));
+  ok('상위 index는 하위 index로 내려가는 링크를 같은 포맷으로 낸다',
+    parent.includes('* [manna](manna/index.md) - '), JSON.stringify(parent));
+
+  const root = readIfExists(okfPaths(home).rootIndex);
+  ok('루트 index도 bullet 목록이다(카테고리별 heading이 아니다)',
+    root.includes('* [projects](projects/index.md) - ') && !/^## /m.test(root), JSON.stringify(root.slice(0, 300)));
+
+  // **게이트는 파일을 문맥 밖으로 주입하므로 상대경로를 되살려야 한다.** 포맷은 스펙을 따르고
+  // 해석은 소비자가 한다 — 이 분업이 깨지면 모델은 `api.md`가 어느 디렉토리인지 모른다.
+  const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  ok('게이트 주입 시에는 번들 루트 기준 절대경로로 되살린다(게이트 규칙 2의 약속)',
+    ctx.includes('](/projects/manna/index.md)'), ctx.split('\n').filter((l) => l.startsWith('* ')).join('|'));
+  ok('게이트에 상대경로 링크가 그대로 새지 않는다',
+    !/\]\((?!\/)[^)\s]+\)/.test(ctx.slice(ctx.indexOf('--- index.md ---'))),
+    ctx.split('\n').filter((l) => l.startsWith('* ')).join('|'));
 }
 
 // ---------------------------------------------------------------------------

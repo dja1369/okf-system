@@ -306,6 +306,35 @@ commit, push, PR, destructive Git 명령은 실행하지 않았다.
   워크스페이스 `rmSync`(지우지 않으면 **전사 사본**이 /tmp에 회차마다 쌓인다), 전 세션
   빈-digest 경고.
 
+### OKF 공식 번들 규범 정합 (index 포맷)
+
+공식 저장소(`GoogleCloudPlatform/knowledge-catalog`의 `okf/bundles/`)를 대조해 index.md 포맷을
+맞췄다. 공식 원문:
+
+```
+okf/bundles/acme_retail/index.md
+  # Subdirectories
+  * [tables](tables/index.md) - BigQuery tables the bundle grounds against.
+
+okf/bundles/acme_retail/tables/index.md
+  # BigQuery Table
+  * [Customer Orders](orders.md) - One row per completed customer order across …
+```
+
+규범 셋: **의미 라벨 heading** · **`* ` bullet** · **상대경로 링크 + ` - ` 설명**.
+예전 우리 포맷(`## dir (설명)` heading + `- [t](/abs): desc`)은 셋 다 어긋났다.
+
+- **모든 디렉토리에 index.md**가 있고 임의 깊이로 중첩된다(`regenerateDir`가 재귀). 루트도 같은
+  bullet 목록이다 — 카테고리별 `##` heading을 쓰지 않는다.
+- **링크는 상대경로다.** 파일을 제자리에서 읽는 소비자에게 그게 맞다. 세션 게이트는 파일을
+  **문맥 밖으로 주입**하므로 `absolutizeLinks`가 주입 시점에만 번들 루트 기준 절대경로로
+  되살린다 — **포맷은 스펙을 따르고 해석은 소비자가 한다**는 분업이다. 게이트 규칙 2가 약속하는
+  `/decisions/...` 형식이 그 변환의 계약이다.
+- `raw/`·`_remove_candidate/`·`.okf/`는 정제 대상·운영 상태라 이 구조 밖이다(루트에서만 예약).
+- 포맷 규범을 `templates/SCHEMA.md`에 **넣지 않았다**: SCHEMA는 매 회차 유료 프롬프트로 나가는데
+  index.md는 코드가 생성하고 LLM은 "절대 쓰지 마라"는 지시를 이미 받는다 — 거기 두면 바이트만
+  쓰고 행동 효과가 0이다(실측: 캡 5,600B를 넘겼다). 규범의 단일 원천은 `lib/index-gen.mjs`다.
+
 미착수: 릴리스 3(`0.3.0`, Part 2)은 I6의 recall@cap 측정 발행이 선행 조건이다.
 
 ### 그 이전 작업
@@ -445,7 +474,7 @@ $0.216→$0.258→**$0.447**로 오히려 순증가했고, zero_base_chain도 $0
 
 ```sh
 node test/smoke.mjs
-# 655 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
+# 663 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
 
 node test/bench.mjs
 # SessionStart 57.4ms (56.7-58.2), SessionEnd 43.4ms (41.8-43.9)

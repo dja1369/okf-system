@@ -13,15 +13,30 @@ import { safeErrorCode } from '../lib/status.mjs';
 // 읽을 대상을 고를 수 없다(AGENDA.md:52의 미결 안건 — "MEMORY.md 방식 참고"가 가리키던 지점).
 // 각 카테고리 index.md에는 이미 `- [제목](/dir/file.md): 설명` 한 줄씩 들어 있으므로, 주입
 // 시점에 그걸 병합한다. 번들 파일 포맷과 index-gen은 그대로 두고 표현만 바꾼다.
+// **게이트는 index.md를 문맥 밖으로 주입한다.** 파일 안의 링크는 OKF 공식 규범대로
+// 상대경로(`ws.md`, `manna/index.md`)인데, 그건 그 파일을 제자리에서 읽는 소비자에게만 유효하다.
+// 주입된 텍스트만 보는 모델에게 `ws.md`는 "어느 디렉토리의?"가 없다 — 그래서 여기서 번들 루트
+// 기준 절대경로로 되살린다. **포맷은 스펙을 따르고 해석은 소비자가 한다**는 분업이다.
+// (게이트 규칙 2가 약속하는 `/decisions/...` 형식이 이 변환의 계약이다.)
+function absolutizeLinks(line, dir) {
+  return line.replace(/\]\(([^)\s]+)\)/g, (whole, target) => (
+    target.startsWith('/') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(target)
+      ? whole
+      : `](/${dir}/${target})`
+  ));
+}
+
 function readCategoryLines(okfHome, dir) {
   try {
     return fs.readFileSync(path.join(okfHome, dir, 'index.md'), 'utf8').trim().split('\n')
-      // `- `로 시작하는 줄만이 concept다. .filter(Boolean)은 빈 줄만 걸러서, index.md에
+      // `* `로 시작하는 줄만이 concept다(공식 규범의 bullet 문자). .filter(Boolean)은 빈 줄만 걸러서, index.md에
       // bullet 아닌 줄이 하나라도 생기면 게이트가 그것을 concept로 세고 주입한다(N/M 카운트까지
       // 거짓이 된다). 은퇴 줄은 index.md에 남기되 여기서만 뺀다 — 링크는 보존하고 예산은 돌려받는다.
       // buildInjectedIndex는 손대지 않는다: c.lines.length가 이미 필터 후 개수라 heading의
       // N/M개와 생략 마커가 자동으로 현역 기준이 된다.
-      .filter((l) => l.startsWith('- ') && !l.startsWith(DEPRECATED_PREFIX));
+      // bullet 문자는 `*`다(OKF 공식 번들 규범). heading(`# 결정`)과 빈 줄은 concept가 아니다.
+      .filter((l) => l.startsWith('* ') && !l.startsWith(DEPRECATED_PREFIX))
+      .map((l) => absolutizeLinks(l, dir));
   } catch {
     return []; // 카테고리 index.md 부재(부트스트랩 직후 등) — 빈 카테고리로 취급한다.
   }
