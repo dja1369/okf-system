@@ -33,3 +33,6 @@ test/.bench-chain-settings.json
 *.swo
 *~
 .DS_Store
+
+# Serena MCP 서버가 만드는 프로젝트 캐시 — 저장소 산출물이 아니다
+.serena/

@@ -54,7 +54,11 @@ function main() {
   const rel = args.find((a) => !a.startsWith('--'));
   if (!rel) return fail(4, '사용법: node bin/deprecate.mjs <번들 상대경로> [--restore]');
 
-  const okfHome = resolveOkfHome();
+  // resolveOkfHome()은 OKF_HOME 환경변수를 **그대로** 돌려준다 — 사용자가 후행 구분자를 붙여
+  // 두면(`OKF_HOME=/x/okf/`) 아래 startsWith 경계 검사가 정상 대상을 거부한다(실측: exit 4).
+  // 여기서 정규화한다. 다른 모듈은 okfPaths()의 path.join이 대신 정규화해주므로 이 raw 문자열
+  // 비교만 취약하다.
+  const okfHome = path.resolve(resolveOkfHome());
   const paths = okfPaths(okfHome);
   const abs = path.resolve(okfHome, rel);
   const relNorm = path.relative(okfHome, abs).split(path.sep).join('/');

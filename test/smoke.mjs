@@ -1584,6 +1584,28 @@ function runDeprecate(okfHome, args) {
   ok('okf-deprecate refuses reserved and out-of-bundle targets',
     runDeprecate(home, ['log.md']).status === 4 && runDeprecate(home, ['../escape.md']).status === 4
     && fs.existsSync(seed));
+
+  // resolveOkfHome()은 OKF_HOME 환경변수를 그대로 돌려준다 — 후행 구분자가 붙으면 경계 검사가
+  // 정상 대상을 거부했다(실측 exit 4). 다른 모듈은 okfPaths()의 path.join이 정규화해줘서
+  // 이 raw 문자열 비교만 취약했다.
+  const trailing = path.join(home, 'decisions', 'trailing-sep.md');
+  fs.writeFileSync(trailing,
+    '---\ntype: decision\ntitle: 후행 구분자\ndescription: d\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(home);
+  git(['add', '-A'], home, { stdio: 'ignore' });
+  git(['commit', '-m', 'test: trailing-sep target'], home, { stdio: 'ignore' });
+  const fakeHomeTrail = isolatedHome();
+  const rTrail = spawnSync(process.execPath,
+    [path.join(PLUGIN_ROOT, 'bin', 'deprecate.mjs'), 'decisions/trailing-sep.md'], {
+      env: {
+        ...process.env, OKF_HOME: `${home}${path.sep}`, HOME: fakeHomeTrail, USERPROFILE: fakeHomeTrail,
+        CLAUDE_CONFIG_DIR: path.join(fakeHomeTrail, '.claude'),
+      },
+      encoding: 'utf8',
+    });
+  ok('okf-deprecate accepts an OKF_HOME with a trailing separator',
+    rTrail.status === 0 && readIfExists(trailing).includes('status: deprecated'),
+    `exit=${rTrail.status} ${rTrail.stderr}`);
 }
 {
   // 살아있는 락에서는 아무것도 바꾸지 않고 물러난다 — **남의 락을 지우지 않는다**.
