@@ -19,6 +19,8 @@ import { git } from '../lib/git.mjs';
 import { isLockStale, releaseLock } from '../lib/lock.mjs';
 import { readInstalledAt } from '../lib/installed-at.mjs';
 import { matchGlob } from '../lib/glob.mjs';
+import { parseFrontmatter } from '../lib/frontmatter.mjs';
+import { toIsoDate, toIsoDateTime, generatedAt } from '../lib/trust.mjs';
 import { analyzeProject } from '../lib/analyze.mjs';
 import { buildGraph, renderHtml } from '../lib/viz.mjs';
 import { auditBenchmarkBundle, matchesBenchmarkAnswer } from '../lib/bench-audit.mjs';
@@ -976,6 +978,110 @@ if (process.platform !== 'win32' && process.getuid?.() !== 0) {
   ok('okf-analysis tells the reporter not to call unmeasured files "0 declarations"',
     readIfExists(path.join(PLUGIN_ROOT, 'commands', 'okf-analysis.md')).includes('analyzedFiles')
     && readIfExists(path.join(PLUGIN_ROOT, 'commands', 'okf-analysis.md')).includes('측정하지 않았다'));
+}
+// --- S3a: lint v0.2 어휘 + lib/trust.mjs ---
+{
+  // 픽스처 헬퍼는 반드시 parseFrontmatter를 통과시켜야 한다. JS 리터럴로 {at:'2026-07-25'}를
+  // 직접 만들면 js-yaml의 **Date 승격**을 재현하지 못해 테스트가 지뢰를 안 밟는다.
+  const fm = (y) => parseFrontmatter(`---\n${y}\n---\n본문\n`).data;
+
+  const unq = fm('stale_after: 2026-12-31');
+  const q = fm('stale_after: "2026-12-31"');
+  ok('trust: toIsoDate collapses an unquoted YAML date and a quoted string to the same value',
+    // 대조군: 지뢰의 존재 자체를 고정한다. 이 단언이 깨지면 벤더드 파서가 바뀐 것이다.
+    unq.stale_after instanceof Date && typeof q.stale_after === 'string'
+    && toIsoDate(unq.stale_after) === '2026-12-31' && toIsoDate(q.stale_after) === '2026-12-31',
+    `${Object.prototype.toString.call(unq.stale_after)} / ${Object.prototype.toString.call(q.stale_after)}`);
+
+  ok('trust: toIsoDateTime treats an offset-less timestamp as UTC',
+    toIsoDateTime(fm('at: 2026-07-25T10:30:00').at) === toIsoDateTime('2026-07-25T10:30:00')
+    && toIsoDateTime('2026-07-25T10:30:00') === '2026-07-25T10:30:00Z',
+    `${toIsoDateTime(fm('at: 2026-07-25T10:30:00').at)} vs ${toIsoDateTime('2026-07-25T10:30:00')}`);
+
+  const genShapes = ['generated: nonsense', 'generated: [1, 2]', 'generated:', 'generated: 2026-07-25',
+    'generated:\n  by: "okf-system/x"'];
+  ok('trust: generatedAt is not fooled by a prototype member on a non-object generated',
+    // 대조군: 옵셔널 체이닝만 쓰면 이 값이 함수라 truthy가 된다.
+    typeof fm('generated: nonsense').generated?.at === 'function'
+    && genShapes.every((y) => generatedAt(fm(y)) === null),
+    genShapes.map((y) => `${y}=>${generatedAt(fm(y))}`).join(' | '));
+}
+{
+  // 단언은 반드시 **파일 경로로 좁혀서** 한다 — bootstrapped()가 심는 시드 4개가 timestamp를
+  // 갖고 있어 번들 전체로 'W2 0건'을 단언하면 우연히 통과한다.
+  const home = bootstrapped('lint-v02');
+  const d = path.join(home, 'decisions');
+  fs.mkdirSync(d, { recursive: true });
+  const write = (name, y) => fs.writeFileSync(path.join(d, name), `---\n${y}\n---\n본문\n`);
+  write('v02-native.md', 'type: decision\ntitle: v0.2 네이티브\ndescription: timestamp 없이 generated만 있다\ngenerated:\n  by: "okf-system/0.2.1"\n  at: "2026-07-25T10:30:00Z"');
+  write('v01-legacy.md', 'type: decision\ntitle: 레거시\ndescription: timestamp만 있다\ntimestamp: 2026-07-15');
+  write('no-time.md', 'type: decision\ntitle: 시간 신호 없음\ndescription: 둘 다 없다');
+  write('gen-string.md', 'type: decision\ntitle: 문자열\ndescription: d\ngenerated: nonsense');
+  write('gen-array.md', 'type: decision\ntitle: 배열\ndescription: d\ngenerated: [1, 2]');
+  write('gen-null.md', 'type: decision\ntitle: 널\ndescription: d\ngenerated:');
+  write('gen-date.md', 'type: decision\ntitle: 날짜\ndescription: d\ngenerated: 2026-07-25');
+  write('gen-noat.md', 'type: decision\ntitle: at 없음\ndescription: d\ngenerated:\n  by: "okf-system/0.2.1"');
+  write('status-unknown.md', 'type: decision\ntitle: 미지 상태\ndescription: d\ntimestamp: 2026-07-15\nstatus: retired');
+  for (const v of ['draft', 'stable', 'deprecated']) {
+    write(`status-${v}.md`, `type: decision\ntitle: ${v}\ndescription: d\ntimestamp: 2026-07-15\nstatus: ${v}`);
+  }
+  for (const t of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
+    write(`hostile-${t.replace(/_/g, '')}.md`, `type: ${t}\ntitle: 적대적 타입\ndescription: d\ntimestamp: 2026-07-15`);
+  }
+  const report = runLint(home);
+  const w2Of = (f) => report.warnings.filter((w) => w.rule === 'W2' && w.file === `decisions/${f}`);
+  const w7Of = (f) => report.warnings.filter((w) => w.rule === 'W7' && w.file === `decisions/${f}`);
+
+  ok('W2 accepts generated.at instead of a legacy timestamp',
+    w2Of('v02-native.md').length === 0 && report.errors.length === 0, formatReport(report));
+  ok('W2 still accepts a legacy timestamp-only concept (mixed-state tolerance)',
+    w2Of('v01-legacy.md').length === 0);
+  ok('W2 warns when neither generated.at nor timestamp is present',
+    w2Of('no-time.md').length === 1 && w2Of('no-time.md')[0].message.includes('generated.at')
+    && !report.errors.some((e) => e.file === 'decisions/no-time.md'),
+    JSON.stringify(w2Of('no-time.md')));
+  // P2의 핵심 회귀 가드: `data.generated?.at`을 쓰면 앞 두 개가 0건이 되어 빨개진다.
+  const genFiles = ['gen-string.md', 'gen-array.md', 'gen-null.md', 'gen-date.md', 'gen-noat.md'];
+  ok('W2 is not fooled by a non-object generated value (prototype .at)',
+    genFiles.every((f) => w2Of(f).length === 1),
+    genFiles.map((f) => `${f}=${w2Of(f).length}`).join(' '));
+
+  ok('unknown status is W7 (warn), never an error',
+    w7Of('status-unknown.md').length === 1 && report.errors.length === 0,
+    formatReport(report));
+  ok('draft/stable/deprecated produce no W7',
+    ['status-draft.md', 'status-stable.md', 'status-deprecated.md'].every((f) => w7Of(f).length === 0));
+
+  const hostileW3 = report.warnings.filter((w) => w.rule === 'W3' && w.file.startsWith('decisions/hostile-'));
+  const hostileText = hostileW3.map((w) => w.message).join(' | ');
+  ok('W3 never leaks a prototype member for a hostile type value',
+    hostileW3.length === 5 && !hostileText.includes('[native code]') && !hostileText.includes('[object Object]')
+    && hostileW3.every((w) => w.message.includes('outside the known taxonomy'))
+    && report.errors.length === 0,
+    hostileText);
+  ok('a freshly bootstrapped bundle produces no W7 under the v0.2 vocabulary',
+    runLint(bootstrapped('lint-v02-clean')).warnings.filter((w) => w.rule === 'W7').length === 0);
+}
+{
+  // SCHEMA.md는 시간 신호 요구에서 면제된다. S5가 SCHEMA에서 timestamp를 지우기 **전에**
+  // 이것이 들어가야 한다 — 순서가 뒤집히면 SCHEMA가 자기 자신에게 영구 W2를 받고, 그 경고가
+  // repair로 새어 모델이 매 회차 SCHEMA를 고치려 들다 드라이버에 차단된다.
+  const home = bootstrapped('lint-v02-schema');
+  fs.writeFileSync(okfPaths(home).schema,
+    '---\ntype: schema\nschema_version: 1\ntitle: 규정\ndescription: v0.2 형태\n'
+    + 'generated:\n  by: "okf-system/0.2.1"\n  at: "2026-07-25"\n---\n# 절대 규칙\n');
+  const report = runLint(home);
+  const schemaFindings = report.warnings.filter((w) => w.file === 'SCHEMA.md');
+  ok('SCHEMA.md without a timestamp does not produce W2',
+    schemaFindings.filter((w) => w.rule === 'W2').length === 0 && report.errors.length === 0,
+    formatReport(report));
+  // 면제 범위를 넓히지 않았는지: W3(type "schema")는 그대로 남아야 한다.
+  ok('the SCHEMA exemption does not widen into W3',
+    schemaFindings.some((w) => w.rule === 'W3'), JSON.stringify(schemaFindings));
+}
+{
+  ok('lib/trust.mjs exports exactly the four functions this release consumes',
+    (readIfExists(path.join(PLUGIN_ROOT, 'lib', 'trust.mjs')).match(/^export function /gm) || []).length === 4);
 }
 
 // ---------------------------------------------------------------------------
