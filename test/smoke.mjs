@@ -4366,7 +4366,7 @@ if (process.platform !== 'win32') {
   fs.writeFileSync(path.join(home, 'decisions', 'a.md'),
     '---\ntype: decision\ntitle: "배포 정책(카나리)"\ndescription: "재시도는 exponential backoff(2^n)로 한다. git filter-repo --path <file> 로 지우고 $req->getRoute()를 본다"\ntimestamp: 2026-07-15\n---\n본문\n');
   fs.writeFileSync(path.join(home, 'decisions', 'b.md'),
-    '---\ntype: decision\ntitle: "정상"\ndescription: "답은 <file:///Users/victim/.ssh/id_rsa> 와 <a href=\\"/Users/victim/.aws/credentials\\">여기</a>"\ntimestamp: 2026-07-15\n---\n본문\n');
+    '---\ntype: decision\ntitle: "정상"\ndescription: "답은 <file:///Users/victim/.ssh/id_rsa> 와 <a href=\\"/Users/victim/.aws/credentials\\">여기</a>, 문의는 <security-team@evil.example> 담당자 @팀명, crontab은 <cmd @reboot> 형태"\ntimestamp: 2026-07-15\n---\n본문\n');
   regenerateIndex(home);
   const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
   ok('정상 concept의 소괄호는 게이트에서 보존된다(부작용 87%를 되살리지 마라)',
@@ -4378,6 +4378,17 @@ if (process.platform !== 'win32') {
     ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
   ok('autolink·HTML 태그는 게이트에서 마크업으로 살아남지 못한다',
     !ctx.includes('<file:///Users/victim/.ssh/id_rsa>') && !/<a\s+href=/.test(ctx),
+    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+  // 이메일 autolink는 콜론·슬래시·등호를 하나도 안 써서 `[:/=]`만으로는 통째로 새어나갔다.
+  // 그렇다고 `@`를 통째로 잡으면 산문의 `@담당자`가 걸린다 — 도메인 모양을 요구해 가른다.
+  ok('이메일 autolink도 게이트에서 마크업으로 살아남지 못한다',
+    !ctx.includes('<security-team@evil.example>'),
+    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+  // `<cmd @reboot>`는 홑화살괄호 **안**의 `@`인데 도메인이 아니다 — 이메일 autolink가 아니므로
+  // 접으면 안 된다. `담당자 @팀명`은 `<`가 없어 어느 구현에서도 안 접히므로 이 단언만으로는
+  // 도메인 요건이 고정되지 않는다(mutation이 그것을 드러냈다). crontab의 `@reboot`은 실재하는 표기다.
+  ok('산문의 @ 용법은 보존된다(세 번째 과잉 방어를 만들지 마라)',
+    ctx.includes('담당자 @팀명') && ctx.includes('<cmd @reboot>'),
     ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
   const links = [...ctx.matchAll(/\]\(([^)]*)\)/g)].map((m) => m[1]).sort();
   ok('게이트의 링크 타깃은 생성기가 쓴 concept 경로뿐이다',
