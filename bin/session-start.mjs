@@ -144,8 +144,38 @@ function extractLatestLogSection(logContent, maxLines = 15) {
   if (!match) return '(최근 변경 없음)';
   const rest = logContent.slice(match.index);
   const afterHeading = rest.slice(match[0].length);
-  const nextHeadingOffset = afterHeading.search(/^## /m);
-  const section = nextHeadingOffset === -1 ? rest : rest.slice(0, match[0].length + nextHeadingOffset);
+  // **섹션 경계는 "다음 `## ` 줄"이 아니라 "다음 *다른 날짜*의 `## ` 줄"이다.**
+  // 같은 날짜 헤딩이 한 번 더 나타나면 예전 코드는 거기서 섹션이 끝났다고 오판해 **그 뒤 모든
+  // 줄을 조용히 버렸다** — 절단 마커는 `lines.length > maxLines`일 때만 붙는데 이 경로는 섹션
+  // 자체가 짧다고 오판해서 그 분기를 아예 안 탄다. 15줄 캡 절단보다 나쁜 **무통보 유실**이다.
+  //
+  // 공격이 필요 없다. `prompts/ingest.md`가 분석기에게 "오늘 날짜 섹션이 있으면 새로 만들지
+  // 말고 그 안에 추가하라"고 지시하지만 그건 **프롬프트 규범일 뿐 코드 강제가 아니다** —
+  // 모델이 한 번 놓치면 바로 밟는다. lint도 못 막는다: 중복 날짜는 W4(경고)라 배치가 커밋한다.
+  // 독립 리뷰가 실행으로 재현했다.
+  //
+  // 같은 날짜의 연속 섹션은 하나로 병합한다(버리지 않는다 — 조용한 유실 금지).
+  const sectionDate = /^## (\d{4}-\d{2}-\d{2})/.exec(match[0])?.[1] ?? null;
+  const SAME_DATE_HEADING_RE = sectionDate ? new RegExp(`^## ${sectionDate}\\b.*$`, 'gm') : null;
+  let scanFrom = 0;
+  let nextHeadingOffset = -1;
+  for (;;) {
+    const at = afterHeading.slice(scanFrom).search(/^## /m);
+    if (at === -1) break;
+    const abs = scanFrom + at;
+    const line = afterHeading.slice(abs).split('\n')[0];
+    if (SAME_DATE_HEADING_RE && new RegExp(`^## ${sectionDate}\\b`).test(line)) {
+      scanFrom = abs + line.length; // 같은 날짜 = 같은 섹션의 연속이다. 계속 스캔한다.
+      continue;
+    }
+    nextHeadingOffset = abs;
+    break;
+  }
+  const rawSection = nextHeadingOffset === -1 ? rest : rest.slice(0, match[0].length + nextHeadingOffset);
+  // 병합하면서 중복 헤딩 줄만 제거한다 — 헤딩은 맨 앞 하나로 충분하다.
+  const section = SAME_DATE_HEADING_RE
+    ? match[0] + rawSection.slice(match[0].length).replace(SAME_DATE_HEADING_RE, '')
+    : rawSection;
   const lines = section.trimEnd().split('\n').map(neutralizeLogLine);
   if (lines.length <= maxLines) return lines.join('\n');
 

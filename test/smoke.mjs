@@ -4904,6 +4904,66 @@ if (process.platform !== 'win32') {
     !matched.includes('log.md'), matched);
 }
 
+{
+  // **같은 날짜의 중복 `## ` 헤딩이 게이트 log 섹션을 무통보로 잘랐다**(독립 리뷰가 실행으로
+  // 재현). 섹션 경계를 "다음 `## ` 줄"로 잡아서, 중복 헤딩 뒤의 모든 항목이 사라지는데
+  // 절단 마커는 `lines.length > maxLines`일 때만 붙어 이 경로는 그 분기를 아예 안 탄다 —
+  // 15줄 캡 절단보다 나쁜 완전한 무통보 유실이다.
+  //
+  // 공격이 필요 없다: `prompts/ingest.md`가 "오늘 섹션이 있으면 그 안에 추가하라"고 지시하지만
+  // 그건 프롬프트 규범일 뿐이고, 모델이 한 번 놓치면 바로 밟는다. lint도 못 막는다 —
+  // 중복 날짜는 W4(경고)라 배치가 그대로 커밋한다. 기존 테스트는 **서로 다른** 날짜의 오름차순
+  // 위반만 다뤄서 이 시나리오가 통째로 무커버였다.
+  const home = bootstrapped('gate-log-duplicate-heading');
+  fs.writeFileSync(okfPaths(home).log, [
+    '# Log', '',
+    '## 2026-07-26',
+    '- 첫 항목',
+    '## 2026-07-26',
+    '- 둘째 항목',
+    '- 셋째 항목',
+    '',
+    '## 2026-07-25',
+    '- 어제 항목(다른 날짜 — 섹션 밖이어야 한다)',
+    '',
+  ].join('\n'));
+  const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  const tail = ctx.slice(ctx.indexOf('--- 최근 변경 (log.md) ---'));
+  ok('중복 날짜 헤딩 뒤의 항목이 게이트에서 사라지지 않는다',
+    tail.includes('첫 항목') && tail.includes('둘째 항목') && tail.includes('셋째 항목'),
+    JSON.stringify(tail.slice(0, 240)));
+  ok('중복 헤딩 줄 자체는 하나로 합쳐진다',
+    (tail.match(/^## 2026-07-26/gm) || []).length === 1,
+    JSON.stringify(tail.slice(0, 240)));
+  // 다른 날짜에서는 여전히 섹션이 끝나야 한다 — 병합이 과잉으로 번지면 안 된다.
+  ok('다른 날짜의 헤딩은 여전히 섹션 경계다(과잉 병합 가드)',
+    !tail.includes('어제 항목'), JSON.stringify(tail.slice(0, 240)));
+}
+{
+  // `err.message` 금지 계약의 **네 번째** 지점: 파일 읽기 에러. Node fs 에러는 절대경로를
+  // 그대로 담고, 이 E1은 formatReport → {{LINT_REPORT}}로 **유료 repair 프롬프트**에 실린다.
+  const home = bootstrapped('lint-read-error-path');
+  const SECRET_DIR = path.join(home, 'decisions', 'CONFIDENTIAL-DIR');
+  fs.mkdirSync(SECRET_DIR, { recursive: true });
+  // 디렉토리인데 이름이 `.md`라 walkMdFiles는 파일로 보지 않는다 — 읽기 실패를 만들려면
+  // 파일을 만든 뒤 권한을 없앤다.
+  const unreadable = path.join(home, 'decisions', 'unreadable.md');
+  fs.writeFileSync(unreadable, '---\ntype: decision\ntitle: "t"\ndescription: "d"\ntimestamp: 2026-07-15\n---\n본문\n');
+  let planted = true;
+  try {
+    fs.chmodSync(unreadable, 0o000);
+    fs.readFileSync(unreadable, 'utf8');
+    planted = false; // root로 돌면 권한이 안 먹는다
+  } catch {
+    // 기대한 읽기 실패
+  }
+  const text = formatReport(runLint(home));
+  try { fs.chmodSync(unreadable, 0o600); } catch { /* 정리 실패는 무해 */ }
+  ok('파일 읽기 에러도 절대경로를 리포트에 싣지 않는다',
+    !planted || (!text.includes(home) && text.includes('unable to read file: code=')),
+    text.slice(0, 300));
+}
+
 // ---------------------------------------------------------------------------
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
