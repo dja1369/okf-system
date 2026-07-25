@@ -899,11 +899,22 @@ function buildIngestPrompt(pluginRootDir, chunk) {
 
 function buildRepairPrompt(pluginRootDir, report) {
   const template = fs.readFileSync(path.join(pluginRootDir, 'prompts', 'repair.md'), 'utf8');
-  // W6은 '분할' 규범인데 repair는 새 파일을 만들 수 없다(prompts/repair.md). 리포트에 실으면
+  // **repair가 "고치면 해로운" 경고는 리포트에서 뺀다.** `formatReport`는 errors와 warnings를
+  // 구조적으로 구분하지 않고 한 줄씩 이어붙이므로, repair가 받는 텍스트에서 `E1:`과 `W6:`은
+  // 시각적으로 동급이다 — 어차피 그 파일을 편집하게 되면 나란히 뜬 경고도 "고칠 항목"으로 읽는다.
+  //
+  // W6('분할' 규범): repair는 새 파일을 만들 수 없다(prompts/repair.md). 리포트에 실으면
   // 헛돌거나 파일을 임의로 잘라낸다 — applyAnalyzerWorkspace에는 신규 파일 차단이 없어
-  // 그 절단이 실제로 번들에 반영된다. W5(따옴표 씌우기)와 W1/W3는 repair 범위 안이라 그대로
-  // 싣는다. 규칙 코드 레지스트리는 lib/lint.mjs 상단.
-  const filtered = { errors: report.errors, warnings: report.warnings.filter((w) => w.rule !== 'W6') };
+  // 그 절단이 실제로 번들에 반영된다.
+  // W14(신뢰 필드 존재): **이 필드를 경고로 둔 이유 자체가 "사람·외부 도구가 쓰는 것은
+  // 정당하다"(OKF §11)인데**, repair가 그것을 "고쳐서" 지우면 애초에 에러로 안 올린 이유를
+  // 스스로 무너뜨린다. 게다가 repair가 프론트매터를 건드리면 `generated` 스탬프와도 충돌한다.
+  // 독립 리뷰 지적 — 실제 LLM 행동 재현은 유료 호출이 필요해 안 했고, 설계상 위험으로 판단했다.
+  //
+  // W5(따옴표 씌우기)·W1·W3처럼 "고치면 오히려 이득"인 경고는 그대로 싣는다.
+  // 규칙 코드 레지스트리는 lib/lint.mjs 상단.
+  const REPAIR_SUPPRESSED_RULES = new Set(['W6', 'W14']);
+  const filtered = { errors: report.errors, warnings: report.warnings.filter((w) => !REPAIR_SUPPRESSED_RULES.has(w.rule)) };
   const reportText = formatReport(filtered);
   return template.replace('{{LINT_REPORT}}', () => reportText);
 }

@@ -4989,6 +4989,30 @@ if (process.platform !== 'win32') {
     report.errors.length === 0, JSON.stringify(report.errors));
 }
 
+{
+  // **repair가 "고치면 해로운" 경고는 프롬프트에서 빠져야 한다.** `formatReport`는 errors와
+  // warnings를 구조적으로 구분하지 않고 한 줄씩 이어붙이므로, repair가 받는 텍스트에서
+  // `E1:`과 `W14:`는 시각적으로 동급이다 — 어차피 그 파일을 편집하게 되면 나란히 뜬 경고도
+  // "고칠 항목"으로 읽는다(독립 리뷰 지적).
+  // W14를 경고로 둔 이유 자체가 "사람·외부 도구가 쓰는 것은 정당하다"(OKF §11)인데,
+  // repair가 그것을 지우면 애초에 에러로 안 올린 이유를 스스로 무너뜨린다.
+  // 기존 W6 단언은 **메시지 문구**만 봤다 — 필터 자체는 무커버였다.
+  const home = setupBatchSandbox('repair-prompt-filter');
+  fs.writeFileSync(path.join(home, 'decisions', 'trusted.md'),
+    `---\ntype: decision\ntitle: "신뢰 필드 있는 결정"\ndescription: "${'가'.repeat(600)}"\ntimestamp: 2026-07-15\nverified:\n  - by: "human:someone"\n    at: "2026-07-15T00:00:00Z"\n---\n본문\n`);
+  const dump = path.join(sandbox('repair-prompt-dump'), 'prompt.txt');
+  runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'badoutput', FAKE_CLAUDE_DUMP_PROMPT_TO: dump } });
+  const promptText = fs.existsSync(dump) ? fs.readFileSync(dump, 'utf8') : '';
+  ok('repair 프롬프트가 실제로 덤프됐다(빈 문자열로 통과하는 자기충족 방지)',
+    promptText.includes('lint 오류 리포트'), promptText.slice(0, 120));
+  ok('repair 프롬프트에 W14가 실리지 않는다(정당한 값을 지우게 만들면 안 된다)',
+    !promptText.includes('W14'), promptText.slice(0, 400));
+  ok('repair 프롬프트에 W6도 실리지 않는다(기존 계약)',
+    !promptText.includes('W6'), promptText.slice(0, 400));
+  ok('그래도 에러는 실린다(필터가 과잉이 아니다)',
+    /E\d/.test(promptText), promptText.slice(0, 400));
+}
+
 // ---------------------------------------------------------------------------
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
