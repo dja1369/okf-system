@@ -19,6 +19,7 @@ import { git } from '../lib/git.mjs';
 import { isLockStale, releaseLock } from '../lib/lock.mjs';
 import { readInstalledAt } from '../lib/installed-at.mjs';
 import { matchGlob } from '../lib/glob.mjs';
+import { BUILTIN_EXCLUDE_CWD } from '../lib/paths.mjs';
 import { parseFrontmatter, setFrontmatterStatus } from '../lib/frontmatter.mjs';
 import { toIsoDate, toIsoDateTime, generatedAt, conceptStatus } from '../lib/trust.mjs';
 import { stampGenerated } from '../lib/generated-stamp.mjs';
@@ -1280,6 +1281,10 @@ if (process.platform !== 'win32' && process.getuid?.() !== 0) {
   const home = setupBatchSandbox('stamp-success');
   runBatch({ okfHome: home, env: { FAKE_CLAUDE_MODE: 'success' } });
   const concept = readIfExists(path.join(home, 'decisions', 'fake-test-concept.md'));
+  ok('a round that committed knowledge reports committed chunks, not noop',
+    lastBatch(home).chunks?.committed === 1 && lastBatch(home).chunks.noop === 0
+      && lastBatch(home).chunks.skipped === 0,
+    JSON.stringify(lastBatch(home).chunks));
   ok('success: batch stamps generated.by with the model that actually answered',
     concept.includes('  by: "okf-system/claude-sonnet-5"'), concept);
   ok('success: generated.at is ISO8601 UTC seconds and appears exactly once',
@@ -2092,6 +2097,13 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
       && lastBatch(home).lastResult === 'ok'
       && git(['rev-list', '--count', 'HEAD'], home).trim() === commitsBefore,
     `lastResult=${lastBatch(home).lastResult}`);
+  // 마커 프로토콜은 선언 준수율을 올리므로 모델의 **잘못된** NO-OP 판단도 그만큼 확실하게
+  // archive된다(라이브 실측: 미준수가 우연히 안전망 역할을 해 3번째 시도가 지식을 건졌다).
+  // 되돌리는 대신 "ok인데 산출물 0"을 상태에 드러내 사용자가 추세를 볼 수 있게 한다.
+  ok('an ok round that produced nothing is distinguishable from one that committed knowledge',
+    lastBatch(home).chunks?.committed === 0 && lastBatch(home).chunks.noop === 1
+      && lastBatch(home).chunks.total === 1,
+    JSON.stringify(lastBatch(home).chunks));
 }
 {
   // 마커 프로토콜이 여는 **새 유실 경로**의 회귀 고정: 무언가를 쓰고도 마커를 남긴 회차를
@@ -2424,6 +2436,9 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
   // 상한의 한계를 정직하게 적었는가 — 하드 과금 차단이 아니다.
   ok('the spend cap documents itself as best-effort, not a hard billing block',
     configCommand.includes('best-effort') && fs.readFileSync(path.join(PLUGIN_ROOT, 'docs', 'USAGE.md'), 'utf8').includes('Best-effort'));
+  ok('okf-status distinguishes an ok round with zero output from one that stored knowledge',
+    readIfExists(path.join(PLUGIN_ROOT, 'commands', 'okf-status.md')).includes('산출물 유무와 무관')
+    && readIfExists(path.join(PLUGIN_ROOT, 'commands', 'okf-status.md')).includes('자기증식 루프'));
   ok('okf-status reports the cost fields and says so when they are absent',
     fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'okf-status.md'), 'utf8').includes('비용 기록 없음'));
 
@@ -2601,6 +2616,29 @@ function setupBatchSandbox(label, rawSessionId = 'e0e0e0e0-1111-2222-3333-444444
     seen.includes(userProjId) && seen.includes(mainCheckoutId), seen);
   const builtinLogs = fs.readdirSync(okfPaths(home).logs)
     .map((n) => fs.readFileSync(path.join(okfPaths(home).logs, n), 'utf8')).join('\n');
+  // 번들에 기록된 **실제 오염 사례**의 cwd 문자열을 그대로 고정한다. 이 목록은 추측이 아니라
+  // 라이브에서 배치 입력까지 넘어온 것이 관측된 경로들이다(자기증식 루프 트러블슈팅 문서).
+  const DOCUMENTED_POLLUTION = [
+    '/Users/t/side_project/okf-system/.claude/worktrees/bench-v4/.bench-chain/wt-zero-base-chain-4',
+    '/Users/t/side_project/okf-system/.claude/worktrees/bench-v4',
+    '/private/tmp/okf-persist-test',
+    '/var/folders/wt/abc/T/okf-smoke-batch-success-XyZ',
+    '/Users/t/.claude/okf',
+  ];
+  ok('문서화된 실제 오염 cwd가 전부 내장 제외에 걸린다',
+    DOCUMENTED_POLLUTION.every((cwd) => matchGlob(cwd, BUILTIN_EXCLUDE_CWD)),
+    DOCUMENTED_POLLUTION.filter((cwd) => !matchGlob(cwd, BUILTIN_EXCLUDE_CWD)).join(' | '));
+  // 과차단 대조군 — 사용자의 진짜 작업은 하나도 걸리면 안 된다.
+  const REAL_WORK = [
+    '/Users/t/side_project/okf-system',
+    '/Users/t/work/okf-benchmark-harness',
+    '/Users/t/projects/my-okf-app',
+    '/Users/t/side_project/ds_labs',
+  ];
+  ok('내장 제외가 사용자의 진짜 작업 디렉토리를 하나도 막지 않는다',
+    REAL_WORK.every((cwd) => !matchGlob(cwd, BUILTIN_EXCLUDE_CWD)),
+    REAL_WORK.filter((cwd) => matchGlob(cwd, BUILTIN_EXCLUDE_CWD)).join(' | '));
+
   ok('내장 제외 로그는 개수와 패턴 인덱스만 남긴다',
     /내장 제외 transcript 1개 \(패턴 #\d/.test(builtinLogs)
     && !builtinLogs.includes('worktrees') && !builtinLogs.includes(benchId),

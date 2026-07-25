@@ -1073,6 +1073,14 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null, chunkBudget = { d
 // 3회 연속 실패 구간까지 있었다. 도구 호출(파일 생성)은 문장 생성보다 훨씬 안정적이다.
 // 텍스트 폴백은 하위호환으로 남기되 **완전일치**를 유지한다(substring이면 설명문 속 언급이
 // 선언으로 오인돼 지식이 조용히 archive된다).
+//
+// **트레이드오프를 알고 쓴다.** 라이브 실측(2026-07-25, 하루 4회차): 2회가 "무변경 + 선언 없음"으로
+// 걸려 raw가 보존됐고, 같은 입력의 3번째 시도가 그제서야 실제 지식을 커밋했다 — 즉 그 두 번은
+// '기록할 게 없어서'가 아니라 **기록해야 할 사실을 놓친 것**이었고, 프로토콜 미준수가 우연히
+// 안전망 역할을 했다. 준수율을 올리면 모델의 *잘못된* NO-OP 판단도 그만큼 확실하게 archive된다.
+// 이 판정을 되돌리는 대신 두 가지로 막는다: (a) applied/blocked와의 AND 조건(쓰려다 거부당한
+// 회차는 절대 NO-OP이 아니다), (b) 아래 noopChunks 계수로 "ok인데 산출물 0"을 상태에 드러낸다.
+// 원본은 _remove_candidate에 30일 남으므로 오판이 즉시 유실은 아니다.
 function declaredNoOp(wsRoot, output) {
   try {
     if (fs.existsSync(path.join(wsRoot, NOOP_MARKER))) return true;
@@ -1151,13 +1159,14 @@ function processChunkBody(okfHome, chunk, i, totalChunks, paths, pluginRootDir, 
 
     // ingest가 "재사용 가치 없음(NO-OP)" 판단으로 아무것도 안 썼을 수 있다 — 이 경우 커밋할 diff가
     // 없으므로(빈 git commit은 에러) 커밋을 스킵하고 raw만 처리 완료로 이동한다.
-    if (isDirty(paths.home)) {
+    const committed = isDirty(paths.home);
+    if (committed) {
       commitAll(paths.home, `okf: ingest ${localDateString()} (chunk ${i + 1}/${totalChunks})`);
       log(okfHome, `청크 ${i + 1} 커밋 완료`);
     } else {
       log(okfHome, `청크 ${i + 1}: NO-OP (반영할 지식 없음)`);
     }
-    return { ok: true, fatal: false };
+    return { ok: true, fatal: false, noop: !committed };
   } finally {
     fs.rmSync(wsRoot, { recursive: true, force: true });
   }
@@ -1187,6 +1196,9 @@ function processChunks(okfHome, chunks, pluginRootDir, config, runId, spend, cap
 
   let succeededChunks = 0;
   let skippedChunks = 0;
+  // "ok인데 산출물 0"을 상태에 드러내기 위한 계수. lastResult만으로는 정상 NO-OP과
+  // 자기증식 루프(sweep 오분류)를 구분할 수 없다 — 실측으로 사용자를 혼란시킨 지점이다.
+  let noopChunks = 0;
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     // 진입 게이트를 통과한 회차는 최소 1청크는 처리해야 backlog가 줄어든다
@@ -1218,10 +1230,12 @@ function processChunks(okfHome, chunks, pluginRootDir, config, runId, spend, cap
 
     archiveChunk(okfHome, chunk, todayDir);
     succeededChunks++;
+    if (result.noop) noopChunks++;
   }
   return {
     succeededChunks,
     skippedChunks,
+    noopChunks,
     aborted: skippedChunks > 0,
     reason: skippedChunks > 0 ? 'skipped' : null,
   };
@@ -1389,7 +1403,7 @@ function runBatch() {
     log(okfHome, `이번 회차 처리 대상: 세션 ${selected.length}개, digest 합계 ${(totalBytes / 1024).toFixed(1)}KB`);
 
     const chunks = chunkBySize(selected, CHUNK_BYTE_LIMIT);
-    const { succeededChunks, aborted, reason } = processChunks(
+    const { succeededChunks, aborted, reason, noopChunks } = processChunks(
       okfHome, chunks, pluginRootDir, config, runId, spend, capUsd, spendBeforeUsd);
 
     try {
@@ -1403,7 +1417,17 @@ function runBatch() {
       : (reason === 'spend-cap'
         ? `partial: ${succeededChunks}/${chunks.length} chunks (daily spend cap)`
         : `partial: ${succeededChunks}/${chunks.length} chunks`);
-    updateLastBatch(okfHome, outcome, spendExtra(okfHome, spend));
+    // chunks{total, committed, noop, skipped}: lastResult가 'ok'여도 산출물이 0일 수 있다.
+    // 그 구분이 없어서 사용자가 정상 NO-OP과 sweep 자기증식 루프를 구별하지 못했다(실측).
+    updateLastBatch(okfHome, outcome, {
+      ...spendExtra(okfHome, spend),
+      chunks: {
+        total: chunks.length,
+        committed: succeededChunks - noopChunks,
+        noop: noopChunks,
+        skipped: chunks.length - succeededChunks,
+      },
+    });
     return { acquiredLock: true, freshPending: swept.freshPending };
   } finally {
     // token을 반드시 넘긴다 — 인자 없이 부르면 lib/lock.mjs의 단락 평가로 '남의 락도 무조건
