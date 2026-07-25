@@ -51,8 +51,10 @@ function emitResult(subtype = 'success', isError = false, resultText = 'done') {
     duration_api_ms: 200,
     total_cost_usd: COST_USD,
     num_turns: 1,
+    // 모델 이름은 CLI 응답에서 오는 값이라 드라이버 입장에서는 신뢰 경계 밖이다. 그 값이
+    // generated.by로 번들에 영구히 남으므로 화이트리스트를 태울 주입 지점을 둔다.
     modelUsage: {
-      'claude-sonnet-5': { inputTokens: 100, outputTokens: 20, costUSD: 0.001 },
+      [process.env.FAKE_CLAUDE_MODEL || 'claude-sonnet-5']: { inputTokens: 100, outputTokens: 20, costUSD: 0.001 },
     },
     session_id: process.env.FAKE_CLAUDE_SESSION_ID || 'f6f6f6f6-1111-2222-3333-444444444444',
   }));

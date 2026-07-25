@@ -54,6 +54,14 @@ commit, push, PR, destructive Git 명령은 실행하지 않았다.
   실패하면 raw로 되돌리지 않고 `_remove_candidate/`로 격리한다. 원장은
   `.okf/chunk-retries.json`(sessionLabel 해시 → 횟수)이고, 성공은 카운트를 지우며, raw·staging
   어디에도 없는 항목은 저장 시 정리한다. 격리 건수는 `last-batch.json`의 `chunks.quarantined`.
+  **상한의 범위는 "같은 입력"이다 — 영구 차단이 아니다.** `_remove_candidate` TTL(기본 30일)이
+  격리 사본을 지우면 `archivedMaxById`(`bin/batch.mjs:258`)가 그 세션ID를 잊는다. 그때 원본
+  transcript가 sweep 창(`SWEEP_LOOKBACK_DAYS` 7일) 안에 있으면 재수집되어 3회 사이클이 다시
+  시작된다. 그 조건은 "격리 후 30일이 지났는데 그 대화가 여전히 최근 7일 안에 이어지고 있다"
+  이고, 그러면 transcript는 자란 상태다 — 같은 입력이 아니라 새 입력이므로 새 시도를 주는 것이
+  맞다. 원장 키가 `sessionLabel(파일명)`이고 파일명이 `localDateString(mtime)`을 담는 것도 같은
+  판단이다(대화가 자라 날짜를 넘기면 카운트도 리셋된다). 세션ID 키로 바꿔 '평생 3회'로 조이면
+  나중에 자라서 처리 가능해진 대화가 영구히 버려지므로 채택하지 않았다.
 - **락 ABA 폐쇄**: "stale 판정 → unlink"는 두 시스템 콜이라 그 사이에 남이 잡은 **유효한** 락을
   지울 수 있었다(되읽기는 창을 좁힐 뿐이다). `rename`으로 원자적으로 클레임한 뒤 내용을 확인하고,
   남의 것이면 `linkSync`로 되돌린다(그 사이 제3자가 `wx`로 만든 락은 덮지 않는다).
@@ -68,7 +76,20 @@ commit, push, PR, destructive Git 명령은 실행하지 않았다.
   `bin/batch.mjs`가 로그에 대해 지키던 계약을 훅에도 맞췄다.
 - **번들 파일 권한 회귀 고정**: 기존 테스트는 `.okf/` 상태 파일만 봤는데 그것들은
   `writePrivateJsonAtomic`이 rename 뒤 한 번 더 chmod한다. `writePrivateFile`의 0600 강제를
-  지우면 실제로 0644가 되는 것은 `SCHEMA.md`·`log.md`였다.
+  지우면 실제로 0644가 되는 것은 `SCHEMA.md`·`log.md`였다. `index.md`는 `writeAtomic`이
+  기본 모드를 써서 baseline에서도 0644였다 — 같은 번들 안의 정책 불일치라 0600으로 통일했다.
+- **U+0085(NEL)**를 게이트 접기 집합과 lint W12 집합에 추가. 줄을 가르지는 않지만 게이트 줄이
+  `…재시도 3회- [주입](…)`처럼 공백 없이 붙은 채 통과했다.
+- **게이트 링크 타깃 위조 차단**: 접기는 개행만 다루고 `](`는 손대지 않아서, LLM이 저술한
+  title/description이 `- [정상](/Users/victim/.ssh/id_rsa) 그리고 [](/decisions/x.md): …`처럼
+  게이트에 **링크 타깃**을 위조할 수 있었다. 게이트 규칙 2가 링크를 번들 루트 기준으로
+  프레이밍하므로 즉시 exfil 프리미티브는 아니지만, 사용자 홈의 실제 경로가 게이트에 concept
+  링크로 제시되고 lint는 W1(경고)만 낸다 — 경고는 커밋도 게이트도 막지 않는다.
+  `foldToSingleLine`에서 `[ ] ( )`를 전각으로 치환한다.
+- **무커버 방어 5종에 테스트**: `OKF_BATCH=1` 재귀 가드(§7-1 2차), sweep의 분석기 자기세션
+  cwd 가드, `actorFor` 화이트리스트(모델 이름이 `generated.by`로 번들에 영구히 남는다),
+  워크스페이스 `rmSync`(지우지 않으면 **전사 사본**이 /tmp에 회차마다 쌓인다), 전 세션
+  빈-digest 경고.
 
 미착수: 릴리스 3(`0.3.0`, Part 2)은 I6의 recall@cap 측정 발행이 선행 조건이다.
 
