@@ -321,7 +321,12 @@ okf/bundles/acme_retail/tables/index.md
   * [Customer Orders](orders.md) - One row per completed customer order across …
 ```
 
-규범 셋: **의미 라벨 heading** · **`* ` bullet** · **상대경로 링크 + ` - ` 설명**.
+규범 셋: **heading** · **`* ` bullet** · **상대경로 링크 + ` - ` 설명**.
+세 번들(`acme_retail`·`ga4`·`stackoverflow`)에서 동일함을 확인했다 — 한 번들에 과적합하지 않았다.
+
+**heading 텍스트는 "그 목록이 무엇을 담는지"를 말한다**: 하위 디렉토리만 담으면
+`# Subdirectories`(공식 고정 문자열), concept를 담으면 내용 라벨(`# BigQuery Table`).
+루트 index는 언제나 하위 디렉토리 목록이므로 `# Subdirectories`다.
 예전 우리 포맷(`## dir (설명)` heading + `- [t](/abs): desc`)은 셋 다 어긋났다.
 
 - **모든 디렉토리에 index.md**가 있고 임의 깊이로 중첩된다(`regenerateDir`가 재귀). 루트도 같은
@@ -474,7 +479,7 @@ $0.216→$0.258→**$0.447**로 오히려 순증가했고, zero_base_chain도 $0
 
 ```sh
 node test/smoke.mjs
-# 663 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
+# 670 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
 
 node test/bench.mjs
 # SessionStart 57.4ms (56.7-58.2), SessionEnd 43.4ms (41.8-43.9)

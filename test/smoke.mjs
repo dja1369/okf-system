@@ -5034,6 +5034,17 @@ if (process.platform !== 'win32') {
   const leaf = readIfExists(path.join(home, 'projects', 'manna', 'index.md'));
   ok('말단 index는 의미 라벨 heading으로 시작한다',
     /^# \S/.test(leaf), JSON.stringify(leaf.slice(0, 80)));
+  // **heading 텍스트는 "그 목록이 무엇을 담는지"를 말한다** — 공식 세 번들
+  // (acme_retail·ga4·stackoverflow)이 전부 하위 디렉토리 목록에 `# Subdirectories`를 쓰고,
+  // concept 목록에는 내용 라벨(`# BigQuery Table`)을 쓴다.
+  ok('concept를 담은 index는 내용 라벨을 쓴다(`# Subdirectories`가 아니다)',
+    leaf.startsWith('# manna'), JSON.stringify(leaf.slice(0, 40)));
+  ok('하위 디렉토리만 담은 index는 `# Subdirectories`다(공식 고정 문자열)',
+    readIfExists(path.join(home, 'projects', 'index.md')).startsWith('# Subdirectories'),
+    JSON.stringify(readIfExists(path.join(home, 'projects', 'index.md')).slice(0, 40)));
+  ok('루트 index도 같은 규칙이다(언제나 하위 디렉토리 목록)',
+    /^# Subdirectories$/m.test(readIfExists(okfPaths(home).rootIndex)),
+    JSON.stringify(readIfExists(okfPaths(home).rootIndex).slice(0, 120)));
   ok('항목은 `* ` bullet이다(공식 규범)',
     leaf.split('\n').some((l) => l.startsWith('* [')), JSON.stringify(leaf));
   ok('링크는 상대경로이고 설명은 ` - `로 잇는다',
@@ -5048,6 +5059,8 @@ if (process.platform !== 'win32') {
   const root = readIfExists(okfPaths(home).rootIndex);
   ok('루트 index도 bullet 목록이다(카테고리별 heading이 아니다)',
     root.includes('* [projects](projects/index.md) - ') && !/^## /m.test(root), JSON.stringify(root.slice(0, 300)));
+  ok('루트 index는 v0.2 스펙대로 okf_version을 유지한다(공식 v0.1 번들에는 없는 키다)',
+    /^okf_version:/m.test(root), JSON.stringify(root.slice(0, 120)));
 
   // **게이트는 파일을 문맥 밖으로 주입하므로 상대경로를 되살려야 한다.** 포맷은 스펙을 따르고
   // 해석은 소비자가 한다 — 이 분업이 깨지면 모델은 `api.md`가 어느 디렉토리인지 모른다.
