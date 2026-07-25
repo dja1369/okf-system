@@ -970,6 +970,12 @@ function rollbackChunk(okfHome, chunk) {
     const attempts = (Number.isInteger(prior) && prior > 0 ? prior : 0) + 1;
     const giveUp = attempts >= MAX_CHUNK_ATTEMPTS;
     const destDir = giveUp ? path.join(paths.removeCandidate, localDateString()) : paths.raw;
+    // **카운트를 이동보다 먼저 기록한다.** 세는 것은 "파일을 옮겼는가"가 아니라 "유료 호출을
+    // 했는가"다. 이동 성공에만 기록하면, 격리 목적지에 못 쓰는 장애(디스크 가득참·권한)에서
+    // 카운트가 영영 안 올라 매 회차 유료 호출을 새로 태운다 — 상한이 있으나 마나가 된다
+    // (독립 검증 실측: 목적지를 chmod 500으로 막자 원장이 비고 누적 과금이 계속 늘었다).
+    // 그런 장애는 여러 회차 지속되는 종류라 정확히 최악의 경우다.
+    ledger[label] = attempts;
     try {
       fs.mkdirSync(destDir, { recursive: true });
       fs.renameSync(dp.source, path.join(destDir, path.basename(dp.source)));
@@ -977,11 +983,11 @@ function rollbackChunk(okfHome, chunk) {
         delete ledger[label];
         quarantined++;
         log(okfHome, `세션 ${label}: ${attempts}회 연속 실패 — raw로 되돌리지 않고 _remove_candidate로 격리한다(무한 재과금 차단, 30일 보관)`);
-      } else {
-        ledger[label] = attempts;
       }
     } catch (err) {
-      log(okfHome, `청크 원복 중 반환 실패 ${label}: code=${safeErrorCode(err)}`);
+      // 이동에 실패하면 source는 staging에 남고, 다음 회차의 recoverStagingLeftovers가 raw로
+      // 되돌린다. 카운트는 이미 올라가 있으므로 상한은 계속 전진한다.
+      log(okfHome, `청크 원복 중 반환 실패 ${label}: code=${safeErrorCode(err)} — 카운트 ${attempts}회는 기록됨`);
     }
     tryUnlink(dp.digest);
   }

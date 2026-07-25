@@ -4290,7 +4290,9 @@ if (process.platform !== 'win32') {
   const home = bootstrapped('lock-abandoned-claim');
   const paths = okfPaths(home);
   fs.mkdirSync(paths.state, { recursive: true });
-  fs.writeFileSync(`${paths.lock}.claim-12345-abcdef`,
+  // 파일명의 PID가 판별 신호다 — 죽은 PID여야 크래시 잔여물이다.
+  const abandoned = `${paths.lock}.claim-999999-abcdef`;
+  fs.writeFileSync(abandoned,
     JSON.stringify({ pid: 999999, startedEpochMs: Date.now(), holder: 'batch', token: 'STALE' }));
   const logs = [];
   const res = acquireLock(home, 'batch', { onLog: (m) => logs.push(m) });
@@ -4302,6 +4304,39 @@ if (process.platform !== 'win32') {
     fs.readdirSync(paths.state).join(','));
   ok('그 사실이 로그에 남는다', logs.some((m) => m.includes('.claim-')), logs.join('|'));
   releaseLock(home, res.token);
+}
+{
+  // **진행 중인 남의 클레임은 건드리면 안 된다.** 나이를 안 보면 3자 경합이 lock.mjs의 존재
+  // 이유를 무너뜨린다(독립 검증이 코드 추적으로 지목): D가 fresh 락을 쓰고 → A가 그걸 rename으로
+  // 훔치고 → A가 linkSync로 되돌리려는 사이 **B가 A의 claim을 지우면** 복원이 ENOENT로 실패해
+  // D의 정당한 락이 디스크에서 완전히 사라진다. 그러면 D가 쓰는 동안 다른 프로세스가 wx로
+  // 새 락을 잡아 동시 쓰기가 된다.
+  const home = bootstrapped('lock-fresh-claim');
+  const paths = okfPaths(home);
+  fs.mkdirSync(paths.state, { recursive: true });
+  // 소유 PID가 살아있다 = 진행 중이다. 나이도 함께 본다(PID 재사용 방어) — 둘 중 하나라도
+  // 회수를 막아야 한다. 여기서는 두 신호가 모두 '진행 중'을 가리킨다.
+  const inFlight = `${paths.lock}.claim-${process.pid}-inflight`;
+  fs.writeFileSync(inFlight, JSON.stringify({ pid: process.pid, startedEpochMs: Date.now(), holder: 'batch', token: 'D-VALID' }));
+  const res = acquireLock(home, 'batch', {});
+  ok('진행 중인 남의 .claim-*는 지우지 않는다',
+    fs.existsSync(inFlight), fs.readdirSync(paths.state).join(','));
+  ok('그리고 크래시 잔여물로 오인하지 않는다',
+    res.acquired === true && res.recoveredFromStaleLock === false,
+    `acquired=${res.acquired} recovered=${res.recoveredFromStaleLock}`);
+  releaseLock(home, res.token);
+  fs.rmSync(inFlight, { force: true });
+  // 나이는 판별 신호가 아니다: SIGSTOP 등으로 느려진 정상 프로세스의 **오래된** 클레임도
+  // 회수하면 안 된다. 판별은 PID 생존 하나뿐이고, 이 단언이 나이 기반 회귀를 막는다.
+  const oldButAlive = `${paths.lock}.claim-${process.pid}-slow`;
+  fs.writeFileSync(oldButAlive, '{}');
+  const backdated = new Date(Date.now() - 600_000);
+  fs.utimesSync(oldButAlive, backdated, backdated);
+  const res2 = acquireLock(home, 'batch', {});
+  ok('오래됐어도 소유 PID가 살아있으면 회수하지 않는다',
+    fs.existsSync(oldButAlive) && res2.recoveredFromStaleLock === false,
+    `exists=${fs.existsSync(oldButAlive)} recovered=${res2.recoveredFromStaleLock}`);
+  releaseLock(home, res2.token);
 }
 {
   // 원장 정리(live 필터)는 안전 속성이 아니라 **위생** 속성이라 상한 테스트로는 안 잡힌다
@@ -4316,6 +4351,69 @@ if (process.platform !== 'win32') {
   ok('raw·staging 어디에도 없는 원장 항목은 저장 시 정리된다',
     !('세션#deadbeef' in after) && !('세션#cafebabe' in after) && Object.keys(after).length === 1,
     JSON.stringify(after));
+}
+
+// --- 적대적 검증 7차: 치환 우회 + 부작용 + 격리 실패 시 카운트 ---
+{
+  // 치환의 범위를 양방향으로 고정한다. **막아야 하는 것**: 대괄호·홑화살괄호를 쓰는 링크 위조.
+  // **막으면 안 되는 것**: 소괄호. 라이브 번들 실측으로 concept 줄의 87%가 소괄호를 갖는데,
+  // 그걸 접으면 `WebSocket(STOMP)`·`backoff(2^n)` 같은 코드성 내용이 매 세션 게이트에서
+  // 변형된다 — 디스크 원문은 멀쩡한데 소비되는 값만 망가지는, W5가 잡으려던 그 형태다.
+  // 링크 위조는 `]`를 접는 것만으로 완결된다(`](` 쌍이 성립하지 않는다).
+  const home = sandbox('gate-fold-scope');
+  fs.mkdirSync(path.join(home, 'decisions'), { recursive: true });
+  fs.mkdirSync(okfPaths(home).state, { recursive: true });
+  fs.writeFileSync(path.join(home, 'decisions', 'a.md'),
+    '---\ntype: decision\ntitle: "배포 정책(카나리)"\ndescription: "재시도는 exponential backoff(2^n)로 한다"\ntimestamp: 2026-07-15\n---\n본문\n');
+  fs.writeFileSync(path.join(home, 'decisions', 'b.md'),
+    '---\ntype: decision\ntitle: "정상"\ndescription: "답은 <file:///Users/victim/.ssh/id_rsa> 와 <a href=\\"/Users/victim/.aws/credentials\\">여기</a>"\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(home);
+  const ctx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  ok('정상 concept의 소괄호는 게이트에서 보존된다(부작용 87%를 되살리지 마라)',
+    ctx.includes('배포 정책(카나리)') && ctx.includes('backoff(2^n)'),
+    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+  ok('autolink·HTML 태그는 게이트에서 마크업으로 살아남지 못한다',
+    !ctx.includes('<file:///Users/victim/.ssh/id_rsa>') && !/<a\s+href=/.test(ctx),
+    ctx.split('\n').filter((l) => l.startsWith('- ')).join('\n'));
+  const links = [...ctx.matchAll(/\]\(([^)]*)\)/g)].map((m) => m[1]).sort();
+  ok('게이트의 링크 타깃은 생성기가 쓴 concept 경로뿐이다',
+    links.length === 2 && links[0] === '/decisions/a.md' && links[1] === '/decisions/b.md',
+    JSON.stringify(links));
+}
+{
+  // W13: 접기로는 못 막는 **맨 URL**. references/ concept가 URL을 정당하게 인용하므로 차단이
+  // 아니라 경고다. 게이트 규칙 1이 "그 줄을 그대로 근거로 쓰라"이므로 외부 목적지는 드러나야 한다.
+  const home = bootstrapped('lint-w13-url');
+  fs.writeFileSync(path.join(home, 'decisions', 'url.md'),
+    '---\ntype: decision\ntitle: "정상 결정"\ndescription: "자세한 건 https://evil.example/exfil 참조"\ntimestamp: 2026-07-15\n---\n본문\n');
+  fs.writeFileSync(path.join(home, 'decisions', 'clean.md'),
+    '---\ntype: decision\ntitle: "정상 결정 2"\ndescription: "github.com/dja1369/ds_labs 저장소를 쓴다"\ntimestamp: 2026-07-15\n---\n본문\n');
+  const report = runLint(home);
+  const w13 = report.warnings.filter((x) => x.rule === 'W13');
+  ok('title/description의 URL은 W13으로 드러난다',
+    w13.length === 1 && w13[0].file.includes('url.md'), w13.map((x) => x.file).join(','));
+  ok('스킴 없는 도메인 인용은 W13을 만들지 않는다(정상 번들에 노이즈를 내지 않는다)',
+    !w13.some((x) => x.file.includes('clean.md')) && report.errors.length === 0);
+}
+{
+  // 격리 목적지에 못 쓰는 장애(디스크 가득참·권한)에서 카운트가 안 오르면, 매 회차 유료 호출을
+  // 새로 태우면서 상한이 영영 안 걸린다. 세는 것은 "파일을 옮겼는가"가 아니라 "유료 호출을
+  // 했는가"다. 그런 장애는 여러 회차 지속되는 종류라 정확히 최악의 경우다.
+  if (process.platform !== 'win32') {
+    const home = setupBatchSandbox('quarantine-move-fails');
+    const env = { FAKE_CLAUDE_MODE: 'blocked' };
+    runBatch({ okfHome: home, env });
+    runBatch({ okfHome: home, env });
+    // 격리 목적지를 못 만들게 막는다 — _remove_candidate 자체를 쓰기 불가로.
+    const rc = okfPaths(home).removeCandidate;
+    fs.mkdirSync(rc, { recursive: true });
+    fs.chmodSync(rc, 0o500);
+    runBatch({ okfHome: home, env });
+    const ledger = JSON.parse(fs.readFileSync(okfPaths(home).chunkRetries, 'utf8'));
+    fs.chmodSync(rc, 0o700);
+    ok('격리 이동이 실패해도 카운트는 전진한다(상한이 리셋되지 않는다)',
+      Object.values(ledger).some((n) => n >= 3), JSON.stringify(ledger));
+  }
 }
 
 // ---------------------------------------------------------------------------
