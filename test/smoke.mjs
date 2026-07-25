@@ -13,6 +13,7 @@ import { ensureBootstrap } from '../lib/bootstrap.mjs';
 import { okfPaths, isOkfTestSessionDir, sanitizeForFilename } from '../lib/paths.mjs';
 import { DEFAULT_CONFIG, readConfig } from '../lib/config.mjs';
 import { runLint, formatReport } from '../lib/lint.mjs';
+import { UNSAFE_NAME_RE } from '../lib/paths.mjs';
 import { regenerateIndex, discoverConceptDirs } from '../lib/index-gen.mjs';
 import { digestFile, stripBoilerplate } from '../lib/digest.mjs';
 import { git } from '../lib/git.mjs';
@@ -4260,6 +4261,15 @@ if (process.platform !== 'win32') {
   ok('화이트리스트를 벗어난 모델 이름은 generated.by에 실리지 않는다',
     concept.includes('by: "okf-system/unknown"') && !concept.includes('malicious'),
     concept.split('\n').slice(0, 12).join('|'));
+  // **과잉 차단 가드.** 모델 이름의 `/`는 정상이다(벤더 접두가 붙는 형태). 화이트리스트에서
+  // `/`를 빼면 슬래시 포함 모델이 전부 unknown으로 떨어져 **이후 모든 스탬프의 출처가 소리
+  // 없이 저하**되는데, 공격 방향만 고정하면 그 회귀에 아무도 울지 않는다(독립 검증 실측).
+  const okHome = setupBatchSandbox('actor-whitelist-positive');
+  runBatch({ okfHome: okHome, env: { FAKE_CLAUDE_MODE: 'success', FAKE_CLAUDE_MODEL: 'anthropic/claude-sonnet-5' } });
+  const okConcept = readIfExists(path.join(okHome, 'decisions', 'fake-test-concept.md'));
+  ok('슬래시를 담은 정상 모델 이름은 출처로 인정된다(과잉 차단 가드)',
+    okConcept.includes('by: "okf-system/anthropic/claude-sonnet-5"'),
+    okConcept.split('\n').slice(0, 12).join('|'));
 }
 {
   // 워크스페이스 rmSync: 지우지 않으면 **전사 사본**(inbox의 .jsonl)이 /tmp에 회차마다 쌓인다.
@@ -4798,6 +4808,63 @@ if (process.platform !== 'win32') {
   const dirs = discoverConceptDirs(home);
   ok('제어문자 이름의 루트 디렉토리는 카테고리로 열거되지 않는다',
     !planted || dirs.every((d) => !/[\u0000-\u001f]/.test(d)), JSON.stringify(dirs));
+}
+
+{
+  // --- 문자 목록의 **확장 방향** 가드 ---
+  //
+  // 이 저장소의 가장 비싼 실수는 방어를 **넓게** 잡아 소비되는 값을 훼손한 것이었다: 게이트
+  // 주입을 막으려 전각 치환에 소괄호를 넣었더니 라이브 concept 줄의 87%가 매 세션 변형됐고
+  // (`WebSocket(STOMP)`·`backoff(2^n)`), 홑화살괄호도 6건 전부가 코드성 내용이었다.
+  // 그런데 독립 검증 실측으로, 문자 목록 9개 중 **넓히면 깨진다는 신호가 있는 것은 소괄호
+  // 하나뿐**이었다 — 나머지는 공격 방향(좁으면 뚫린다)만 고정돼 있고 과잉 방향은 무방비였다.
+  //
+  // 라이브 측정만으로는 부족하다: 라이브에 공백 이름이 0개라고 해서 공백을 막아도 되는 것이
+  // 아니다(`배포 정책.md`는 완벽히 현실적이다). 그래서 **현실적인 값이 살아남는다**를 단언한다.
+  // 목록을 건드리는 사람은 이 블록이 우는 것으로 과잉 차단을 안다.
+  const realisticNames = ['배포 정책.md', 'retry policy.md', '2026 roadmap.md', 'okf-format.md', 'a.b.c.md'];
+  const rejected = realisticNames.filter((n) => UNSAFE_NAME_RE.test(n));
+  ok('현실적인 concept 파일명은 경계를 통과한다(과잉 차단 가드)',
+    rejected.length === 0, rejected.join(','));
+
+  // 게이트 접기: 마크다운 구조가 아닌 문자는 보존돼야 한다. 백틱·파이프·`**`·`#`는
+  // 링크도 autolink도 만들지 않는다 — 접으면 코드성 내용만 상한다.
+  const home = sandbox('fold-preserve');
+  fs.mkdirSync(path.join(home, 'decisions'), { recursive: true });
+  fs.mkdirSync(okfPaths(home).state, { recursive: true });
+  fs.writeFileSync(path.join(home, 'decisions', 'a.md'),
+    '---\ntype: decision\ntitle: "배포 정책"\ndescription: "`npm ci`로 설치하고 a | b 표기와 **강조**, C#과 F# 도 쓴다"\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(home);
+  const line = readIfExists(path.join(home, 'decisions', 'index.md'));
+  const preserved = ['`npm ci`', 'a | b', '**강조**', 'C#'];
+  const lost = preserved.filter((t) => !line.includes(t));
+  ok('마크다운 구조가 아닌 문자는 게이트에서 보존된다(과잉 차단 가드)',
+    lost.length === 0, `lost=${lost.join(',')} line=${line.slice(0, 200)}`);
+
+  // log tail은 **여러 줄**이어야 한다 — 제어문자 접기 집합에 개행을 넣으면 log가 한 줄로
+  // 뭉개져 항목 구분이 사라진다(그러면 게이트가 "최근 변경"을 못 보여준다).
+  const logHome = bootstrapped('log-multiline-preserve');
+  fs.writeFileSync(okfPaths(logHome).log, '# Log\n\n## 2026-07-25\n- 첫 항목\n- 둘째 항목\n- 셋째 항목\n');
+  const logCtx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: logHome })).hookSpecificOutput.additionalContext;
+  const tail = logCtx.slice(logCtx.indexOf('--- 최근 변경 (log.md) ---'));
+  ok('log tail은 항목별 줄을 유지한다(개행까지 접으면 안 된다)',
+    tail.split('\n').filter((l) => l.startsWith('- ')).length === 3,
+    JSON.stringify(tail.slice(0, 160)));
+
+  // 내부 링크 예외의 경로 문자에서 `.`을 빼면 `okf-format.md` 같은 정상 파일명이 예외에서
+  // 탈락해 상호참조가 다시 깨진다.
+  const dotHome = sandbox('internal-link-dot');
+  fs.mkdirSync(path.join(dotHome, 'references'), { recursive: true });
+  fs.mkdirSync(path.join(dotHome, 'decisions'), { recursive: true });
+  fs.mkdirSync(okfPaths(dotHome).state, { recursive: true });
+  fs.writeFileSync(path.join(dotHome, 'references', 'a.b.c.md'),
+    '---\ntype: reference\ntitle: "점 있는 이름"\ndescription: "d"\ntimestamp: 2026-07-15\n---\n본문\n');
+  fs.writeFileSync(path.join(dotHome, 'decisions', 'x.md'),
+    '---\ntype: decision\ntitle: "t"\ndescription: "참고: [/references/a.b.c.md](/references/a.b.c.md)"\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(dotHome);
+  ok('경로 조각에 점이 있어도 내부 링크 예외가 적용된다(과잉 차단 가드)',
+    readIfExists(path.join(dotHome, 'decisions', 'index.md')).includes('[/references/a.b.c.md](/references/a.b.c.md)'),
+    readIfExists(path.join(dotHome, 'decisions', 'index.md')).slice(0, 200));
 }
 
 // ---------------------------------------------------------------------------
