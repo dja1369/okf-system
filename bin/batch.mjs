@@ -12,7 +12,7 @@ import { regenerateIndex } from '../lib/index-gen.mjs';
 import { digestFile } from '../lib/digest.mjs';
 import { matchGlob } from '../lib/glob.mjs';
 import { acquireLock, releaseLock } from '../lib/lock.mjs';
-import { ensurePrivateDir, securePrivateFile, writePrivateJsonAtomic } from '../lib/permissions.mjs';
+import { ensurePrivateDir, securePrivateFile, writePrivateFile, writePrivateJsonAtomic } from '../lib/permissions.mjs';
 import { safeErrorCode } from '../lib/status.mjs';
 import { stampGenerated, STAMP_UNSTAMPABLE } from '../lib/generated-stamp.mjs';
 import { parseFrontmatter } from '../lib/frontmatter.mjs';
@@ -396,7 +396,7 @@ function recoverStagingLeftovers(okfHome) {
       } else if (f.endsWith('.jsonl') && archivedMarkers.has(f)) {
         // 이미 처리·커밋된 세션이다. raw가 아니라 _remove_candidate로 회수한다(LLM 호출 0회).
         try {
-          fs.mkdirSync(todayDir, { recursive: true });
+          ensurePrivateDir(todayDir);
           fs.renameSync(full, path.join(todayDir, f));
           tryUnlink(`${full}${ARCHIVED_MARKER_SUFFIX}`); // 이동에 성공했을 때만 마커를 회수한다
         } catch (err) {
@@ -444,7 +444,7 @@ function quarantineJunkRaw(okfHome) {
     const full = path.join(paths.raw, f);
     if (!isOkfTestSessionDir(projectSegmentOf(f)) && !transcriptCwdIsOkfHome(full, okfHome)) continue;
     try {
-      fs.mkdirSync(todayDir, { recursive: true });
+      ensurePrivateDir(todayDir);
       fs.renameSync(full, path.join(todayDir, f));
       quarantined++;
     } catch (err) {
@@ -977,7 +977,7 @@ function rollbackChunk(okfHome, chunk) {
     // 그런 장애는 여러 회차 지속되는 종류라 정확히 최악의 경우다.
     ledger[label] = attempts;
     try {
-      fs.mkdirSync(destDir, { recursive: true });
+      ensurePrivateDir(destDir);
       fs.renameSync(dp.source, path.join(destDir, path.basename(dp.source)));
       if (giveUp) {
         delete ledger[label];
@@ -1015,14 +1015,14 @@ function archiveChunk(okfHome, chunk, todayDir) {
     tryUnlink(dp.digest);
     const dest = path.join(todayDir, path.basename(dp.source));
     try {
-      fs.mkdirSync(todayDir, { recursive: true });
+      ensurePrivateDir(todayDir);
       fs.renameSync(dp.source, dest);
       continue;
     } catch (err) {
       log(okfHome, `아카이브 이동 실패(커밋은 완료됨): code=${safeErrorCode(err)} — 복사 폴백 시도`);
     }
     try {
-      fs.mkdirSync(todayDir, { recursive: true });
+      ensurePrivateDir(todayDir);
       fs.copyFileSync(dp.source, dest);
       // **삭제 성공을 확인해야 한다.** tryUnlink가 오류를 삼키면 원본이 staging에 남는데
       // 마커는 안 생겨서, 다음 회차가 그것을 '미처리'로 보고 raw로 되돌려 **이미 커밋·복사된
@@ -1183,8 +1183,13 @@ function applyAnalyzerWorkspace(okfHome, wsRoot, stamp = null, chunkBudget = { d
         blockedUnstampable++;
         continue;
       }
-      fs.mkdirSync(path.dirname(destAbs), { recursive: true });
-      fs.writeFileSync(destAbs, out);
+      // **주력 페이로드가 가장 느슨했다.** index.md·SCHEMA.md·시드·viz는 0600인데 분석기가
+      // 만든 concept은 0644, 새 하위 도메인 디렉토리는 0755였다(독립 감사 실측).
+      // 역전 신호가 코드에 이미 둘 있었다: backupDirtyTree가 concept의 **사본**을 명시적으로
+      // 0600으로 chmod하고, viz HTML(concept의 파생물)이 0600이다 — 파생물이 원본보다 엄격했다.
+      // lib/permissions.mjs가 술어를 제공하는데 이 경로만 안 썼다.
+      ensurePrivateDir(path.dirname(destAbs));
+      writePrivateFile(destAbs, out);
       applied++;
     }
   };
@@ -1518,7 +1523,7 @@ function runBatch() {
     const emptyArchiveDir = path.join(okfPaths(okfHome).removeCandidate, localDateString());
     for (const dp of empty) {
       try {
-        fs.mkdirSync(emptyArchiveDir, { recursive: true });
+        ensurePrivateDir(emptyArchiveDir);
         fs.renameSync(dp.source, path.join(emptyArchiveDir, path.basename(dp.source)));
         tryUnlink(dp.digest);
       } catch (err) {

@@ -114,11 +114,29 @@ function buildInjectedIndex(okfHome, budgetLines, budgetBytes) {
 // eslint-disable-next-line no-control-regex
 const LOG_CONTROL_RE = /[\u0000-\u0009\u000b-\u001f\u007f\u0085\u2028\u2029]+/g;
 
+// 컬럼 0 구조를 지키는 것만으로는 부족하다. `- ` bullet은 컬럼 0을 정당하게 쓰는데, 그 **내용**은
+// index bullet과 **같은 신뢰 경계의 값**이면서 `foldToSingleLine` 같은 처리를 하나도 안 거쳤다 —
+// 라운드 7에서 닫은 `](` 링크 타깃 위조가 log 채널에 그대로 남아 있었다(독립 감사 실측:
+// `- [SSH 키 검토](/Users/victim/.ssh/id_rsa): …`가 바이트 그대로 게이트에 실렸고 lint는 W1 경고).
+// `prompts/ingest.md`가 분석기에게 매 회차 bullet 추가를 지시하므로 사용자 개입 0이다.
+//
+// index 쪽과 **같은 규칙**을 쓴다: 대괄호는 전각으로, 마크업 모양의 여는 `<`만 전각으로.
+// 소괄호는 건드리지 않는다(라이브 실측 87% 부작용). log에는 내부 링크 예외를 두지 않는다 —
+// index의 예외는 `prompts/ingest.md`가 description에 지시한 형식 때문인데 log 항목은 그 대상이
+// 아니고, 여기서 예외를 열면 같은 위조가 다시 들어온다.
+const LOG_MARKUP_RE = /<(?=[a-zA-Z/!][^<>]*(?:[:/=]|@[^<>]*\.)[^<>]*>)/g;
+
+function foldLogMarkup(text) {
+  return text.replace(/\[/g, '［').replace(/\]/g, '］').replace(LOG_MARKUP_RE, '＜');
+}
+
 function neutralizeLogLine(line) {
   const folded = line.replace(LOG_CONTROL_RE, ' ');
   if (folded.trim() === '') return folded;
-  if (/^## /.test(folded) || /^- /.test(folded) || /^[ \t]/.test(folded)) return folded;
-  return `  ${folded}`;
+  if (/^## /.test(folded)) return folded; // 섹션 헤딩 — 날짜 형식은 E3b/W8이 본다
+  if (/^- /.test(folded)) return `- ${foldLogMarkup(folded.slice(2))}`;
+  if (/^[ \t]/.test(folded)) return foldLogMarkup(folded);
+  return `  ${foldLogMarkup(folded)}`;
 }
 
 function extractLatestLogSection(logContent, maxLines = 15) {
