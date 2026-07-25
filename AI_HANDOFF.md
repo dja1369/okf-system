@@ -202,6 +202,12 @@ commit, push, PR, destructive Git 명령은 실행하지 않았다.
   `skills/okf-usage`가 ID를 `/decisions/foo.md`로 제시하는데, `path.resolve`가 그것을 진짜
   절대경로로 해석해 "번들 밖 경로"로 거부했다 — 문서가 안내한 형식과 게이트가 제시하는 형식이
   갈려 있었다. 앞 슬래시만 벗긴다(경로 탈출은 기존 `startsWith` 검사가 그대로 막는다).
+- **viz 산출물의 노출 두 건**(독립 검증이 `본문 × viz` 칸을 실측하며 찾았다 — 주입 축은
+  3중 이스케이프로 막혀 있었고 열린 것은 노출 축이었다):
+  (a) `fullBody`는 서버측 `crossLink` 전용인데 그래프를 통째로 직렬화하면서 **번들 전 concept의
+  본문 전문**이 HTML에 실렸다 — 패널이 1,500자만 보여주는 것과 무관하게 파일을 열면 다 있다.
+  직렬화 직전에 떨어뜨린다. (b) `viz-*.html`이 0644였다 — `SCHEMA.md`·`log.md`·`index.md`를
+  0600으로 통일한 그 가족인데 **셋을 합친 것보다 많은 지식을 담고** 혼자 기본 모드였다.
 - **무커버 방어 5종에 테스트**: `OKF_BATCH=1` 재귀 가드(§7-1 2차), sweep의 분석기 자기세션
   cwd 가드, `actorFor` 화이트리스트(모델 이름이 `generated.by`로 번들에 영구히 남는다),
   워크스페이스 `rmSync`(지우지 않으면 **전사 사본**이 /tmp에 회차마다 쌓인다), 전 세션
@@ -346,7 +352,7 @@ $0.216→$0.258→**$0.447**로 오히려 순증가했고, zero_base_chain도 $0
 
 ```sh
 node test/smoke.mjs
-# 625 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
+# 627 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
 
 node test/bench.mjs
 # SessionStart 57.4ms (56.7-58.2), SessionEnd 43.4ms (41.8-43.9)

@@ -24,7 +24,7 @@ import { parseFrontmatter, setFrontmatterStatus, frontmatterKeyLineRe } from '..
 import { toIsoDateTime, generatedAt, conceptStatus } from '../lib/trust.mjs';
 import { stampGenerated } from '../lib/generated-stamp.mjs';
 import { analyzeProject } from '../lib/analyze.mjs';
-import { buildGraph, renderHtml } from '../lib/viz.mjs';
+import { buildGraph, renderHtml, generateViz } from '../lib/viz.mjs';
 import { auditBenchmarkBundle, matchesBenchmarkAnswer } from '../lib/bench-audit.mjs';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -4695,6 +4695,21 @@ if (process.platform !== 'win32') {
   const hit = graph.edges.some((e) => String(e.target).includes('deep-target.js') || String(e.source).includes('deep-target.js'));
   ok('4,000자 이후의 코드 파일 언급도 교차 엣지를 만든다',
     hit, `edges=${graph.edges.length}`);
+  // `fullBody`는 **서버측 crossLink 전용**이다. 교차 엣지는 렌더 전에 이미 계산돼 있으므로
+  // 클라이언트가 쓸 이유가 없는데, 그래프를 통째로 직렬화하면 **번들 전 concept의 본문 전문**이
+  // HTML에 실린다 — 패널이 1,500자만 보여주는 것과 무관하게 파일을 열면 다 있다.
+  const html = renderHtml(graph);
+  ok('viz 산출물에 표시 한도 밖의 본문 전문이 실리지 않는다',
+    !html.includes('fullBody') && !html.includes('마지막에 src/deep-target.js 를 언급한다'),
+    `fullBody=${html.includes('fullBody')} tail=${html.includes('마지막에 src/deep-target.js 를 언급한다')}`);
+  if (process.platform !== 'win32') {
+    // SCHEMA.md·log.md·index.md를 0600으로 통일한 그 가족인데 viz만 기본 모드(0644)였다.
+    // 이 산출물은 그 셋을 합친 것보다 많은 지식을 담는다.
+    const out = path.join(sandbox('viz-out'), 'viz.html');
+    generateViz(home, projectRoot, out);
+    ok('viz 산출물도 소유자 전용이다',
+      (fs.statSync(out).mode & 0o777) === 0o600, (fs.statSync(out).mode & 0o777).toString(8));
+  }
 }
 
 // ---------------------------------------------------------------------------
