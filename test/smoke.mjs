@@ -5348,6 +5348,30 @@ function runRestructure(okfHome, mapping, extraArgs = []) {
   releaseLock(locked, held.token);
   ok('다른 홀더가 락을 쥐고 있으면 아무것도 옮기지 않는다',
     lockRun.status === 2 && fs.existsSync(path.join(locked, 'patterns', 'a.md')), lockRun.stderr);
+
+  // 심볼릭 링크된 디렉토리는 문자열 비교(`startsWith`)를 통과하면서 실제 rename은 번들 밖에
+  // 쓴다. 경로를 realpath로 펴야만 잡힌다.
+  const sym = bootstrapped('restructure-symlink');
+  const outside = sandbox('restructure-outside');
+  fs.mkdirSync(path.join(sym, 'patterns'), { recursive: true });
+  fs.writeFileSync(path.join(sym, 'patterns', 'a.md'),
+    '---\ntype: pattern\ntitle: "a"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n본문\n');
+  fs.symlinkSync(outside, path.join(sym, 'patterns', 'out'), 'dir');
+  commitAll(sym, 'seed');
+  const symRun = runRestructure(sym, { 'patterns/a.md': 'patterns/out/a.md' });
+  ok('심볼릭 링크를 통해 번들 밖으로 concept를 내보낼 수 없다',
+    symRun.status === 4 && fs.existsSync(path.join(sym, 'patterns', 'a.md'))
+    && !fs.existsSync(path.join(outside, 'a.md')), symRun.stderr);
+
+  // 택소노미 밖 디렉토리(`.okf/`·`raw/`)는 gitignore 대상이라, 거기로 옮겨진 파일은
+  // rollback(`clean -fd`, `-x` 없음)이 영원히 되돌리지 못한다. 첫 조각이 서로 같아서
+  // "택소노미를 바꿀 수 없다" 검사로는 안 걸린다 — 화이트리스트가 있어야 막힌다.
+  const opsDir = bootstrapped('restructure-ops');
+  const cfg = okfPaths(opsDir).config;
+  const cfgBefore = readIfExists(cfg);
+  const opsRun = runRestructure(opsDir, { '.okf/config.md': '.okf/gone.md' });
+  ok('gitignore된 운영 디렉토리의 파일은 옮길 수 없다(원복 불가 영역)',
+    opsRun.status === 4 && readIfExists(cfg) === cfgBefore && cfgBefore !== '', opsRun.stderr);
 }
 
 // ---------------------------------------------------------------------------
