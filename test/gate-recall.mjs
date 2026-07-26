@@ -65,7 +65,7 @@ function mulberry32(a) {
 
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const out = { levels: null, seeds: 20, outPath: null, determinismCheck: false, e2: false, e3: false, perturb: null };
+  const out = { levels: null, seeds: 20, outPath: null, determinismCheck: false, e2: false, e3: false, perturb: null, quoteSafePerturb: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--levels') out.levels = argv[++i].split(',').map((s) => Number(s.trim()));
@@ -75,6 +75,7 @@ function parseArgs(argv) {
     else if (a === '--e2') out.e2 = true;
     else if (a === '--e3') out.e3 = true;
     else if (a === '--perturb') out.perturb = argv[++i];
+    else if (a === '--quote-safe-perturb') out.quoteSafePerturb = true;
     else throw new Error(`unknown flag: ${a}`);
   }
   if (out.e2 && out.e3) throw new Error('--e2 와 --e3 는 함께 쓸 수 없다 — 어느 회차의 픽스처를 읽을지가 갈린다');
@@ -199,7 +200,17 @@ function pickCategory(r) {
 // 닫는 `---` 사이)의 **첫 `title:` 줄 하나**만 고치고, 값이 이중인용 스칼라면 인용 **안쪽**에
 // 붙인다(밖에 붙이면 YAML이 깨져 title이 파일명 fallback으로 떨어지고, 그러면 이 실험은
 // title이 아니라 파싱 실패를 재게 된다). 대상 줄을 못 찾으면 조용히 넘어가지 않고 던진다.
-function perturbTitle(md, prefix, label) {
+// **2026-07-26 발견: 인용 없는 title에 이 함수가 접두를 그냥 붙이면 frontmatter가 통째로 깨진다.**
+// `!!!`는 YAML 태그 지시자라 `title: !!! 제목`이 파싱에 실패하고, index-gen은 그 concept를
+// `# undefined` 섹션에 파일명 링크로 싣는다 — **description이 통째로 사라져 줄이 ~700B에서 ~30B로
+// 짧아진다.** 즉 그 경우 실험은 "정렬 위치"가 아니라 "파싱 실패로 인한 줄 길이 붕괴"를 잰다.
+// 동결 질문 20개 중 **14개가 인용 없는 title**이라 E2·E3의 `front` 조건이 그 상태로 측정됐다.
+//
+// **등록된 동작은 바꾸지 않는다** — E2·E3의 발행된 수치가 그 동작 위에 있고, 조건을 바꾸면
+// 재현 가드가 무너진다. 대신 `--quote-safe-perturb`로 **옵트인** 경로를 둔다: 인용 없는 값을
+// 이중인용 스칼라로 감싸 접두를 붙이므로 title 텍스트가 보존되고 YAML이 깨지지 않는다.
+// 그 플래그로 돌린 결과는 사후 비교용이며 등록된 결과가 아니다.
+function perturbTitle(md, prefix, label, quoteSafe = false) {
   if (!prefix) return md;
   const lines = md.split('\n');
   if (lines[0] !== '---') throw new Error(`no frontmatter to perturb: ${label}`);
@@ -207,9 +218,13 @@ function perturbTitle(md, prefix, label) {
     if (lines[i] === '---') break;
     if (!lines[i].startsWith('title:')) continue;
     const value = lines[i].slice('title:'.length).replace(/^ /, '');
-    lines[i] = value.startsWith('"')
-      ? `title: "${prefix}${value.slice(1)}`
-      : `title: ${prefix}${value}`;
+    if (value.startsWith('"')) {
+      lines[i] = `title: "${prefix}${value.slice(1)}`;
+    } else if (quoteSafe) {
+      lines[i] = `title: ${JSON.stringify(prefix + value)}`;
+    } else {
+      lines[i] = `title: ${prefix}${value}`;
+    }
     return lines.join('\n');
   }
   throw new Error(`no frontmatter title: line to perturb: ${label}`);
@@ -228,7 +243,7 @@ function buildBundle(root, level, seed, perturb = { id: 'none', prefix: '' }) {
     const dest = path.join(home, q.answerConcept);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     const src = fs.readFileSync(path.join(PLUGIN_ROOT, q.sourceFile), 'utf8');
-    fs.writeFileSync(dest, perturbTitle(src, perturb.prefix, q.id));
+    fs.writeFileSync(dest, perturbTitle(src, perturb.prefix, q.id, ARGS.quoteSafePerturb));
     planted.add(`/${q.answerConcept}`);
   }
 
@@ -535,6 +550,67 @@ function stdev(xs) {
 const QUESTION_DIRS = QUESTIONS.map((q) => q.answerConcept.split('/')[0]);
 const LINK_OF_LINE = (l) => LINK_RE.exec(l)?.[1] ?? null;
 
+// ---------------------------------------------------------------------------
+// **비순환 순서 검사.** R8 하나만으로는 "rank가 title 정렬 순위다"를 검증할 수 없다 —
+// measureSlots가 buildInjectedIndex와 **같은 collectConceptLines**를 부르므로
+// `A.indexOf(x) < k ⟺ A.slice(0,k).includes(x)`는 중복 없는 배열에서 정의상 참이고,
+// 그 함수가 어떤 순서를 내든 R8은 통과한다(독립 검증이 실제로 이 결함을 실행으로 보였다:
+// collectConceptLines를 줄 길이 내림차순으로 바꿔도 R8은 불일치 0을 보고했다).
+//
+// 그래서 순서의 **의미**는 다른 출처에서 확인한다: index.md 줄이 아니라 **concept 파일의
+// frontmatter를 직접 읽어** title/type/status를 얻고, 관측된 순서가 index-gen이 문서화한 규칙
+// (같은 섹션 안에서 은퇴는 뒤로, 나머지는 `title.toLowerCase()` 오름차순)을 지키는지 본다.
+//
+// **비교 단위는 "같은 디렉토리 × 같은 type × 같은 은퇴 상태"다.** 이보다 넓게 잡으면 안 된다 —
+// collectConceptLines가 하위 디렉토리를 **그 자리에 펼치므로** 서로 다른 index.md가 렌더한 같은
+// type 항목이 인접하게 되고, 그 둘 사이에는 title 순서가 성립할 이유가 없다. 실제로 처음에
+// (type, 은퇴)만으로 묶었더니 **변이 없는 기준선에서 전 샘플이 발화**했다(거짓 양성).
+// 한 index.md 안에서는 같은 type 항목이 연속이고 title 오름차순이라는 것이 index-gen의 규범이다.
+//
+// **이 검사가 고정하지 않는 것**: 섹션 경계(어느 type 섹션이 먼저인지)와 하위 디렉토리가 펼쳐지는
+// 위치. 그래도 정렬 키를 title이 아닌 것으로 바꾸는 변이는 디렉토리 안 순서를 함께 흐트러뜨리므로
+// 여기서 잡힌다(아래 M2 변이 실측).
+function readFrontmatter(abs) {
+  let md;
+  try { md = fs.readFileSync(abs, 'utf8'); } catch { return null; }
+  const end = md.indexOf('\n---', 3);
+  const fm = md.startsWith('---') && end > 0 ? md.slice(4, end) : '';
+  const field = (k) => {
+    const m = new RegExp(`^${k}:[ \\t]*(.*)$`, 'm').exec(fm);
+    if (!m) return null;
+    const raw = m[1].trim();
+    // 이중 인용 스칼라는 JSON.parse로 푼다(filler는 JSON.stringify로 쓴다).
+    if (raw.startsWith('"')) { try { return JSON.parse(raw); } catch { return raw; } }
+    return raw;
+  };
+  return { title: field('title'), type: field('type'), status: field('status') };
+}
+
+function verifyTitleOrdering(home, stats) {
+  const violations = [];
+  for (const c of stats.cats ?? []) {
+    const links = collectConceptLines(home, c.dir).map(LINK_OF_LINE);
+    // 관측 순서를 (디렉토리, type, 은퇴)로 묶는다. 각 묶음 안에서 title이 오름차순이어야 한다.
+    const groups = new Map();
+    links.forEach((rel, i) => {
+      if (!rel) return;
+      const fm = readFrontmatter(path.join(home, rel.slice(1)));
+      if (!fm || fm.title == null) return;
+      const key = `${rel.slice(0, rel.lastIndexOf('/'))} ${fm.type} ${fm.status === 'deprecated'}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ i, title: fm.title.toLowerCase(), type: fm.type });
+    });
+    for (const [key, items] of groups) {
+      for (let k = 1; k < items.length; k++) {
+        if (items[k].title < items[k - 1].title) {
+          violations.push({ dir: c.dir, group: key.split(' ')[0], at: items[k].i, type: items[k].type });
+        }
+      }
+    }
+  }
+  return violations;
+}
+
 function measureSlots(home, stats, survivors) {
   const takenByDir = {};
   const totalByDir = {};
@@ -552,13 +628,18 @@ function measureSlots(home, stats, survivors) {
       modelMismatches.push({ id: q.id, dir, rank, taken: takenByDir[dir] ?? 0, predicted, observed: survivors.has(`/${q.answerConcept}`) });
     }
   });
-  // 실린 줄들의 평균 바이트. `taken`이 레벨에 따라 왜 움직이는지를 **추정이 아니라 관측**으로
-  // 말하기 위한 값이다 — 예산은 고정이므로 같은 예산에 더 많은 줄이 들어갔다면 줄이 짧아진 것이다.
+  // 실린 줄들의 평균 바이트.
+  //
+  // **이 값으로 인과를 말하면 안 된다.** 예산이 고정이므로 `taken × 평균 ≈ 예산`은 **항등식**이고,
+  // 실제로 E3 15개 셀 전부에서 곱이 6,205~6,375B에 갇혀 있다(index 예산 6,967B). 즉 "줄이 짧아져서
+  // taken이 늘었다"와 "taken이 늘어서 평균이 짧아졌다"를 이 값은 구별하지 못한다 — 같은 나눗셈이다.
+  // 진단용으로만 기록한다.
   const allTakenLineBytes = (stats.cats ?? []).flatMap((c) => c.lineBytes);
   return {
     ranks, takenByDir, totalByDir, modelMismatches,
     rankMissing: ranks.filter((r) => r < 0).length,
     takenLineBytesMean: allTakenLineBytes.length ? allTakenLineBytes.reduce((s, x) => s + x, 0) / allTakenLineBytes.length : null,
+    titleOrderViolations: verifyTitleOrdering(home, stats),
   };
 }
 
@@ -899,13 +980,23 @@ function main() {
       const mismatchSamples = samples.filter((s) => s.slots.modelMismatches.length > 0);
       const recallMismatch = samples.filter((s) => Math.abs(recallFrom(s.slots.ranks, s.slots.takenByDir) - s.recall) > 1e-12);
       const residualMax = Math.max(0, ...decomposition.map((d) => Math.abs(d.residual)));
+      const orderViolationSamples = samples.filter((s) => s.slots.titleOrderViolations.length > 0);
       modelCheck = {
         samplesWithMismatch: mismatchSamples.length,
         totalSamples: samples.length,
         totalQuestionChecks: samples.length * QUESTIONS.length,
         mismatchExamples: mismatchSamples.slice(0, 5).map((s) => ({ level: s.level, seed: s.seed, perturb: s.perturb, mismatches: s.slots.modelMismatches })),
         recallReconstructionMismatches: recallMismatch.length,
+        // **비순환 절.** 위 두 값은 measureSlots와 buildInjectedIndex가 같은 함수를 쓰므로
+        // 산술 자기일관성만 본다. 이 값은 concept 파일 frontmatter를 직접 읽어 순서의 **의미**를
+        // 확인한다 — 정렬 키를 title 아닌 것으로 바꾸는 변이는 여기서만 잡힌다.
+        samplesWithTitleOrderViolation: orderViolationSamples.length,
+        titleOrderViolationExamples: orderViolationSamples.slice(0, 3).map((s) => ({ level: s.level, seed: s.seed, perturb: s.perturb, violations: s.slots.titleOrderViolations.slice(0, 5) })),
+        // **이 값은 R8의 발화 조건이 아니다.** interaction을 잔차로 **정의**하므로
+        // (`interaction = Δ − rankEffect − takenEffect`) 이 값은 구조적으로 0이고, 랭크·taken을
+        // 난수로 갈아치워도 0으로 남는다(독립 검증이 실행으로 확인). 진단용으로만 기록한다.
         decompositionResidualMax: residualMax,
+        decompositionResidualIsStructural: true,
       };
 
       // R3a — 원래 R3이 잡으려던 것("하니스 결함") 자체를 직접 검사한다. 단조 감소는 하니스
@@ -993,12 +1084,15 @@ function main() {
         meaning: '설명 불가능한 크기의 상승 — N을 늘렸는데 recall이 등가한계를 넘어 오르면 그건 게이트의 성질이 아니라 하니스 결함이다',
       },
       R8: {
+        // 잔차 절을 뺐다 — interaction을 잔차로 정의하므로 구조적으로 발화할 수 없다.
+        // 대신 비순환 절(samplesWithTitleOrderViolation)을 넣는다.
         fired: modelCheck
-          ? modelCheck.samplesWithMismatch > 0 || modelCheck.recallReconstructionMismatches > 0 || modelCheck.decompositionResidualMax > 1e-12
+          ? modelCheck.samplesWithMismatch > 0 || modelCheck.recallReconstructionMismatches > 0
+            || modelCheck.samplesWithTitleOrderViolation > 0
           : null,
         computable: modelCheck !== null,
         basis: modelCheck ?? { notComputableBecause: '이 픽스처에는 analysis 블록이 없다(E1·E2 경로)' },
-        meaning: '생존 조건 `rank < taken`이 실측과 어긋난다 → (rank, taken) 분해 전체가 무효다. E3의 설명은 이 항등식 위에만 서 있다',
+        meaning: '생존 조건 `rank < taken`이 실측과 어긋나거나(산술 자기일관성), 그 rank가 title 정렬 순위가 아니다(frontmatter 직접 대조). 어느 쪽이든 (rank, taken) 분해가 무효다',
       },
       R9: {
         fired: trends ? (risingPairs.length > 0 ? risingWithoutTakenEffect.length > 0 : null) : null,
@@ -1027,6 +1121,7 @@ function main() {
         seeds: args.seeds,
         round: ROUND,
         perturbations: perturbations.map((p) => ({ id: p.id, prefix: p.prefix })),
+        quoteSafePerturb: ARGS.quoteSafePerturb,
         questionSet: QUESTIONS_REL,
         questionSetFrozenAt: QUESTIONS_FILE.frozenAt,
         shapeFixture: SHAPE_REL,

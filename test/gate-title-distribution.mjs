@@ -77,6 +77,37 @@ function orderingViolations(titles) {
   return v;
 }
 
+// ---------------------------------------------------------------------------
+// 유의성 검정. **리포트가 인용하는 p값은 저장소 안에서 재현되어야 한다** — 손으로 계산한 숫자를
+// 리포트에만 적으면 재현 명령이 그 값을 내지 못한다(독립 검증 지적).
+//
+// 귀무모형은 **층화**다. 게이트는 전체 풀에서 뽑지 않고 **카테고리마다** 앞에서부터 taken개를
+// 가져간다(lib/gate.mjs:112-131). 그래서 "정렬이 무관하다면" 기대값은 카테고리별 초기하 기대의
+// 합이지 전체 풀 하나의 기대가 아니다. 풀링 값도 함께 내서 둘이 어떻게 다른지 보이게 한다.
+function logChoose(n, k) {
+  if (k < 0 || k > n) return -Infinity;
+  let r = 0;
+  for (let i = 1; i <= k; i++) r += Math.log(n - k + i) - Math.log(i);
+  return r;
+}
+// P(X = x), X ~ Hypergeometric(N 전체, K 성공, n 추출)
+function hypergeomPmf(x, N, K, n) {
+  const v = logChoose(K, x) + logChoose(N - K, n - x) - logChoose(N, n);
+  return Number.isFinite(v) ? Math.exp(v) : 0;
+}
+// 양측 정확검정(점확률법): 관측만큼 또는 그보다 덜 일어날 법한 결과의 확률 합.
+function hypergeomTwoSided(x, N, K, n) {
+  const lo = Math.max(0, n - (N - K));
+  const hi = Math.min(K, n);
+  const p0 = hypergeomPmf(x, N, K, n);
+  let p = 0;
+  for (let i = lo; i <= hi; i++) {
+    const pi = hypergeomPmf(i, N, K, n);
+    if (pi <= p0 * (1 + 1e-9)) p += pi;
+  }
+  return Math.min(1, p);
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const home = args.home ?? process.env.OKF_HOME ?? path.join(os.homedir(), '.claude', 'okf');
@@ -173,6 +204,34 @@ function main() {
       // 다 실리기 때문이다. 실사용 리프트가 작게 나온다면 그건 "정렬이 무해하다"가 아니라
       // "지금 번들이 작아서 아직 물리지 않았다"일 수 있고, 두 해석은 이 값으로 갈린다.
       loadRate: totalConcepts ? totalTaken / totalConcepts : null,
+      // ASCII 선두가 게이트 슬롯을 자기 몫보다 많이 가져가는가. **층화가 올바른 귀무모형**이고
+      // 풀링은 참고값이다. 자유도 0인 카테고리(전부 실리거나 하나도 안 실림)는 정렬이 원리적으로
+      // 아무 일도 하지 않는 칸이라 함께 보고한다 — 그 칸이 많으면 이 검정은 애초에 힘이 없다.
+      asciiTest: (() => {
+        const pooled = totalConcepts
+          ? {
+            expected: (totalTaken * asciiAll) / totalConcepts,
+            observed: asciiTaken,
+            pTwoSided: hypergeomTwoSided(asciiTaken, totalConcepts, asciiAll, totalTaken),
+          }
+          : null;
+        let expected = 0;
+        let zeroDf = 0;
+        for (const c of categories) {
+          if (c.concepts === 0) continue;
+          if (c.taken === 0 || c.taken === c.concepts) zeroDf += 1;
+          expected += (c.taken * c.asciiLeadingConcepts) / c.concepts;
+        }
+        return {
+          nullModel: '층화 초기하 — 게이트는 카테고리마다 앞에서부터 taken개를 가져간다',
+          stratifiedExpected: expected,
+          observed: asciiTaken,
+          categoriesWithZeroDegreesOfFreedom: zeroDf,
+          totalCategories: categories.length,
+          pooled,
+          note: '층화 기대값이 기준이다. 풀링은 대조용으로만 싣는다.',
+        };
+      })(),
     },
     categories,
   };
@@ -183,6 +242,8 @@ function main() {
 
   console.log(`concepts ${totalConcepts}, gate loads ${totalTaken} (적재율 ${(100 * out.totals.loadRate).toFixed(1)}%)`);
   console.log(`ASCII 선두: concept의 ${(100 * out.totals.asciiShareOfConcepts).toFixed(1)}% → 실린 슬롯의 ${(100 * out.totals.asciiShareOfTakenSlots).toFixed(1)}%  (리프트 ${(out.totals.asciiShareOfTakenSlots / out.totals.asciiShareOfConcepts).toFixed(2)}×)`);
+  const t = out.totals.asciiTest;
+  console.log(`  층화 기대 ${t.stratifiedExpected.toFixed(2)} vs 관측 ${t.observed}  |  풀링 기대 ${t.pooled.expected.toFixed(2)}, 양측 p=${t.pooled.pTwoSided.toFixed(4)}  |  자유도 0인 카테고리 ${t.categoriesWithZeroDegreesOfFreedom}/${t.totalCategories}`);
   for (const c of categories) {
     const reach = c.hasNonAsciiLeading
       ? `첫 비-ASCII rank ${c.firstNonAsciiLeadingRank}${c.nonAsciiReachesGate ? '' : ' (게이트 도달 못 함)'}`

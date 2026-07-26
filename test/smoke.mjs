@@ -1036,11 +1036,25 @@ console.log('\n=== gate module + recall harness ===');
         && mc.recallReconstructionMismatches === 0 && mc.totalQuestionChecks > 0,
       `R8=${JSON.stringify(e3.refutation?.R8?.fired)} basis=${JSON.stringify(mc)}`);
 
-    // 분해 잔차. 성분 셋의 합이 관측 Δ와 어긋나면 반사실 배선이 틀린 것이다.
+    // **비순환 절.** 위 단언은 measureSlots와 buildInjectedIndex가 **같은 collectConceptLines**를
+    // 쓰므로 `A.indexOf(x) < k ⟺ A.slice(0,k).includes(x)`라는 정의상 참을 확인할 뿐이다.
+    // 독립 검증이 이것을 실행으로 보였다: collectConceptLines 자체를 줄 길이 내림차순으로 바꾸면
+    // 위 단언은 불일치 0으로 **통과하는데** rank의 의미는 완전히 달라진다.
+    // 그래서 concept 파일 frontmatter를 직접 읽어 순서의 의미를 확인하는 절을 R8에 넣었고,
+    // 같은 변이로 그 절이 6/6 발화함을 확인했다(기준선은 0/6).
+    ok('E3 verifies rank means title-sort order from the concept files, not just index-order self-consistency',
+      mc.samplesWithTitleOrderViolation === 0 && typeof mc.samplesWithTitleOrderViolation === 'number'
+        && e3.refutation?.R8?.meaning?.includes('title 정렬 순위'),
+      `titleOrderViolations=${mc.samplesWithTitleOrderViolation} examples=${JSON.stringify(mc.titleOrderViolationExamples ?? []).slice(0, 200)}`);
+
+    // 분해 잔차는 **발화 조건이 아니다** — interaction을 잔차로 정의하므로 구조적으로 0이다.
+    // 진단값으로만 기록하되, 그것이 R8의 판정에 섞여 들어가지 않았음을 여기서 못박는다
+    // (섞이면 "잔차 0이니 분해가 검증됐다"는 거짓 안심을 준다).
     const worstResidual = Math.max(0, ...(e3.decomposition ?? []).map((d) => Math.abs(d.residual)));
-    ok('E3 (rank, taken) decomposition closes exactly (residual ≈ 0)',
-      (e3.decomposition ?? []).length > 0 && worstResidual <= 1e-12,
-      `n=${(e3.decomposition ?? []).length} worstResidual=${worstResidual}`);
+    ok('E3 records the decomposition residual as structural, and does not let it gate R8',
+      (e3.decomposition ?? []).length > 0 && worstResidual <= 1e-12
+        && mc.decompositionResidualIsStructural === true,
+      `n=${(e3.decomposition ?? []).length} worstResidual=${worstResidual} structural=${mc.decompositionResidualIsStructural}`);
 
     // **이산 격자 회귀 고정.** recall은 맞은문항수/문항수라 델타는 1/20의 정확한 배수여야 하는데,
     // 배정도에서는 그렇지 않다: 0.25−0.20 = 0.04999…이고 0.20−0.15 = 0.05000…2다. 양자화를
@@ -1065,6 +1079,30 @@ console.log('\n=== gate module + recall harness ===');
     ok('E3 trend verdicts stay inside the four pre-registered categories',
       (e3.trends ?? []).length > 0 && badDirections.length === 0,
       `n=${(e3.trends ?? []).length} bad=${JSON.stringify(badDirections.map((t) => t.direction))}`);
+
+    // **YAML 태그 파손 회귀 고정.** E2·E3의 `front` 섭동(`!!! `)은 인용 없는 frontmatter title에
+    // 붙으면 `!!!`가 YAML 태그 지시자라 **파싱을 통째로 깨뜨린다** — type이 사라져 concept가
+    // `# undefined` 섹션으로 가고, 링크 텍스트가 파일명이 되며, **description이 통째로 소실돼
+    // 줄이 ~700B에서 ~30B로 짧아진다.** 동결 질문 20개 중 14개가 인용 없는 title이라 E2가 발행한
+    // "title 4글자로 recall이 두 배"는 정렬이 아니라 이 파손을 상당 부분 잰 것이었다.
+    // 인용 안전 경로(`--quote-safe-perturb`)로 다시 재면 front가 전 레벨 0.400 평탄으로 무너진다.
+    //
+    // 여기서 **두 사실을 다 못박는다**: (a) 인용 없는 값에 접두를 그냥 붙이면 실제로 깨진다,
+    // (b) 이중인용 스칼라 안쪽에 붙이면 안 깨진다. (b)만 걸면 파손이 조용히 고쳐져도 초록이라
+    // 이 회귀 고정의 의미가 사라진다.
+    {
+      const home = bootstrapped('yaml-tag-break');
+      writeConcept(home, 'decisions', 'unq.md', 'decision', '!!! 인용 없는 제목', '설명은 남아야 한다');
+      writeConcept(home, 'decisions', 'qtd.md', 'decision', '"!!! 인용된 제목"', '설명은 남아야 한다');
+      regenerateIndex(home);
+      const idx = fs.readFileSync(path.join(home, 'decisions', 'index.md'), 'utf8');
+      const unquotedBroke = idx.includes('# undefined') && /\* \[unq\]\(unq\.md\)\s*$/m.test(idx);
+      const quotedSurvived = idx.includes('* [!!! 인용된 제목](qtd.md) - 설명은 남아야 한다');
+      ok('prepending `!!! ` to an UNQUOTED frontmatter title breaks parsing (type lost, description dropped)',
+        unquotedBroke, idx);
+      ok('prepending `!!! ` INSIDE a double-quoted title keeps title, type and description',
+        quotedSurvived, idx);
+    }
 
     // **재지 않은 것을 잰 것처럼 적지 않는다.** E1·E2 픽스처에는 analysis 블록이 없으므로 그
     // 경로의 산출에는 analysisConfig·trends·decomposition이 전부 null이어야 한다. 빈 배열로
