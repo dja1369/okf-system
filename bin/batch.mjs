@@ -17,6 +17,8 @@ import { safeErrorCode } from '../lib/status.mjs';
 import { stampGenerated, STAMP_UNSTAMPABLE } from '../lib/generated-stamp.mjs';
 import { parseFrontmatter } from '../lib/frontmatter.mjs';
 import { conceptStatus } from '../lib/trust.mjs';
+import { localDateString } from '../lib/time.mjs';
+import { backupDirtyTree } from '../lib/backup.mjs';
 
 const SWEEP_LOOKBACK_DAYS = 7; // §7-8: 이보다 오래된 orphan transcript는 sweep 대상에서 제외
 // 유휴 판정은 config(sweep_min_idle_minutes, 기본 60분)로 옮겼다 — "마지막 활동 후 N분"이
@@ -44,13 +46,6 @@ const NOOP_MARKER = '.okf-noop';
 // 드라이버가 시행하는 이유: 프롬프트 규범만으로는 오염된 digest에 넘어간 분석기가 번들 전체를
 // 한 회차에 은퇴시킬 수 있다.
 const MAX_DEPRECATIONS_PER_CHUNK = 3;
-
-// 리뷰 지적(사후 반영): capture.mjs는 로컬 날짜(toLocaleDateString('en-CA'))를 쓰는데
-// 이 파일은 toISOString(UTC)을 섞어 써서, UTC+ 시간대의 이른 새벽 시간대에 라벨이 하루
-// 어긋났다(§5-2/§5-5/§6 안건5가 명시하는 "로컬 날짜" 요구와 불일치). 한 곳으로 통일한다.
-function localDateString(date = new Date()) {
-  return date.toLocaleDateString('en-CA');
-}
 
 function log(okfHome, msg) {
   try {
@@ -457,41 +452,6 @@ function quarantineJunkRaw(okfHome) {
   return quarantined;
 }
 
-// stale lock 회수 회차의 원복은 "크래시 잔여물을 버린다"인데, 그 판단이 틀렸을 때 되돌릴
-// 방법이 없었다. 원복 전에 추적 파일을 _remove_candidate 아래로 복사해 TTL(기본 30일) 동안
-// 가역으로 만든다. 반드시 **날짜 디렉토리 아래**여야 purgeRemoveCandidate가 회수한다.
-// `--ignored`는 절대 붙이지 마라 — raw/ 전사 원문이 통째로 딸려온다.
-function backupDirtyTree(okfHome, runId) {
-  const paths = okfPaths(okfHome);
-  let entries;
-  try {
-    entries = git(['status', '--porcelain', '-z'], paths.home).split('\0').filter(Boolean);
-  } catch (err) {
-    log(okfHome, `원복 전 백업 목록 조회 실패: code=${safeErrorCode(err)}`);
-    return 0;
-  }
-  const destRoot = path.join(paths.removeCandidate, localDateString(), `pre-rollback-${runId}`);
-  let copied = 0;
-  for (const entry of entries) {
-    // `XY <path>`. rename은 `R  new\0old\0`라 두 번째 필드에 상태코드가 없다 — 그때는 통째로 경로다.
-    const rel = /^[ MADRCU?!]{2} /.test(entry) ? entry.slice(3) : entry;
-    if (!rel || rel.startsWith('.okf/')) continue;
-    const src = path.join(paths.home, rel);
-    const dest = path.join(destRoot, rel);
-    try {
-      if (!fs.statSync(src).isFile()) continue;
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.copyFileSync(src, dest);
-      fs.chmodSync(dest, 0o600);
-      copied++;
-    } catch {
-      // 삭제된 파일(D 상태) 등 — 백업할 바이트가 없다. 원복을 막지 않는다.
-    }
-  }
-  if (copied > 0) log(okfHome, `원복 전 dirty 추적 파일 ${copied}개를 _remove_candidate로 백업`);
-  return copied;
-}
-
 // dirty 작업트리 판정: recoveredFromStaleLock이면 무조건 크래시 잔여물로 간주해 원복(§7-4 코덱스 2차 지적).
 // 정상적으로 락을 처음부터 획득했을 때만 "사용자 편집"으로 취급해 lint-gate 후 커밋.
 function handleDirtyWorkingTree(okfHome, recoveredFromStaleLock, runId) {
@@ -500,7 +460,7 @@ function handleDirtyWorkingTree(okfHome, recoveredFromStaleLock, runId) {
 
   if (recoveredFromStaleLock) {
     log(okfHome, '크래시 잔여물로 판단되는 dirty 작업트리 발견(stale lock 회수됨) — lint 결과 무관 무조건 원복');
-    backupDirtyTree(okfHome, runId);
+    backupDirtyTree(okfHome, runId, { onLog: (m) => log(okfHome, m) });
     rollback(home);
     return { ok: true, report: null };
   }

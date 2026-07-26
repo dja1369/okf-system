@@ -5230,6 +5230,114 @@ function runRestructure(okfHome, mapping, extraArgs = []) {
   ok('--dry-run은 계획만 내고 파일을 건드리지 않는다',
     dry.status === 0 && dry.stdout.includes('→') && fs.existsSync(path.join(home, 'patterns', 'git-x-extra.md')),
     dry.stdout);
+
+  // --- 검증은 문자열이 아니라 **실제로 rename될 경로**에 대해 해야 한다 ---
+  // 아래 넷은 전부 "문자열은 규칙을 지키는데 파일시스템이 다른 곳을 가리키는" 입력이다.
+  // 매핑은 사람이나 모델이 쓰므로 이런 철자는 입력 분포 안에 있다.
+  const esc = bootstrapped('restructure-escape');
+  const E = (rel) => fs.writeFileSync(path.join(esc, rel),
+    `---\ntype: pattern\ntitle: "${path.basename(rel, '.md')}"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n본문\n`);
+  fs.mkdirSync(path.join(esc, 'patterns'), { recursive: true });
+  E('patterns/alpha.md'); E('patterns/beta.md');
+  commitAll(esc, 'seed');
+
+  // `./` 하나로 중복 판정을 우회하면 두 번째 rename이 첫 번째 concept를 덮어써 **영구 소실**된다.
+  const dotDup = runRestructure(esc, {
+    'patterns/alpha.md': 'patterns/g/c.md',
+    'patterns/beta.md': 'patterns/./g/c.md',
+  });
+  ok('`./` 철자로 중복 대상 검사를 우회할 수 없다',
+    dotDup.status === 4 && fs.existsSync(path.join(esc, 'patterns', 'alpha.md')), dotDup.stderr);
+
+  // macOS 기본 파일시스템은 대소문자를 구분하지 않는다 — 두 대상이 같은 파일이 된다.
+  const caseDup = runRestructure(esc, {
+    'patterns/alpha.md': 'patterns/g/Note.md',
+    'patterns/beta.md': 'patterns/g/note.md',
+  });
+  ok('대소문자만 다른 두 대상은 충돌로 거부한다',
+    caseDup.status === 4 && fs.existsSync(path.join(esc, 'patterns', 'alpha.md')), caseDup.stderr);
+
+  // `..`는 첫 조각 비교를 통과하면서 실제로는 gitignore된 디렉토리(raw/·.okf/)로 나간다.
+  // 거기로 옮겨지면 rollback(`clean -fd`, `-x` 없음)이 영원히 되돌리지 못한다.
+  const escape = runRestructure(esc, { 'patterns/alpha.md': 'patterns/../raw/alpha.md' });
+  ok('`..`로 택소노미 밖(gitignore 영역)으로 나갈 수 없다',
+    escape.status === 4 && fs.existsSync(path.join(esc, 'patterns', 'alpha.md'))
+    && !fs.existsSync(path.join(esc, 'raw', 'alpha.md')), escape.stderr);
+
+  // 같은 수법으로 다른 택소노미로 건너뛰면 lint W3가 뜨고 그 경고가 유료 repair로 흘러간다.
+  const crossVia = runRestructure(esc, { 'patterns/alpha.md': 'patterns/../decisions/alpha.md' });
+  ok('`..`로 택소노미 디렉토리를 갈아탈 수 없다',
+    crossVia.status === 4 && !fs.existsSync(path.join(esc, 'decisions', 'alpha.md')), crossVia.stderr);
+
+  // 정규식 메타문자가 든 이름. 이스케이프가 없으면 `|`는 대안 분기가 되어 무관한 산문까지
+  // 재작성하고, `.`는 와일드카드로 남아 **다른 concept의 링크를 조용히 갈아치운다**.
+  const meta = bootstrapped('restructure-meta');
+  fs.mkdirSync(path.join(meta, 'patterns'), { recursive: true });
+  const M = (rel, body) => fs.writeFileSync(path.join(meta, rel),
+    `---\ntype: pattern\ntitle: "${path.basename(rel, '.md')}"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n${body}\n`);
+  M('patterns/node.md', '본문');
+  M('patterns/node-js.md', '본문');
+  M('patterns/ref2.md', '옮길 것: [a](/patterns/node.md)\n남의 것: [b](/patterns/node-js.md)');
+  commitAll(meta, 'seed');
+  const metaRun = runRestructure(meta, { 'patterns/node.md': 'patterns/js/node.md' });
+  const ref2 = readIfExists(path.join(meta, 'patterns', 'ref2.md'));
+  ok('`.`을 와일드카드로 두지 않는다(다른 concept의 링크를 갈아치우지 않는다)',
+    metaRun.status === 0 && ref2.includes('[b](/patterns/node-js.md)'), `${metaRun.stderr}\n${ref2}`);
+
+  // 깨진 링크는 lint에서 **경고(W1)**다. 에러만 보고 원복을 판단하면 이 도구가 방금 만든
+  // 죽은 링크를 그대로 커밋한다. 이동 대상이 아닌 concept를 가리키는 죽은 링크를 심어 두고,
+  // 재배치가 W1을 **늘리지 않는지**를 본다.
+  const w1 = bootstrapped('restructure-w1');
+  fs.mkdirSync(path.join(w1, 'patterns'), { recursive: true });
+  const Wl = (rel, body) => fs.writeFileSync(path.join(w1, rel),
+    `---\ntype: pattern\ntitle: "${path.basename(rel, '.md')}"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n${body}\n`);
+  Wl('patterns/keep.md', '이미 깨진 링크: [x](/patterns/gone.md)');
+  Wl('patterns/movable.md', '본문');
+  commitAll(w1, 'seed');
+  const w1Before = runLint(w1).warnings.filter((x) => x.rule === 'W1').length;
+  const w1Run = runRestructure(w1, { 'patterns/movable.md': 'patterns/sub/movable.md' });
+  const w1After = runLint(w1).warnings.filter((x) => x.rule === 'W1').length;
+  ok('기존에 있던 W1은 재배치를 막지 않는다(새로 늘지만 않으면 된다)',
+    w1Run.status === 0 && w1Before === 1 && w1After === 1, `${w1Run.stderr} ${w1Before}→${w1After}`);
+
+  // 상대 링크는 옮기면 가리키는 대상이 조용히 바뀌는데 lint W1은 `/`로 시작하지 않는 링크를
+  // 아예 검사하지 않는다. 고칠 수 없으니 **옮히기를 거부**해야 한다.
+  const rel = bootstrapped('restructure-relative');
+  fs.mkdirSync(path.join(rel, 'patterns'), { recursive: true });
+  fs.writeFileSync(path.join(rel, 'patterns', 'has-rel.md'),
+    '---\ntype: pattern\ntitle: "has-rel"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n[형제](./sibling.md)\n');
+  fs.writeFileSync(path.join(rel, 'patterns', 'sibling.md'),
+    '---\ntype: pattern\ntitle: "sibling"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n본문\n');
+  commitAll(rel, 'seed');
+  const relRun = runRestructure(rel, { 'patterns/has-rel.md': 'patterns/sub/has-rel.md' });
+  ok('상대 링크를 가진 concept는 옮기지 않고 시끄럽게 멈춘다',
+    relRun.status === 4 && relRun.stderr.includes('./sibling.md')
+    && fs.existsSync(path.join(rel, 'patterns', 'has-rel.md')), relRun.stderr);
+
+  // 비워진 하위 디렉토리를 남기면 부모 index가 빈 도메인 링크를 영원히 광고한다.
+  const prune = bootstrapped('restructure-prune');
+  fs.mkdirSync(path.join(prune, 'patterns', 'old'), { recursive: true });
+  fs.writeFileSync(path.join(prune, 'patterns', 'old', 'only.md'),
+    '---\ntype: pattern\ntitle: "only"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(prune);
+  commitAll(prune, 'seed');
+  const pruneRun = runRestructure(prune, { 'patterns/old/only.md': 'patterns/new/only.md' });
+  ok('비워진 하위 디렉토리는 index와 함께 정리된다',
+    pruneRun.status === 0 && !fs.existsSync(path.join(prune, 'patterns', 'old'))
+    && !readIfExists(path.join(prune, 'patterns', 'index.md')).includes('(old/index.md)'),
+    `${pruneRun.stderr}\n${readIfExists(path.join(prune, 'patterns', 'index.md'))}`);
+
+  // 락은 존중해야 한다 — 배치가 도는 중에 파일을 옮기면 배치의 원복이 이 이동을 삼킨다.
+  const locked = bootstrapped('restructure-locked');
+  fs.mkdirSync(path.join(locked, 'patterns'), { recursive: true });
+  fs.writeFileSync(path.join(locked, 'patterns', 'a.md'),
+    '---\ntype: pattern\ntitle: "a"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n본문\n');
+  commitAll(locked, 'seed');
+  const held = acquireLock(locked, 'test-holder');
+  const lockRun = runRestructure(locked, { 'patterns/a.md': 'patterns/sub/a.md' });
+  releaseLock(locked, held.token);
+  ok('다른 홀더가 락을 쥐고 있으면 아무것도 옮기지 않는다',
+    lockRun.status === 2 && fs.existsSync(path.join(locked, 'patterns', 'a.md')), lockRun.stderr);
 }
 
 // ---------------------------------------------------------------------------
