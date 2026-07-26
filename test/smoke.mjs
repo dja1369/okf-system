@@ -4142,13 +4142,43 @@ console.log('\n=== plugin contract and docs ===');
   // 옮긴다. v2의 철회된 수치(누적 곡선 $0.1291→$0.0908, $0.1279→$0.2828)와 "14개 concept을
   // 한 줄로 접었다"는 서사는 v3 절에 존재해서는 안 된다 — 그 주장들은 표본이 못 받쳐 폐기됐다.
   // 어떤 번역본만 옛 절을 덜 지우면 그 언어 독자는 폐기된 결론을 현행으로 읽는다.
+  // 2026-07-26: `14 + concept명사`만 보던 옛 패턴이 **거짓 양성**을 냈다. E3 절이 "동결 질문
+  // 20개 중 14개가 인용 없는 title이다"라고 적는데(YAML 태그 파손, E3 §11) 이는 v2의 폐기된
+  // 서사와 아무 관계가 없다. 숫자 하나로 서사를 식별하려 한 것이 문제였다.
+  //
+  // **완화가 아니라 조준이다**: 막아야 하는 것은 "14개 concept을 **한 줄로 접었다**"는 주장이지
+  // 숫자 14의 등장이 아니다. 그래서 접기 서술과의 **동시 등장**을 요구한다. 좁힌 뒤에 진짜
+  // v2 문장을 여전히 잡는지 아래에서 재구성 문장으로 확인한다 — 안 잡으면 조준이 아니라 완화다.
+  const FOLD_TERM = /(folded|fold(?:s|ing)? +(?:into|to)|into one line|single line|한 ?줄로|접었|접어|畳ん|1行に|一行に|折叠|折成一行|zusammengefasst|in eine Zeile|plegad|en una (?:sola )?línea|repli(?:é|ées|er)|en une (?:seule )?ligne|dobrad|em uma linha|numa linha)/i;
+  const hasV2FoldStory = (text) => {
+    const rx = /14 ?(concepts?|개|個|个|問|概念|Konzepte|conceptos|conceitos)/g;
+    for (const m of text.matchAll(rx)) {
+      // 같은 문단 안에서만 본다 — 문서 어딘가에 '한 줄로'가 있다는 이유로 발화하면 다시 거짓 양성이다.
+      if (FOLD_TERM.test(text.slice(Math.max(0, m.index - 120), m.index + 120))) return true;
+    }
+    return false;
+  };
   ok('no localized README carries withdrawn v2 benchmark content', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
     const hasWithdrawnCurve = text.includes('$0.1291') || text.includes('$0.0908') || text.includes('$0.2828');
-    const hasNestingStory = /14 ?(concepts?|개|概念|Konzepte|conceptos|conceitos)/.test(text);
     const hasOldReportLink = /okf-benchmark-2026-07-16\.md/.test(text); // -v3 없는 옛 리포트 링크
-    return !hasWithdrawnCurve && !hasNestingStory && !hasOldReportLink;
+    return !hasWithdrawnCurve && !hasV2FoldStory(text) && !hasOldReportLink;
   }));
+  // **좁힌 가드가 여전히 무는지 확인한다.** 폐기된 v2 서사를 각 언어로 재구성해 넣어 본다.
+  // 하나라도 통과하면 위 단언은 그 언어에서 무장해제된 것이다.
+  const V2_ZOMBIES = [
+    'the gate folded 14 concepts into one line',
+    '게이트가 14개 concept을 한 줄로 접었다',
+    'ゲートが14個のconceptを1行に畳んだ',
+    '门控把 14 个概念折叠成一行',
+    'das Gate hat 14 Konzepte in eine Zeile zusammengefasst',
+    'la puerta plegó 14 conceptos en una sola línea',
+    'la porte a replié 14 concepts en une seule ligne',
+    'o portão dobrou 14 conceitos em uma linha',
+  ];
+  ok('the v2-zombie guard still bites every language it claims to cover',
+    V2_ZOMBIES.every((s) => hasV2FoldStory(s)),
+    `missed=${JSON.stringify(V2_ZOMBIES.filter((s) => !hasV2FoldStory(s)))}`);
 
   const workflow = path.join(PLUGIN_ROOT, '.github', 'workflows', 'test.yml');
   ok('CI verifies Linux, macOS, and Windows without external dependencies', fs.existsSync(workflow) && ['ubuntu-latest', 'macos-latest', 'windows-latest'].every((osName) => fs.readFileSync(workflow, 'utf8').includes(osName)));

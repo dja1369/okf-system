@@ -57,119 +57,117 @@ Pourquoi une base sur l’idle ? Les sessions se terminent rarement de façon ex
 
 ## Benchmark OKF
 
-<!-- okf-benchmark: 2026-07-26-e2 -->
+<!-- okf-benchmark: 2026-07-26-e3 -->
 
-### E2 — quatre caractères devant le `title` (2026-07-26)
+### Gate recall@cap — trois manches préenregistrées, E1 → E3 (2026-07-26)
 
-Pas un octet de corps de texte, de nom de fichier ou de chemin n’a été modifié. Quatre caractères ont
-été ajoutés devant le **`title`** du frontmatter du concept-réponse, et à N=400 le `recall` passe de
-**0.262 à 0.533** — le double —, tandis qu’à N=24 il passe de **0.400 à 1.000**. Même savoir, mêmes
-fichiers, même taille de bundle. La seule chose qui a changé, c’est la place de cette ligne dans le
-tri.
+Les trois manches ont coûté **0,00 $**, et c'est l'exécution qui le prouve plutôt qu'une déclaration :
+le banc d'essai place un stub `claude` en tête de `PATH`, constate que ce stub existe, et le stub n'est
+jamais exécuté (`paidCallTrapInstalled: true`, `paidCallTrapTripped: false`).
 
-> **le recall n’est pas un taux de bonnes réponses.** Les distracteurs synthétiques ne donnent qu’une
-> **borne supérieure** de la performance du routeur.
-> **Il ne faut pas comparer directement les chiffres d’E2 à ceux d’E1 pour parler d’« amélioration »
-> ou de « dégradation »** — le budget (+11 o) et la façon de générer les remplisseurs ont changé : les
-> deux campagnes sont donc des conditions différentes. Ce qui est comparable, ce sont les trois
-> conditions de perturbation *à l’intérieur* d’E2.
+Elles mesurent `recall(N)` — avec N concepts dans le bundle, la proportion des 20 questions gelées dont
+le concept de réponse survit jusqu'à l'index que la porte injecte réellement.
 
-| N | none | front (`!!! `) | back (`힣힣 `) | spread |
+> **recall n'est pas un taux de réussite.** Il répond seulement à « la porte a-t-elle chargé la ligne
+> pertinente ». Savoir si le modèle a **utilisé** cette ligne ne peut être vérifié sans appels payants.
+> Les distracteurs synthétiques ne donnent qu'une **borne supérieure**, le recall réel est donc plus bas.
+
+**Conditions** — 3 perturbations × 5 niveaux × 20 graines = 300 échantillons, 28 s. Quatre caractères
+sont ajoutés devant le **`title`** du frontmatter du concept de réponse ; ni le corps, ni le nom de
+fichier, ni le chemin ne changent.
+
+| N | `none` | `front` (`!!! `) **tel que publié** | `front` **sûr avec guillemets** | `back` (`힣힣 `) |
 |---|---|---|---|---|
-| 24 | 0.400 ± 0.000 (n=20, 0.40–0.40) | **1.000 ± 0.000** (n=20, 1.00–1.00) | 0.400 ± 0.000 (n=20, 0.40–0.40) | **0.600** |
-| 50 | 0.277 ± 0.038 (n=20, 0.20–0.35) | 0.560 ± 0.064 (n=20, 0.50–0.70) | 0.182 ± 0.044 (n=20, 0.15–0.30) | **0.378** |
-| 100 | 0.247 ± 0.034 (n=20, 0.20–0.30) | 0.523 ± 0.030 (n=20, 0.45–0.55) | 0.170 ± 0.025 (n=20, 0.15–0.20) | **0.353** |
-| 200 | 0.250 ± 0.040 (n=20, 0.15–0.30) | 0.528 ± 0.030 (n=20, 0.45–0.55) | 0.175 ± 0.026 (n=20, 0.15–0.20) | **0.353** |
-| 400 | 0.262 ± 0.039 (n=20, 0.15–0.30) | 0.533 ± 0.024 (n=20, 0.50–0.55) | 0.185 ± 0.024 (n=20, 0.15–0.20) | **0.348** |
+| 24 | 0,400 ± 0,000 | 1,000 ± 0,000 | **0,400** | 0,400 ± 0,000 |
+| 50 | 0,277 ± 0,038 | 0,560 ± 0,064 | **0,400** | 0,182 ± 0,044 |
+| 100 | 0,247 ± 0,034 | 0,523 ± 0,030 | **0,400** | 0,170 ± 0,025 |
+| 200 | 0,250 ± 0,040 | 0,528 ± 0,030 | **0,400** | 0,175 ± 0,026 |
+| 400 | 0,262 ± 0,039 | 0,533 ± 0,024 | **0,400** | 0,185 ± 0,024 |
 
-**R6 a été conçu pour réfuter, et la tentative de réfutation a échoué.** R6 avait été pré-enregistré
-ainsi : « si changer le `title` ne fait pas bouger le `recall`, le diagnostic de domination du tri est
-faux », avec un seuil de 0,05. Le spread mesuré va de 0,348 à 0,600, soit **7 à 12 fois le seuil** :
-la tentative de réfutation a échoué et le diagnostic a survécu. **Dans une porte qui ne contient aucun
-signal de pertinence, c’est le résultat attendu et non la découverte d’un bug** ; ce qui est nouveau,
-c’est que sa taille est désormais un nombre.
+n=20 par cellule. E1 n'a exécuté que `none` avec un budget inférieur de 11 o et a produit
+0,400 / 0,277 / 0,245 / 0,248 — c'est une **condition différente**, ni meilleure ni pire que le tableau
+ci-dessus.
 
-**`cwdIndependent` se retourne.** Les 6 concepts anéantis (0.000) à N≥200 dans E1 remontent à
-**0.967** avec un seul préfixe. Ce résultat d’E1 ne disait pas « le savoir indépendant du dépôt est
-désavantagé » : il était fonction du nommage.
+**La colonne `front` telle que publiée est contaminée, et c'est sa propre garde qui l'a détecté.**
+`!!!` est un **indicateur de tag** YAML. Placé devant un `title:` *sans guillemets*, il casse
+entièrement le frontmatter : le type est perdu, le texte du lien retombe sur le nom de fichier, et **la
+description disparaît**, faisant s'effondrer la ligne de ~700 o à ~30 o. **14 des 20 questions gelées
+ont des titres sans guillemets.** Pour ces 14, l'expérience a donc mesuré non pas la position de tri
+mais l'**échec d'analyse** : une ligne courte laisse entrer bien plus de lignes dans le même budget,
+ce qui correspond exactement au `taken` = 24 et à la longueur moyenne de 263 o observés à N=24. Refaite
+avec un préfixe sûr avec guillemets, `front` s'effondre à un **0,400 plat**. `none` et `back` ne bougent
+pas d'un chiffre, ce qui confirme la neutralité du correctif et montre que `힣힣 ` n'a jamais rien cassé.
 
-**R2 et R3 se sont déclenchés de nouveau**, si bien que, selon la règle de traitement
-pré-enregistrée, les valeurs absolues de recall ne servent toujours de fondement à aucune décision de
-politique.
+**Ce qui subsiste et ce qui tombe.** Le tri décide toujours de la survie : à N=400 l'écart sûr avec
+guillemets vaut 0,400 − 0,185 = **0,215**, soit encore **4,3×** le seuil de réfutation de 0,05, et le
+fait que `back` fasse passer le recall de 0,262 à 0,185 est un pur effet d'ordre. **Dans un système sans
+aucun signal de pertinence, c'est le résultat attendu et non la découverte d'un bogue** — ce qui est
+nouveau, c'est l'ampleur. Mais trois ampleurs publiées ne survivent pas : « quatre caractères doublent
+le recall » passe de 2,03× à **1,53×** ; « N=24 passe de 0,400 à 1,000 » devient **aucun changement** ;
+et le bond de `cwdIndependent` d'E1, 0,000 → 0,967, devient **0,000 → 0,333**. À leur place apparaît un
+fait nouveau : **quand les concepts se trient en tête, le recall cesse totalement de dépendre de N**
+(0,400 plat sur une plage de taille de bundle de 17×), car ce qui borne alors la survie est `taken` et
+non N.
 
-**Côté discipline de mesure, un cran a été gagné.** Dans E1, les fixtures apparaissaient pour la
-première fois dans le commit du rapport ; dans E2, elles accompagnent le commit de pré-enregistrement,
-et le smoke impose une inégalité stricte via `git log --diff-filter=A`.
+**La condition de survie est exactement `rank < taken`** — un concept survit si et seulement si son rang
+de tri par titre à l'intérieur de sa catégorie est inférieur au nombre de lignes que cette catégorie a
+obtenues. Le recall est donc une fonction **complète** des vecteurs rank et `taken` et se décompose sans
+approximation. À N=24→50 la composante rank domine (−0,15 à −0,41) ; à N≥100 elle meurt à ~0, un effet
+plancher : le rang moyen des réponses (26,9) dépasse largement `taken` (10,5), et ajouter du remplissage
+ne change rien aux concepts déjà exclus. Réserve publiée avec le résultat : la décomposition est de la
+**comptabilité, pas de la causalité**, et ses composantes dépendent de la ligne de base.
 
-```sh
-node test/gate-recall.mjs --e2 --perturb all   # 3 conditions × 5 niveaux × 20 graines
-```
+**Deux corrections d'E3 à E2, et une à elle-même.** E2 rapportait que le recall « monte de façon
+monotone » de N=100 à 400 et laissait l'explication à E3. Avec le n=20 préenregistré, cette montée **ne
+peut pas être établie du tout** : 0 paire adjacente sur 12 est `rising`. Le premier titre publié d'E3 en
+concluait que la montée « n'existe pas » ; **c'était faux**, et une vérification adverse de puissance
+statistique l'a détecté : à n=60, trois paires sont `rising` (p descendant jusqu'à 0,00027), et dans les
+trois la composante `taken` porte 100 % du mouvement tandis que la composante rank vaut exactement 0. La
+montée est réelle mais **non substantielle** (IC de la médiane = [0,000, 0,000]). E3 a aussi remplacé la
+règle `|Δ| ≤ 0,05` d'E2 — qui confond « plat » et « petit mais constant » — par un test des signes exact
+apparié plus un intervalle de confiance de la médiane sans hypothèse de distribution, en publiant la
+direction et l'ampleur comme deux valeurs distinctes.
 
-Cette exécution affiche **$0.00** et **26,6 secondes** pour 300 échantillons. Ces deux valeurs sont
-des propriétés du harnais de mesure — ce ne sont pas des affirmations sur le coût ou la vitesse de la
-porte.
+**L'ancien R3 se déclenchait sur du bruit.** Son libellé disait « décroissance monotone violée →
+*défaut du banc d'essai* → tout jeter », mais son implémentation comparait des moyennes sans aucun
+traitement de l'incertitude, si bien que ±0,005 de bruit de graine le déclenchait aussi bien dans E1 que
+dans E2 — les deux manches ont été publiées dans l'état contradictoire « déclenché, mais rien de jeté ».
+E3 n'a pas assoupli le seuil ; il a repointé le critère vers ce que dit son libellé et a mesuré
+l'intégrité directement. Sur les mêmes 300 échantillons, l'ancien R3 se déclenche et le nouveau R3a non.
 
-[Rapport E2](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
-[pré-enregistrement E2](docs/benchmarks/pre-registration-2026-07-26-e2.md)
+**Dans le bundle réel, le biais de tri ne peut pas encore être établi.** Mesuré en lecture seule et
+n'émettant que des décomptes : ni titres, ni descriptions, ni noms de fichiers, ni liens ne sortent de la
+mesure, et `raw/` n'est jamais ouvert. Le tri compare `title.toLowerCase()` avec `<`, c'est-à-dire un
+**ordre d'unités de code UTF-16, pas une collation localisée** ; un titre commençant par de l'ASCII
+précède donc toujours un titre commençant par du hangul. Les concepts à initiale ASCII représentent
+65,4 % du bundle et prennent 70,6 % des places de la porte — mais avec 26 concepts, le test
+hypergéométrique exact contre une hypothèse nulle stratifiée donne **p = 0,667**. Ce n'est pas un
+résultat. Et un faible surcroît ne doit pas se lire « le tri est inoffensif » : la porte charge
+actuellement **65,4 %** de tous les candidats, et là où tout est chargé le tri ne décide de rien (2
+catégories sur 6 ont zéro degré de liberté). Par catégorie, le taux de chargement se sépare déjà :
+`decisions`/`projects` 1,000, `patterns` 0,500, `references` **0,429**. Une version antérieure affirmait
+qu'un taux de chargement décroissant amplifierait l'effet ; **les données mêmes du benchmark la
+réfutent**, cette affirmation a donc été retirée.
 
-<!-- okf-benchmark: 2026-07-26-e1 -->
+**Ce qui prend une place est décidé par l'ordre et la longueur de ligne, pas par la pertinence.** Cinq
+facteurs sont confirmés dans le code : le tri sensible à la casse des noms de section de type, qui fait
+que `# Subdirectories` précède toujours `# reference` (`lib/index-gen.mjs:242`) et tire les concepts
+imbriqués en tête de leur catégorie ; à l'intérieur d'une section, l'ordre alphabétique du **`title`** du
+frontmatter — et non du nom de fichier, qui n'est qu'un repli en cas d'échec d'analyse (`:315`) ;
+`status: deprecated` relégué en fin de section (`:245`) ; l'ordre de parcours des catégories par nom de
+répertoire (`:227`) ; et la **longueur de ligne en octets**, puisqu'une ligne suivante dépassant le
+budget restant arrête cette catégorie (`lib/gate.mjs:122`). La porte ne contient aucune référence au
+cwd, à la fraîcheur ou à la requête.
 
-### E1 — recall@cap de la porte, mesuré pour $0.00 (2026-07-26)
+**Le résultat, c'est la forme, pas le niveau.** Sur les 20 questions, 9 survivent à 0 à tous les niveaux
+et 3 à 1,0 ; les 8 restantes se situent entre les deux — le recall n'est pas binaire. La porte remplit en
+tourniquet jusqu'à épuisement du budget ; une catégorie ne finit à 1–3 lignes que parce qu'une seule
+ligne est grosse (200–1 030 o contre un budget d'index d'environ 6 960 o), si bien que la prise totale
+s'épuise à 8–11 lignes. `references` obtient exactement une ligne à chaque niveau, donc sur les 8
+réponses qui y sont concentrées, une seule au plus peut survivre.
 
-Cette exécution a coûté **$0.00**, et c’est prouvé par l’exécution elle-même, pas déclaré : le
-harnais place un `claude` factice en tête de `PATH` avant de lancer le hook, et ce stub n’a jamais
-été exécuté (`paidCallTrapTripped: false`). 4 niveaux × 20 graines = **80 échantillons, 6,2 secondes**.
-
-Un seul nombre est mesuré : `recall(N)` — avec N concepts dans le bundle, la proportion des 20
-questions gelées dont le concept-réponse survit dans l’index que la porte injecte réellement.
-
-> **le recall n’est pas un taux de bonnes réponses.** Cette mesure répond seulement à « la porte
-> a-t-elle chargé la ligne pertinente ». Savoir si « le modèle a réellement utilisé cette ligne » est
-> invérifiable sans appels payants. Les distracteurs synthétiques ne donnent qu’une **borne
-> supérieure** de la performance du routeur : le recall en usage réel est donc plus bas.
-
-| N | recall moyenne ± écart-type | échantillon | min–max |
-|---|---|---|---|
-| 24 | 0.400 ± 0.000 | n=20 | 0.40–0.40 |
-| 50 | 0.277 ± 0.038 | n=20 | 0.20–0.35 |
-| 100 | 0.245 ± 0.036 | n=20 | 0.20–0.30 |
-| 200 | 0.248 ± 0.041 | n=20 | 0.15–0.30 |
-
-`n=` et le min–max figurent **sur la même ligne** que la moyenne. C’est une convention établie par
-`test/bench-report.mjs` et imposée par le smoke, afin qu’une médiane sur deux échantillons ne soit
-plus jamais tracée comme un point de courbe.
-
-**R3 s’est déclenché** (violation de la décroissance monotone : +0,0025 de N=100 à N=200), et **R2
-s’est déclenché lui aussi** (`recall(24)` = 0.400 < 0.60). Conformément à la règle de traitement
-pré-enregistrée, **les valeurs absolues de recall ne servent donc de fondement à aucune décision de
-politique.** Cette règle tient bien que le delta fautif ne vaille qu’un 1/16 de l’écart-type entre
-graines de ce niveau, car le pré-enregistrement avait fixé d’avance qu’un petit delta n’annule pas un
-déclenchement. Le tableau est publié ; il ne décide de rien.
-
-**Le résultat, c’est la forme et non le niveau.** Sur les 20 questions, 9 survivent à 0 à tous les
-niveaux (q03, q07, q10, q13–q17, q20) et 3 survivent à 1.0 à tous les niveaux (q02, q12, q18) ; les 8
-restantes prennent des valeurs intermédiaires. Par cellule (20 questions × 4 niveaux = 80), cela fait
-48 zéros, 19 uns et 13 valeurs intermédiaires — le recall n’est pas binaire. Trois des questions
-intermédiaires montent même quand N grandit (q06 : 0 → 0,60 → 0,65 → 0,70), et cette montée est la
-source arithmétique de R3. La porte remplit en round-robin, mais elle **parcourt les catégories en
-boucle** jusqu’à épuisement du budget, au lieu de prendre une ligne par catégorie et de s’arrêter ; si
-une catégorie se limite à 1–3 lignes, c’est uniquement parce qu’une seule ligne est grosse — les
-lignes de concept font 200–1 030 o pour un budget d’index de 6 956 o, si bien que l’ensemble du
-prélèvement s’épuise en 8–11 lignes. Dans `references`, une seule ligne est prise à chaque niveau (1
-ligne sur 57 à N=200) : des 8 réponses concentrées là, une au plus survit. Ce qui occupe ces places
-n’est pas décidé par la pertinence mais par le tri au moment de la génération et par la longueur de
-ligne, et au moins cinq facteurs sont confirmés : le tri **sensible à la casse** des noms de section
-de type, si bien que `# Subdirectories` précède toujours `# reference` (`lib/index-gen.mjs:242`) ; à
-l’intérieur d’une section, l’ordre alphabétique du **`title`** du frontmatter (`:315`) — et non du
-nom de fichier, qui n’est qu’un repli en cas d’échec de l’analyse du frontmatter ; `status:
-deprecated` rétrogradé dans sa section (`:245`) ; l’ordre de parcours des catégories par nom de
-répertoire (`:227`) ; et la **longueur en octets de la ligne** — si la ligne suivante dépasse le
-budget restant, cette catégorie s’arrête là (`lib/gate.mjs:122`), la longueur de la description
-change donc la survie. La porte actuelle ne contient aucune référence au cwd, à la fraîcheur ou à la
-requête.
-
-**Profondeur d’imbrication (axe A-2).** 25 concepts fixés, contenus identiques, seuls les chemins
-rendus plus profonds :
+**Profondeur d'imbrication (axe A-2).** 25 concepts fixés, contenus identiques, seuls les chemins
+approfondis :
 
 | Condition | lignes de concept injectées | liens de sous-domaine |
 |---|---:|---:|
@@ -178,23 +176,50 @@ rendus plus profonds :
 | 3 niveaux | 26 | 0 |
 | 4 niveaux | 25 | 0 |
 
-Chaque condition a été mesurée **une seule fois** (n=1, sans répétition de graines), et dans cette
-mesure unique une ligne a été perdue par niveau de profondeur. Quatre points ne permettent pas de
-distinguer si cette baisse est linéaire, et les profondeurs au-delà de 4 niveaux n’ont pas été
-mesurées. Rapporté aux concepts plantés, 3 niveaux donnent 25 → 23, soit **-8,0 %**. La cause est la
-pression en octets, pas un déroulé de chaîne défaillant :
-chaque segment de chemin supplémentaire allonge toutes les lignes jusqu’à en pousser une hors du
-budget. (28 et non 25 parce qu’`ensureBootstrap` plante les mêmes concepts d’amorçage dans chaque
-condition ; cela n’affecte pas la comparaison entre conditions.)
+Chaque condition a été mesurée **une fois** (n=1, sans répétition de graine), et dans cette unique
+mesure une ligne a été perdue par niveau de profondeur. Quatre points ne permettent pas de dire si le
+déclin est linéaire, et les profondeurs au-delà de 4 n'ont pas été mesurées. Rapporté aux concepts
+plantés, 3 niveaux donne 25 → 23, soit **−8,0 %**. La cause est la pression en octets, pas un parcours
+de chaîne défaillant : chaque segment de chemin supplémentaire allonge toutes les lignes jusqu'à ce que
+l'une soit poussée hors du budget.
+
+**R2 se déclenche à chaque manche** (`recall(24)` = 0,400 < 0,60). Selon la règle de traitement
+préenregistrée, **les valeurs absolues de recall ne décident de rien** — les tableaux sont publiés et ne
+pilotent aucune politique.
+
+**Discipline de mesure, et où elle s'est améliorée.** Dans E1, les fixtures sont entrées dans git pour la
+première fois au commit du **rapport** : les seuils étaient fixés à l'avance, mais pas le matériel qui a
+réellement déterminé les chiffres. À partir d'E2, les fixtures sont livrées dans le commit de
+préenregistrement et le smoke impose une inégalité **stricte** via `git log --diff-filter=A` ; pointée
+sur l'ensemble de fichiers d'E1, elle produit 3 violations, elle attrape donc l'accident réel au lieu de
+l'approuver. Chaque manche publie les valeurs déjà connues au moment de la rédaction de son
+préenregistrement, ainsi que toute arithmétique modifiée après la mesure — E3 a quantifié les deltas de
+recall sur la grille de 1/20 parce que `0,25 − 0,20 = 0,04999…` alors que `0,20 − 0,15 = 0,05000…2`,
+plaçant le même mouvement d'une question de part et d'autre de la borne d'équivalence ; ce correctif a
+supprimé le seul verdict `indeterminate` de la manche, il jouait donc **contre** l'argument du rapport
+lui-même, et il est divulgué comme tel. La revue adverse a ensuite montré que la garde de l'identité de
+survie était quasi tautologique (elle rappelait la fonction même qu'elle vérifiait), et le remplacement
+non circulaire **s'est déclenché dès sa première exécution** : c'est ainsi que la contamination de
+`front` ci-dessus a été trouvée. Un défaut ouvert est assumé plutôt que comblé par une conjecture : la
+même garde se déclenche aussi sur 8 échantillons non perturbés sur 100, et la cause n'est pas encore
+identifiée.
 
 ```sh
-node test/gate-recall.mjs     # 4 niveaux × 20 graines, ~6 s, zéro appel payant
-node test/bench-nesting.mjs   # l’axe de profondeur d’imbrication
-node test/smoke.mjs           # garde-fous de régression
+node test/gate-recall.mjs --e3 --perturb all   # 3 conditions × 5 niveaux × 20 graines, ~28 s
+node test/gate-recall.mjs --e3 --perturb all --quote-safe-perturb   # le préfixe corrigé
+node test/gate-title-distribution.mjs          # distribution des titres du bundle réel (lecture seule)
+node test/gate-recall.mjs --e2 --perturb all   # E2
+node test/gate-recall.mjs                      # E1
+node test/bench-nesting.mjs                    # axe profondeur d'imbrication
+node test/smoke.mjs                            # gardes de régression
 ```
 
+[Rapport E3](docs/benchmarks/gate-recall-2026-07-26-e3.md) ·
+[Préenregistrement E3](docs/benchmarks/pre-registration-2026-07-26-e3.md) ·
+[Rapport E2](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
+[Préenregistrement E2](docs/benchmarks/pre-registration-2026-07-26-e2.md) ·
 [Rapport E1](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
-[pré-enregistrement E1](docs/benchmarks/pre-registration-2026-07-26-e1.md)
+[Préenregistrement E1](docs/benchmarks/pre-registration-2026-07-26-e1.md)
 
 ### Exécution payante de bout en bout (v3, 2026-07-16)
 

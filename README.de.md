@@ -58,140 +58,165 @@ Warum idle-basiert? Sitzungen enden selten explizit — Background-Agenten tun e
 
 ## OKF-Benchmark
 
-<!-- okf-benchmark: 2026-07-26-e2 -->
+<!-- okf-benchmark: 2026-07-26-e3 -->
 
-### E2 — vier Zeichen vor dem `title` (2026-07-26)
+### Gate recall@cap — drei präregistrierte Runden, E1 → E3 (2026-07-26)
 
-Kein einziges Byte an Text, Dateinamen oder Pfaden wurde geändert. Dem Frontmatter-**`title`** des
-Antwort-Konzepts wurden vier Zeichen vorangestellt, und bei N=400 geht `recall` von **0.262 auf
-0.533** — auf das Doppelte —, bei N=24 von **0.400 auf 1.000**. Gleiches Wissen, gleiche Dateien,
-gleiche Bundle-Größe. Geändert hat sich nur, an welcher Stelle die Zeile einsortiert wird.
+Alle drei Runden kosteten **$0,00**, und das wird durch den Lauf bewiesen statt behauptet: Der
+Prüfstand legt einen Stub `claude` an den Anfang von `PATH`, misst nach, dass dieser Stub existiert,
+und der Stub wird nie ausgeführt (`paidCallTrapInstalled: true`, `paidCallTrapTripped: false`).
 
-> **recall ist keine Trefferquote.** Synthetische Distraktoren liefern nur eine **Obergrenze** der
-> Router-Leistung.
-> **Die Zahlen aus E2 dürfen nicht direkt mit denen aus E1 verglichen und als „besser“ oder
-> „schlechter“ bezeichnet werden** — Budget (+11 B) und die Erzeugung der Filler haben sich geändert,
-> die beiden Läufe sind also verschiedene Bedingungen. Vergleichbar sind die drei
-> Störungsbedingungen *innerhalb* von E2.
+Gemessen wird `recall(N)` — bei N Concepts im Bundle der Anteil der 20 eingefrorenen Fragen, deren
+Antwort-Concept in den Index überlebt, den das Gate tatsächlich injiziert.
 
-| N | none | front (`!!! `) | back (`힣힣 `) | spread |
+> **recall ist keine Trefferquote.** Es beantwortet nur, ob das Gate die relevante Zeile geladen hat.
+> Ob das Modell diese Zeile **benutzt** hat, lässt sich ohne kostenpflichtige Aufrufe nicht prüfen.
+> Synthetische Distraktoren liefern nur eine **Obergrenze**, der reale recall liegt also darunter.
+
+**Bedingungen** — 3 Perturbationen × 5 Stufen × 20 Seeds = 300 Stichproben, 28 s. Dem Frontmatter-
+**`title`** des Antwort-Concepts werden vier Zeichen vorangestellt; Text, Dateiname und Pfad bleiben
+unverändert.
+
+| N | `none` | `front` (`!!! `) **wie publiziert** | `front` **quote-sicher** | `back` (`힣힣 `) |
 |---|---|---|---|---|
-| 24 | 0.400 ± 0.000 (n=20, 0.40–0.40) | **1.000 ± 0.000** (n=20, 1.00–1.00) | 0.400 ± 0.000 (n=20, 0.40–0.40) | **0.600** |
-| 50 | 0.277 ± 0.038 (n=20, 0.20–0.35) | 0.560 ± 0.064 (n=20, 0.50–0.70) | 0.182 ± 0.044 (n=20, 0.15–0.30) | **0.378** |
-| 100 | 0.247 ± 0.034 (n=20, 0.20–0.30) | 0.523 ± 0.030 (n=20, 0.45–0.55) | 0.170 ± 0.025 (n=20, 0.15–0.20) | **0.353** |
-| 200 | 0.250 ± 0.040 (n=20, 0.15–0.30) | 0.528 ± 0.030 (n=20, 0.45–0.55) | 0.175 ± 0.026 (n=20, 0.15–0.20) | **0.353** |
-| 400 | 0.262 ± 0.039 (n=20, 0.15–0.30) | 0.533 ± 0.024 (n=20, 0.50–0.55) | 0.185 ± 0.024 (n=20, 0.15–0.20) | **0.348** |
+| 24 | 0,400 ± 0,000 | 1,000 ± 0,000 | **0,400** | 0,400 ± 0,000 |
+| 50 | 0,277 ± 0,038 | 0,560 ± 0,064 | **0,400** | 0,182 ± 0,044 |
+| 100 | 0,247 ± 0,034 | 0,523 ± 0,030 | **0,400** | 0,170 ± 0,025 |
+| 200 | 0,250 ± 0,040 | 0,528 ± 0,030 | **0,400** | 0,175 ± 0,026 |
+| 400 | 0,262 ± 0,039 | 0,533 ± 0,024 | **0,400** | 0,185 ± 0,024 |
 
-**R6 war zum Widerlegen gebaut, und der Widerlegungsversuch ist gescheitert.** R6 wurde
-vorregistriert als „bewegt sich `recall` trotz geändertem `title` nicht, ist die Diagnose der
-Sortier-Dominanz falsch“, mit Schwelle 0,05. Der gemessene spread liegt bei 0,348–0,600, also beim
-**7- bis 12-Fachen der Schwelle** — der Widerlegungsversuch ist gescheitert und die Diagnose hat
-überlebt. **In einem Gate mit null Relevanzsignalen ist das das erwartete Ergebnis und nicht der Fund
-eines Bugs**; neu ist allein, dass die Größe dieses Effekts jetzt als Zahl vorliegt.
+n=20 pro Zelle. E1 lief nur mit `none` bei einem um 11 B kleineren Budget und ergab
+0,400 / 0,277 / 0,245 / 0,248 — eine **andere Bedingung**, weder besser noch schlechter als oben.
 
-**`cwdIndependent` kippt.** Die 6 Konzepte, die in E1 bei N≥200 vollständig ausfielen (0.000), kommen
-mit einem einzigen Präfix auf **0.967**. Jenes E1-Ergebnis hieß nicht „repository-unabhängiges Wissen
-ist im Nachteil“ — es war eine Funktion der Benennung.
+**Die publizierte `front`-Spalte ist kontaminiert, und gefunden hat das ihr eigener Guard.** `!!!` ist
+ein YAML-**Tag-Indikator**. Vor einen *nicht gequoteten* `title:` gesetzt, zerstört er das Frontmatter
+vollständig: Der Typ geht verloren, der Linktext fällt auf den Dateinamen zurück, und **die
+Description verschwindet**, wodurch die Zeile von ~700 B auf ~30 B kollabiert. **14 der 20
+eingefrorenen Fragen haben nicht gequotete Titel.** Für diese 14 maß das Experiment also nicht die
+Sortierposition, sondern das **Parsing-Versagen** — kurze Zeilen lassen weit mehr Zeilen ins gleiche
+Budget, genau das sind die bei N=24 beobachteten `taken` = 24 und 263 B mittlere Zeilenlänge. Mit
+quote-sicherem Präfix neu gemessen, kollabiert `front` auf konstante **0,400**. `none` und `back`
+bewegen sich um keine einzige Stelle, was die Korrektur als neutral bestätigt und zugleich zeigt, dass
+`힣힣 ` nie etwas zerstört hat.
 
-**R2 und R3 haben erneut ausgelöst**, also werden die absoluten recall-Werte nach der
-vorregistrierten Behandlungsregel weiterhin nicht als Grundlage für eine Policy-Entscheidung
-verwendet.
+**Was bleibt und was fällt.** Dass die Sortierung über das Überleben entscheidet, bleibt bestehen: Bei
+N=400 beträgt der quote-sichere Spread 0,400 − 0,185 = **0,215**, immer noch das **4,3-Fache** der
+Widerlegungsschwelle von 0,05, und dass `back` den recall von 0,262 auf 0,185 drückt, ist ein reiner
+Ordnungseffekt. **In einem System ohne jedes Relevanzsignal ist das das erwartete Ergebnis und keine
+Bug-Entdeckung** — neu ist die Größenordnung. Drei publizierte Größenordnungen überleben jedoch nicht:
+„vier Zeichen verdoppeln den recall" ist 2,03× → **1,53×**; „N=24 geht von 0,400 auf 1,000" wird zu
+**keiner Änderung**; und E1s `cwdIndependent`-Sprung von 0,000 → 0,967 wird zu **0,000 → 0,333**. An
+ihre Stelle tritt eine neue Tatsache: **Sortieren Concepts nach vorn, hängt der recall überhaupt nicht
+mehr von N ab** (konstant 0,400 über einen 17-fachen Bereich der Bundle-Größe), weil dann `taken` und
+nicht N das Überleben begrenzt.
 
-**Bei der Messdisziplin ist ein Schritt gelungen.** In E1 tauchten die Fixtures erstmals im
-Report-Commit auf; in E2 liegen sie im Vorregistrierungs-Commit bei, und der Smoke-Test erzwingt per
-`git log --diff-filter=A` eine strikte Ungleichung.
+**Die Überlebensbedingung ist exakt `rank < taken`** — ein Concept überlebt genau dann, wenn sein
+Titel-Sortierrang innerhalb seiner Kategorie kleiner ist als die Zahl der Zeilen, die diese Kategorie
+bekommen hat. recall ist damit eine **vollständige** Funktion der Vektoren rank und `taken` und
+zerlegt sich ohne Näherung. Bei N=24→50 dominiert die rank-Komponente (−0,15 bis −0,41); ab N≥100
+stirbt sie auf ~0 — ein Bodeneffekt: Der mittlere Antwortrang (26,9) liegt weit jenseits von `taken`
+(10,5), mehr Füllmaterial ändert an bereits ausgeschlossenen Concepts nichts. Mitpubliziertes Caveat:
+Die Zerlegung ist **Buchhaltung, keine Kausalität**, und ihre Komponenten hängen von der Basislinie ab.
 
-```sh
-node test/gate-recall.mjs --e2 --perturb all   # 3 Bedingungen × 5 Ebenen × 20 Seeds
-```
+**Zwei Korrekturen von E3 an E2 und eine an sich selbst.** E2 berichtete, der recall steige von N=100
+bis 400 „monoton", und übergab die Erklärung an E3. Beim präregistrierten n=20 lässt sich dieser
+Anstieg **gar nicht belegen** — 0 von 12 benachbarten Paaren sind `rising`. E3s erste publizierte
+Überschrift schloss daraus, der Anstieg „existiere nicht"; **das war falsch**, und eine adversariale
+Trennschärfe-Prüfung fand es: Bei n=60 sind drei Paare `rising` (p bis hinunter zu 0,00027), und in
+allen dreien trägt die `taken`-Komponente 100 % der Bewegung, während die rank-Komponente exakt 0 ist.
+Der Anstieg ist real, aber **nicht substanziell** (Median-KI = [0,000, 0,000]). E3 ersetzte außerdem
+E2s Regel `|Δ| ≤ 0,05` — die „flach" mit „klein, aber konsistent" vermengt — durch einen exakten
+gepaarten Vorzeichentest plus ein verteilungsfreies Median-Konfidenzintervall und gibt Richtung und
+Größe als zwei getrennte Werte aus.
 
-Dieser Lauf weist **$0.00** und **26,6 Sekunden** für 300 Stichproben aus. Beides sind Eigenschaften
-der Mess-Harness — keine Aussagen über Kosten oder Geschwindigkeit des Gates.
+**Das alte R3 feuerte auf Rauschen.** Sein Wortlaut war „monotone Abnahme verletzt → *Prüfstandsdefekt*
+→ alles verwerfen", implementiert war aber ein Mittelwertvergleich ohne jede Unsicherheitsbehandlung,
+sodass ±0,005 Seed-Rauschen es in E1 wie in E2 auslöste — beide Runden erschienen im selbstwidersprüch-
+lichen Zustand „gefeuert, aber nichts verworfen". E3 lockerte die Schwelle nicht, sondern richtete das
+Kriterium wieder auf das, was sein Wortlaut sagt, und maß Integrität direkt. Auf denselben 300
+Stichproben feuert das alte R3 und das neue R3a nicht.
 
-[E2-Bericht](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
-[E2-Vorregistrierung](docs/benchmarks/pre-registration-2026-07-26-e2.md)
+**Im Live-Bundle lässt sich die Sortierverzerrung noch nicht belegen.** Nur lesend gemessen, es werden
+ausschließlich Zählungen ausgegeben — Titel, Beschreibungen, Dateinamen und Links verlassen die Messung
+nicht, und `raw/` wird nie geöffnet. Sortiert wird per `<` über `title.toLowerCase()`, also
+**UTF-16-Codeunit-Reihenfolge, keine Locale-Kollation**; ein Titel mit ASCII-Anfang steht damit immer
+vor einem mit Hangul-Anfang. ASCII-beginnende Concepts machen 65,4 % des Bundles aus und belegen 70,6 %
+der Gate-Plätze — bei 26 Concepts liefert der exakte hypergeometrische Test gegen eine stratifizierte
+Nullhypothese jedoch **p = 0,667**. Das ist kein Ergebnis. Ein kleiner Lift darf auch nicht als
+„Sortierung ist harmlos" gelesen werden: Das Gate lädt derzeit **65,4 %** aller Kandidaten, und wo
+alles geladen wird, entscheidet die Sortierung nichts (2 von 6 Kategorien haben null Freiheitsgrade).
+Pro Kategorie spaltet sich die Laderate bereits auf — `decisions`/`projects` 1,000, `patterns` 0,500,
+`references` **0,429**. Ein früherer Entwurf behauptete, eine sinkende Laderate verstärke den Effekt;
+**die eigenen Daten des Benchmarks widerlegen das**, deshalb wurde die Behauptung zurückgezogen.
 
-<!-- okf-benchmark: 2026-07-26-e1 -->
+**Wer einen Platz bekommt, entscheiden Reihenfolge und Zeilenlänge, nicht Relevanz.** Fünf Faktoren
+sind im Code bestätigt: Groß-/Kleinschreibung-sensitive Sortierung der Typ-Sektionsnamen, sodass
+`# Subdirectories` immer vor `# reference` steht (`lib/index-gen.mjs:242`) und verschachtelte Concepts
+an den Anfang ihrer Kategorie zieht; innerhalb einer Sektion die alphabetische Reihenfolge des
+Frontmatter-**`title`** — nicht des Dateinamens, der nur ein Fallback bei Parsing-Fehlern ist
+(`:315`); `status: deprecated` wird nach hinten gesetzt (`:245`); die Kategorie-Reihenfolge nach
+Verzeichnisnamen (`:227`); und die **Zeilenlänge in Bytes**, denn eine nächste Zeile über dem
+Restbudget stoppt diese Kategorie (`lib/gate.mjs:122`). Das Gate enthält keinerlei Bezug auf cwd,
+Aktualität oder die Anfrage.
 
-### E1 — Gate-recall@cap, gemessen für $0.00 (2026-07-26)
+**Der Befund ist die Form, nicht das Niveau.** Von den 20 Fragen überleben 9 auf jeder Stufe mit 0 und
+3 mit 1,0; die übrigen 8 liegen dazwischen — recall ist nicht binär. Das Gate füllt im Round-Robin,
+bis das Budget erschöpft ist; eine Kategorie endet nur deshalb bei 1–3 Zeilen, weil eine einzelne Zeile
+groß ist (200–1.030 B gegen ein Index-Budget von ~6.960 B), sodass die Gesamtaufnahme bei 8–11 Zeilen
+erschöpft ist. `references` bekommt auf jeder Stufe genau eine Zeile, von den 8 dort konzentrierten
+Antworten kann also höchstens eine überleben.
 
-Dieser Lauf kostete **$0.00**, und das ist durch den Lauf bewiesen, nicht bloß behauptet: Die Harness
-setzt vor dem Start des Hooks ein Stub-`claude` an den Anfang von `PATH`, und dieser Stub wurde nie
-ausgeführt (`paidCallTrapTripped: false`). 4 Ebenen × 20 Seeds = **80 Stichproben, 6,2 Sekunden**.
+**Verschachtelungstiefe (Achse A-2).** 25 Concepts fixiert, Inhalte identisch, nur die Pfade tiefer:
 
-Gemessen wird eine einzige Zahl: `recall(N)` — bei N Konzepten im Bundle der Anteil der 20
-eingefrorenen Fragen, deren Antwort-Konzept in dem Index überlebt, den das Gate tatsächlich injiziert.
-
-> **recall ist keine Trefferquote.** Diese Messung beantwortet nur: „Hat das Gate die relevante Zeile
-> geladen?“ Ob „das Modell diese Zeile tatsächlich genutzt hat“, lässt sich ohne bezahlte Aufrufe nicht
-> prüfen. Synthetische Distraktoren liefern nur eine **Obergrenze** der Router-Leistung, der reale
-> recall liegt also darunter.
-
-| N | recall Mittel ± Stdabw | Stichprobe | min–max |
-|---|---|---|---|
-| 24 | 0.400 ± 0.000 | n=20 | 0.40–0.40 |
-| 50 | 0.277 ± 0.038 | n=20 | 0.20–0.35 |
-| 100 | 0.245 ± 0.036 | n=20 | 0.20–0.30 |
-| 200 | 0.248 ± 0.041 | n=20 | 0.15–0.30 |
-
-`n=` und min–max stehen **in derselben Zeile** wie der Mittelwert. Das ist eine Konvention, die
-`test/bench-report.mjs` etabliert hat und die der Smoke-Test erzwingt — damit nie wieder ein Median
-aus zwei Stichproben als Punkt einer Kurve gezeichnet wird.
-
-**R3 hat ausgelöst** (Verletzung der monotonen Abnahme: +0,0025 von N=100 auf N=200), und **R2 hat
-ebenfalls ausgelöst** (`recall(24)` = 0.400 < 0.60). Nach der vorregistrierten Behandlungsregel werden
-**die absoluten recall-Werte deshalb nicht als Grundlage für eine Policy-Entscheidung verwendet.**
-Diese Regel gilt, obwohl das verletzende Delta nur 1/16 der Seed-Standardabweichung dieser Ebene
-beträgt — die Vorregistrierung hat vorab festgeschrieben, dass ein kleines Delta ein Auslösen nicht
-aufhebt. Die Tabelle wird veröffentlicht; entschieden wird damit nichts.
-
-**Der Befund ist die Form, nicht das Niveau.** Von den 20 Fragen überleben 9 auf allen Ebenen mit 0
-(q03, q07, q10, q13–q17, q20) und 3 auf allen Ebenen mit 1.0 (q02, q12, q18); die übrigen 8 liegen
-dazwischen. Pro Zelle (20 Fragen × 4 Ebenen = 80) sind das 48 Nullen, 19 Einsen und 13 Zwischenwerte
-— recall ist nicht binär. Drei der Zwischenfragen steigen mit wachsendem N sogar an (q06: 0 → 0,60 →
-0,65 → 0,70), und dieser Anstieg ist die arithmetische Quelle von R3. Das Gate füllt im Round-Robin,
-läuft die Kategorien aber **wiederholt** durch, bis das Budget erschöpft ist, statt eine Zeile pro
-Kategorie zu nehmen und aufzuhören; dass eine Kategorie bei 1–3 Zeilen endet, liegt allein daran,
-dass eine einzelne Zeile groß ist — Konzept-Zeilen umfassen 200–1.030 B bei einem Index-Budget von
-6.956 B, sodass die gesamte Auswahl nach 8–11 Zeilen aufgebraucht ist. Aus `references` wird auf
-jeder Ebene genau eine Zeile übernommen (bei N=200: 1 von 57 Zeilen), von den 8 dort gebündelten
-Antworten überlebt also höchstens eine. Was diese Plätze belegt, entscheiden nicht Relevanz, sondern
-Sortierung zum Erzeugungszeitpunkt und Zeilenlänge; mindestens fünf Faktoren sind bestätigt:
-**Groß-/Kleinschreibung beachtende** Sortierung der Typ-Abschnittsnamen, sodass `# Subdirectories`
-immer vor `# reference` steht (`lib/index-gen.mjs:242`); innerhalb eines Abschnitts die alphabetische
-Reihenfolge des Frontmatter-**`title`** (`:315`) — nicht des Dateinamens, der nur als Fallback dient,
-wenn das Frontmatter-Parsing fehlschlägt; `status: deprecated` wird im Abschnitt nach hinten gereiht
-(`:245`); die Kategorie-Durchlaufreihenfolge nach Verzeichnisnamen (`:227`); und die **Byte-Länge der
-Zeile** — überschreitet die nächste Zeile das Restbudget, endet diese Kategorie dort
-(`lib/gate.mjs:122`), die Länge der description verändert also das Überleben. Das aktuelle Gate
-enthält null Referenzen auf cwd, Aktualität oder die Anfrage.
-
-**Verschachtelungstiefe (Achse A-2).** 25 Konzepte fest, Inhalte identisch, nur die Pfade tiefer:
-
-| Bedingung | injizierte Konzept-Zeilen | Sub-Domain-Links |
+| Bedingung | injizierte Concept-Zeilen | Subdomain-Links |
 |---|---:|---:|
 | flach | 28 | 0 |
 | 2 Ebenen | 27 | 0 |
 | 3 Ebenen | 26 | 0 |
 | 4 Ebenen | 25 | 0 |
 
-Jede Bedingung wurde **einmal** gemessen (n=1, keine Seed-Wiederholung); in dieser einen Messung ging
-pro Tiefenstufe eine Zeile verloren. Vier Punkte können nicht unterscheiden, ob dieser Rückgang
-linear ist, und Tiefen jenseits von 4 Ebenen wurden nicht gemessen. Gemessen an den gepflanzten
-Konzepten sind 3 Ebenen 25 → 23, **-8,0 %**. Ursache ist Byte-Druck, kein gescheitertes Auflösen der
-Kette: Jedes zusätzliche
-Pfadsegment verlängert jede Zeile, bis eine aus dem Budget gedrängt wird. (28 statt 25, weil
-`ensureBootstrap` in jeder Bedingung dieselben Seed-Konzepte anlegt; der Vergleich zwischen den
-Bedingungen bleibt davon unberührt.)
+Jede Bedingung wurde **einmal** gemessen (n=1, keine Seed-Wiederholung), und in dieser einen Messung
+ging pro Tiefenebene eine Zeile verloren. Vier Punkte können nicht zeigen, ob der Rückgang linear ist,
+und Tiefen jenseits von 4 wurden nicht gemessen. Gegen die gepflanzten Concepts gerechnet sind 3 Ebenen
+25 → 23, **−8,0 %**. Die Ursache ist Byte-Druck, kein fehlgeschlagener Kettendurchlauf: Jedes weitere
+Pfadsegment verlängert jede Zeile, bis eine aus dem Budget gedrängt wird.
+
+**R2 feuert in jeder Runde** (`recall(24)` = 0,400 < 0,60). Nach der präregistrierten Handhabungsregel
+**entscheiden die absoluten recall-Werte nichts** — die Tabellen werden publiziert und steuern keine
+Politik.
+
+**Messdisziplin und wo sie besser wurde.** In E1 kamen die Fixtures erst im **Report**-Commit ins Git —
+die Schwellen standen vorab fest, das Material, das die Zahlen tatsächlich bestimmte, jedoch nicht. Ab
+E2 liegen die Fixtures im Präregistrierungs-Commit, und der Smoke-Test erzwingt über
+`git log --diff-filter=A` eine **strikte** Ungleichung; auf E1s Dateimenge gerichtet erzeugt sie 3
+Verstöße, fängt den realen Unfall also ab, statt ihn zu billigen. Jede Runde publiziert die zum
+Zeitpunkt ihrer Präregistrierung bereits bekannten Werte sowie jede nach der Messung geänderte
+Arithmetik — E3 quantisierte die recall-Deltas auf das 1/20-Raster, weil `0,25 − 0,20 = 0,04999…`
+gegenüber `0,20 − 0,15 = 0,05000…2` dieselbe Ein-Frage-Bewegung auf entgegengesetzte Seiten der
+Äquivalenzgrenze legte; diese Korrektur beseitigte das einzige `indeterminate`-Urteil der Runde, wirkte
+also **gegen** das eigene Argument des Reports, und wird als solche offengelegt. Anschließend zeigte
+die adversariale Prüfung, dass der Guard für die Überlebensidentität nahezu tautologisch war (er rief
+genau die Funktion erneut auf, die er prüfte); der nicht-zirkuläre Ersatz feuerte **beim ersten Lauf** —
+so wurde die obige `front`-Kontamination gefunden. Ein offener Defekt wird getragen statt geraten:
+Derselbe Guard feuert auch bei 8 von 100 unperturbierten Stichproben, die Ursache ist noch nicht
+identifiziert.
 
 ```sh
-node test/gate-recall.mjs     # 4 Ebenen × 20 Seeds, ~6 s, keine bezahlten Aufrufe
-node test/bench-nesting.mjs   # die Achse der Verschachtelungstiefe
-node test/smoke.mjs           # Regressions-Guards
+node test/gate-recall.mjs --e3 --perturb all   # 3 Bedingungen × 5 Stufen × 20 Seeds, ~28 s
+node test/gate-recall.mjs --e3 --perturb all --quote-safe-perturb   # das korrigierte Präfix
+node test/gate-title-distribution.mjs          # Titelverteilung im Live-Bundle (nur lesend)
+node test/gate-recall.mjs --e2 --perturb all   # E2
+node test/gate-recall.mjs                      # E1
+node test/bench-nesting.mjs                    # Achse Verschachtelungstiefe
+node test/smoke.mjs                            # Regressions-Guards
 ```
 
-[E1-Bericht](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
-[E1-Vorregistrierung](docs/benchmarks/pre-registration-2026-07-26-e1.md)
+[E3-Report](docs/benchmarks/gate-recall-2026-07-26-e3.md) ·
+[E3-Präregistrierung](docs/benchmarks/pre-registration-2026-07-26-e3.md) ·
+[E2-Report](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
+[E2-Präregistrierung](docs/benchmarks/pre-registration-2026-07-26-e2.md) ·
+[E1-Report](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
+[E1-Präregistrierung](docs/benchmarks/pre-registration-2026-07-26-e1.md)
 
 ### Bezahlter Ende-zu-Ende-Lauf (v3, 2026-07-16)
 
