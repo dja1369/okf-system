@@ -1,0 +1,84 @@
+{
+  "measuredAt": "2026-07-26",
+  "source": "카테고리별 index.md 줄의 바이트 길이만. 제목·설명 원문 미포함(프라이버시). lineBytes 벡터는 재측정이 아니라 test/fixtures/live-shape-2026-07-25.json에서 **승계**했다(바이트 동일). 2026-07-26에 재측정한 것은 expected 8개 값뿐이다.",
+  "supersedes": "test/fixtures/bench/gate-recall/live-shape-2026-07-26.json (E1. frozenHomePathBytes 36 — 동결 측정이 이뤄진 OKF_HOME이 기본 경로가 아니었다)",
+  "note": "expected는 frozenHeadBytes(686B)를 대입해 정규화한 값이다 — 실제 head는 okfHome 경로 길이에 비례하므로 샌드박스에서 재현할 수 없다. cap - head 는 경로와 무관하므로 정규화가 성립한다: assembledBytes = frozenHeadBytes + indexBytes + 1 + tailBytes. head가 `전역 지식 번들: ${okfHome}`로 경로를 그대로 싣기 때문에 head = (경로 제외 상수 650B) + 경로바이트이고, 따라서 샌드박스 head에서 경로 길이 차이를 빼면 동결 시점 head를 복원할 수 있다: impliedFrozenHead = 실측headBytes − B(샌드박스home) + frozenHomePathBytes. 이 값이 frozenHeadBytes와 어긋나면 게이트 head 리터럴(650B 상수)이 움직였다는 뜻이므로 하니스는 측정을 중단한다.",
+  "knownDrift": "E1의 11B 오차는 해소됐다. E1은 frozenHeadBytes 686 = 650(경로 제외 상수) + 36(경로)이었는데, 기본 라이브 경로 ~/.claude/okf 는 25B이므로 라이브 head는 675B였다. 즉 E1 하니스는 라이브보다 11B(0.16%) 작은 예산에서 쟀다. E2는 frozenHomePathBytes를 25로, frozenHeadBytes를 675로 고쳐 그 오차를 0으로 만든다 — 경로 제외 상수 650B는 실측으로 확인했다(같은 번들을 길이가 다른 두 홈에 지어 head 바이트 차이가 홈 경로 바이트 차이와 정확히 같음을 확인). 그 결과 indexBudgetBytes가 6956 → 6967로 11B 늘고, expected 8개 값은 그 예산에서 재측정한 값이다(E1 값 승계 아님). indexBudgetLines는 92로 변화 없다 — 줄 예산은 경로 길이와 무관하기 때문이다.",
+  "config": {
+    "inject_max_bytes": 9000,
+    "inject_max_lines": 120
+  },
+  "frozenHeadBytes": 675,
+  "frozenHomePathBytes": 25,
+  "frozenHeadLines": 10,
+  "tailBytes": 1358,
+  "tailLines": 18,
+  "indexBudgetBytes": 6967,
+  "indexBudgetLines": 92,
+  "logMd": "# Log\n\n## 2026-07-26\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- pad-a\n- pad-b\n",
+  "categories": [
+    {
+      "dir": "decisions",
+      "lineBytes": [
+        423,
+        413
+      ]
+    },
+    {
+      "dir": "patterns",
+      "lineBytes": [
+        1546,
+        489,
+        660,
+        549,
+        379,
+        466
+      ]
+    },
+    {
+      "dir": "preferences",
+      "lineBytes": [
+        510,
+        206,
+        1207
+      ]
+    },
+    {
+      "dir": "projects",
+      "lineBytes": [
+        503,
+        321,
+        283
+      ]
+    },
+    {
+      "dir": "references",
+      "lineBytes": [
+        602,
+        554,
+        222,
+        202,
+        219,
+        944
+      ]
+    },
+    {
+      "dir": "troubleshooting",
+      "lineBytes": [
+        973,
+        126
+      ]
+    }
+  ],
+  "expected": {
+    "taken": 12,
+    "total": 22,
+    "indexBytes": 6834,
+    "assembledBytes": 8868,
+    "finalBytes": 8868,
+    "truncatedBytes": 0,
+    "leftoverBytes": 125,
+    "cappedLines": 0
+  },
+  "expectedDiffVsE1": "E1(indexBudget 6956) 대비: assembledBytes 8879 → 8868(−11), finalBytes 8879 → 8868(−11), leftoverBytes 114 → 125(+11). 나머지 5개 값(taken 12 / total 22 / indexBytes 6834 / truncatedBytes 0 / cappedLines 0)은 불변이다. 늘어난 11B로는 다음 줄(최소 126B)이 들어가지 못해 taken이 그대로이고, 그래서 11B가 통째로 leftover에 남는다. assembled/final의 −11은 정규화 상수가 frozenHeadBytes 686 → 675로 바뀐 데서 온다(같은 조립을 라이브 head 기준으로 환산한 값이므로 조립 자체가 줄어든 것이 아니다)."
+}

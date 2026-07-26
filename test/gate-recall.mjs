@@ -14,6 +14,14 @@
 // CLI:
 //   node test/gate-recall.mjs [--levels 24,50,100,200] [--seeds 20] [--out <경로>]
 //   node test/gate-recall.mjs --determinism-check
+//
+// **E2(--e2)**: E1이 안고 간 결함 3건을 닫는 회차다. 픽스처 세트를 통째로 갈아끼운다
+// (live-shape-2026-07-27-e2 / gate-recall-e2 / distractors-e2) — E1 산출물은 발행된 기록이므로
+// 바이트 하나도 건드리지 않는다. `--e2`가 없으면 이 파일은 **E1과 완전히 동일하게** 동작한다.
+//   node test/gate-recall.mjs --e2 [--perturb none|front|back|all|목록]
+// `--perturb`는 **정답 concept의 frontmatter title 앞에만** 접두를 붙인다(파일명·경로·본문 불변).
+// E1 §4가 "슬롯을 title 정렬이 정한다"고 진단했으므로, 그 진단의 순수 검정이 된다 — 세 조건의
+// 레벨별 recall이 갈리지 않으면(R6) 진단이 반증된다.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,9 +37,8 @@ import { readConfig } from '../lib/config.mjs';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURE_DIR = path.join(PLUGIN_ROOT, 'test', 'fixtures', 'bench', 'gate-recall');
-const SHAPE_REL = 'test/fixtures/bench/gate-recall/live-shape-2026-07-26.json';
 
-const B = (s) => Buffer.byteLength(s, 'utf8');
+const B =(s) => Buffer.byteLength(s, 'utf8');
 const INDEX_MARKER = '--- index.md ---\n';
 const TAIL_MARKER = '--- 최근 변경 (log.md) ---\n';
 
@@ -48,13 +55,15 @@ function mulberry32(a) {
 
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const out = { levels: null, seeds: 20, outPath: null, determinismCheck: false };
+  const out = { levels: null, seeds: 20, outPath: null, determinismCheck: false, e2: false, perturb: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--levels') out.levels = argv[++i].split(',').map((s) => Number(s.trim()));
     else if (a === '--seeds') out.seeds = Number(argv[++i]);
     else if (a === '--out') out.outPath = argv[++i];
     else if (a === '--determinism-check') out.determinismCheck = true;
+    else if (a === '--e2') out.e2 = true;
+    else if (a === '--perturb') out.perturb = argv[++i];
     else throw new Error(`unknown flag: ${a}`);
   }
   return out;
@@ -64,10 +73,40 @@ function readJson(p) {
   return JSON.parse(fs.readFileSync(p, 'utf8'));
 }
 
+// 인자를 **모듈 로드 시점에** 한 번 판독한다 — 어느 픽스처 세트를 읽을지가 여기서 갈리기 때문이다.
+// E1 경로(플래그 없음)에서는 아래 세 상수가 E1과 정확히 같은 파일을 가리킨다.
+const ARGS = parseArgs(process.argv.slice(2));
+const SHAPE_REL = ARGS.e2
+  ? 'test/fixtures/bench/gate-recall/live-shape-2026-07-27-e2.json'
+  : 'test/fixtures/bench/gate-recall/live-shape-2026-07-26.json';
+const QUESTIONS_REL = ARGS.e2
+  ? 'test/fixtures/bench/gate-recall-e2.json'
+  : 'test/fixtures/bench/gate-recall.json';
+const DISTRACTORS_REL = ARGS.e2 ? 'distractors-e2.json' : 'distractors.json';
+
 const SHAPE = readJson(path.join(PLUGIN_ROOT, SHAPE_REL));
-const QUESTIONS_FILE = readJson(path.join(PLUGIN_ROOT, 'test', 'fixtures', 'bench', 'gate-recall.json'));
+const QUESTIONS_FILE = readJson(path.join(PLUGIN_ROOT, QUESTIONS_REL));
 const QUESTIONS = QUESTIONS_FILE.questions;
-const DISTRACTORS = readJson(path.join(FIXTURE_DIR, 'distractors.json'));
+const DISTRACTORS = readJson(path.join(FIXTURE_DIR, DISTRACTORS_REL));
+
+// filler title 유일성 전략은 **픽스처가 정한다**. E1의 distractors.json에는 이 키가 없으므로
+// E1 경로는 접미 없이 예전 그대로 돈다(중복이 나는 상태 그대로 — 발행된 기록이다).
+const TITLE_SUFFIX_STRATEGY = DISTRACTORS._uniqueness?.strategy ?? null;
+const TITLE_SUFFIX_DIGITS = DISTRACTORS._uniqueness?.minIndexDigits ?? 3;
+
+// 섭동 조건. E1 픽스처에는 titlePerturbation이 없다 — 그때는 `none`만 가능하다.
+const PERTURBATIONS = QUESTIONS_FILE.titlePerturbation?.conditions ?? [{ id: 'none', prefix: '' }];
+function resolvePerturbations(spec) {
+  if (spec == null) return [PERTURBATIONS.find((p) => p.id === 'none') ?? PERTURBATIONS[0]];
+  const ids = spec === 'all' ? PERTURBATIONS.map((p) => p.id) : spec.split(',').map((s) => s.trim());
+  return ids.map((id) => {
+    const found = PERTURBATIONS.find((p) => p.id === id);
+    if (!found) {
+      throw new Error(`unknown perturbation "${id}" — 이 픽스처(${QUESTIONS_REL})가 정의한 조건은 ${PERTURBATIONS.map((p) => p.id).join(',')} 뿐이다`);
+    }
+    return found;
+  });
+}
 
 // ---------------------------------------------------------------------------
 // 바이트 단위 절단/패딩. 코드포인트 경계에서만 자르고 모자란 만큼 ASCII로 채워
@@ -136,8 +175,30 @@ function pickCategory(r) {
 // ---------------------------------------------------------------------------
 // 번들 합성. 반환값의 plantedSet은 **번들 루트 기준 절대경로**(`/decisions/x.md`)로,
 // 게이트가 주입하는 링크 형식과 같은 표기다.
-function buildBundle(root, level, seed) {
-  const home = path.join(root, `L${String(level).padStart(3, '0')}-S${String(seed).padStart(3, '0')}`);
+//
+// 정답 concept의 frontmatter `title` **앞에만** 접두를 붙인다. 파일명·경로·본문은 그대로다 —
+// 그래야 "슬롯을 정하는 것이 title 정렬인가"의 순수 검정이 된다. frontmatter 블록(첫 `---`와
+// 닫는 `---` 사이)의 **첫 `title:` 줄 하나**만 고치고, 값이 이중인용 스칼라면 인용 **안쪽**에
+// 붙인다(밖에 붙이면 YAML이 깨져 title이 파일명 fallback으로 떨어지고, 그러면 이 실험은
+// title이 아니라 파싱 실패를 재게 된다). 대상 줄을 못 찾으면 조용히 넘어가지 않고 던진다.
+function perturbTitle(md, prefix, label) {
+  if (!prefix) return md;
+  const lines = md.split('\n');
+  if (lines[0] !== '---') throw new Error(`no frontmatter to perturb: ${label}`);
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i] === '---') break;
+    if (!lines[i].startsWith('title:')) continue;
+    const value = lines[i].slice('title:'.length).replace(/^ /, '');
+    lines[i] = value.startsWith('"')
+      ? `title: "${prefix}${value.slice(1)}`
+      : `title: ${prefix}${value}`;
+    return lines.join('\n');
+  }
+  throw new Error(`no frontmatter title: line to perturb: ${label}`);
+}
+
+function buildBundle(root, level, seed, perturb = { id: 'none', prefix: '' }) {
+  const home = path.join(root, `L${String(level).padStart(3, '0')}-S${String(seed).padStart(3, '0')}-P${perturb.id}`);
   fs.mkdirSync(home, { recursive: true });
   ensureBootstrap(home);
 
@@ -148,7 +209,8 @@ function buildBundle(root, level, seed) {
   for (const q of QUESTIONS) {
     const dest = path.join(home, q.answerConcept);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.copyFileSync(path.join(PLUGIN_ROOT, q.sourceFile), dest);
+    const src = fs.readFileSync(path.join(PLUGIN_ROOT, q.sourceFile), 'utf8');
+    fs.writeFileSync(dest, perturbTitle(src, perturb.prefix, q.id));
     planted.add(`/${q.answerConcept}`);
   }
 
@@ -159,6 +221,7 @@ function buildBundle(root, level, seed) {
 
   const rand = mulberry32((seed * 0x9e3779b1) >>> 0);
   const cursor = new Map(CATEGORY_WEIGHTS.map((c) => [c.dir, Math.floor(rand() * DISTRACTORS[c.dir].length)]));
+  const fillerTitlesByDir = new Map(CATEGORY_WEIGHTS.map((c) => [c.dir, []]));
   for (let i = 0; i < fillerCount; i++) {
     const dir = pickCategory(rand());
     const pool = DISTRACTORS[dir];
@@ -173,8 +236,15 @@ function buildBundle(root, level, seed) {
     // 주입되는 줄: `* [title](link) - description`
     const overhead = 3 + 2 + B(link) + 4;
     const avail = target - overhead;
-    const titleBytes = Math.max(4, Math.min(B(sanitize(src.title)), Math.floor(avail / 3)));
-    const title = fitBytes(sanitize(src.title), titleBytes);
+    // **title 중복의 원인은 풀 크기가 아니라 절단이다.** floor(avail/3)로 자르면 서로 다른
+    // distractor도 같은 접두만 남아 같아진다(E1: N=200 seed1 patterns 42개 중 distinct 23).
+    // 그래서 풀을 늘리는 대신, filler 인덱스 i에서 **결정적으로** 만든 접미를 절단 **뒤에**
+    // 붙여 유일성을 구성으로 보장한다. i는 번들 안에서 유일하므로 같은 seed는 같은 번들을 낳는다.
+    const suffix = TITLE_SUFFIX_STRATEGY === 'index-suffix' ? ` #f${String(i).padStart(TITLE_SUFFIX_DIGITS, '0')}` : '';
+    const cap = Math.floor(avail / 3);
+    const titleBytes = Math.max(4, Math.min(B(sanitize(src.title)), cap - B(suffix)));
+    const title = fitBytes(sanitize(src.title), titleBytes) + suffix;
+    fillerTitlesByDir.get(dir).push(title);
     const description = fitBytes(sanitize(src.description), Math.max(1, avail - B(title)));
     const abs = path.join(home, dir, name);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
@@ -185,7 +255,24 @@ function buildBundle(root, level, seed) {
 
   fs.writeFileSync(path.join(home, 'log.md'), SHAPE.logMd);
   regenerateIndex(home);
-  return { home, seedCount, fillerCount, planted };
+  return { home, seedCount, fillerCount, planted, fillerTitleStats: titleStats(fillerTitlesByDir) };
+}
+
+// filler title 유일성 **실측**. 선언이 아니라 이 번들에 실제로 쓰인 title들을 센다 —
+// index-gen이 섹션 안에서 정렬하는 키가 바로 이 값이므로, 중복은 두 슬롯을 같은 title 두 벌이
+// 먹는 현상(E1 §6-b 3번)으로 직결된다. 어느 카테고리든 maxDuplicate > 1이면 R7이 발화한다.
+function titleStats(byDir) {
+  const out = {};
+  for (const [dir, titles] of byDir) {
+    const counts = new Map();
+    for (const t of titles) counts.set(t, (counts.get(t) ?? 0) + 1);
+    out[dir] = {
+      fillerTitleCount: titles.length,
+      fillerTitleDistinct: counts.size,
+      maxDuplicate: counts.size ? Math.max(...counts.values()) : 0,
+    };
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -416,12 +503,13 @@ function stdev(xs) {
   return Math.sqrt(xs.reduce((s, x) => s + (x - m) ** 2, 0) / (xs.length - 1));
 }
 
-function runSample(root, level, seed) {
-  const built = buildBundle(root, level, seed);
+function runSample(root, level, seed, perturb = { id: 'none', prefix: '' }) {
+  const built = buildBundle(root, level, seed, perturb);
   const { text, stats, probe, latestLog, injectMaxBytes, injectMaxLines } = measure(built.home);
   const survivors = extractSurvivors(text, LINK_RE);
   const planSurvivors = extractSurvivors(text, PLAN_LINK_RE);
   const hit = QUESTIONS.filter((q) => survivors.has(`/${q.answerConcept}`)).map((q) => q.id);
+  const maxFillerTitleDuplicate = Math.max(0, ...Object.values(built.fillerTitleStats).map((s) => s.maxDuplicate));
   return {
     home: built.home,
     planted: built.planted,
@@ -431,6 +519,7 @@ function runSample(root, level, seed) {
     sample: {
       level,
       seed,
+      perturb: perturb.id,
       seedCount: built.seedCount,
       fillerCount: built.fillerCount,
       recall: hit.length / QUESTIONS.length,
@@ -450,16 +539,21 @@ function runSample(root, level, seed) {
       injectMaxBytes,
       injectMaxLines,
       survivorsAllPlanted: [...survivors].every((rel) => built.planted.has(rel)),
+      fillerTitleStats: built.fillerTitleStats,
+      maxFillerTitleDuplicate,
     },
   };
 }
 
-function determinismCheck(root) {
-  const LEVEL = 24, SEED = 7, RUNS = 10;
+function determinismCheck(root, perturb) {
+  // E2는 filler가 실제로 깔리는 레벨에서 잰다. 레벨 24는 정답 20 + 시드 4라 filler가 0개이고,
+  // 그러면 이번 회차가 새로 넣은 filler title 접미 로직이 검사 대상에서 통째로 빠진다.
+  // E1 경로의 (24, 7)은 발행된 값이므로 그대로 둔다.
+  const LEVEL = ARGS.e2 ? 100 : 24, SEED = 7, RUNS = 10;
   const digests = [];
   const survivorSigs = [];
   for (let i = 0; i < RUNS; i++) {
-    const r = runSample(root, LEVEL, SEED);
+    const r = runSample(root, LEVEL, SEED, perturb);
     digests.push(crypto.createHash('sha256').update(indexSection(r.text)).digest('hex'));
     survivorSigs.push(JSON.stringify([...r.survivors].sort()));
     fs.rmSync(r.home, { recursive: true, force: true });
@@ -467,7 +561,7 @@ function determinismCheck(root) {
   const identical = digests.every((d) => d === digests[0]);
   const survivorsIdentical = survivorSigs.every((s) => s === survivorSigs[0]);
   return {
-    level: LEVEL, seed: SEED, runs: RUNS,
+    level: LEVEL, seed: SEED, perturb: perturb.id, runs: RUNS,
     identicalDigests: `${digests.filter((d) => d === digests[0]).length}/${RUNS}`,
     identicalSurvivorSets: `${survivorSigs.filter((s) => s === survivorSigs[0]).length}/${RUNS}`,
     digest: digests[0],
@@ -477,8 +571,9 @@ function determinismCheck(root) {
 
 // ---------------------------------------------------------------------------
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = ARGS;
   const levels = args.levels ?? QUESTIONS_FILE.levels;
+  const perturbations = resolvePerturbations(args.perturb);
   const startedAt = new Date();
 
   // 루트 tmp는 **한 번만** 만든다. 접두 `okf-bench-`는 필수 — lib/paths.mjs의
@@ -488,7 +583,7 @@ function main() {
 
   try {
     if (args.determinismCheck) {
-      const result = determinismCheck(root);
+      const result = determinismCheck(root, perturbations[0]);
       console.log(JSON.stringify(result, null, 2));
       process.exitCode = result.pass ? 0 : 1;
       return;
@@ -498,37 +593,45 @@ function main() {
     const samples = [];
     const crossChecks = [];
 
-    for (const level of levels) {
-      for (let seed = 1; seed <= args.seeds; seed++) {
-        const r = runSample(root, level, seed);
-        if (seed === 1) {
-          crossChecks.push({ level, seed, ...crossCheckWithHook(r.home, r.survivors, r.latestLog) });
+    for (const perturb of perturbations) {
+      for (const level of levels) {
+        for (let seed = 1; seed <= args.seeds; seed++) {
+          const r = runSample(root, level, seed, perturb);
+          if (seed === 1) {
+            crossChecks.push({ level, seed, perturb: perturb.id, ...crossCheckWithHook(r.home, r.survivors, r.latestLog) });
+          }
+          samples.push(r.sample);
+          // **측정 직후 삭제.** 스모크의 sandbox 미정리 관례에 대한 의도적 예외다 —
+          // 200 concept × 20 시드 × 4 레벨이면 홈 80개에 concept 파일 ~9,000개와 그만큼의
+          // git 오브젝트가 tmpdir에 남는다. 재현은 (level, seed)로 언제든 다시 조립된다.
+          fs.rmSync(r.home, { recursive: true, force: true });
         }
-        samples.push(r.sample);
-        // **측정 직후 삭제.** 스모크의 sandbox 미정리 관례에 대한 의도적 예외다 —
-        // 200 concept × 20 시드 × 4 레벨이면 홈 80개에 concept 파일 ~9,000개와 그만큼의
-        // git 오브젝트가 tmpdir에 남는다. 재현은 (level, seed)로 언제든 다시 조립된다.
-        fs.rmSync(r.home, { recursive: true, force: true });
       }
     }
 
-    const byLevel = levels.map((level) => {
-      const rs = samples.filter((s) => s.level === level).map((s) => s.recall);
-      const cwdIds = new Set(QUESTIONS.filter((q) => q.cwdIndependent).map((q) => q.id));
-      const cwdRs = samples.filter((s) => s.level === level)
-        .map((s) => s.hitIds.filter((id) => cwdIds.has(id)).length / cwdIds.size);
-      return {
-        level,
-        n: rs.length,
-        recallMean: mean(rs),
-        recallStdev: stdev(rs),
-        recallMin: Math.min(...rs),
-        recallMax: Math.max(...rs),
-        cwdIndependentRecallMean: mean(cwdRs),
-        cwdIndependentRecallStdev: stdev(cwdRs),
-        cwdIndependentN: cwdIds.size,
-      };
-    });
+    // 집계 단위는 (섭동 조건, 레벨)이다. 조건이 하나뿐이면(=E1 경로) 배열의 길이·순서·값이
+    // E1과 같고 `perturb: "none"` 필드만 늘어난다.
+    const cwdIds = new Set(QUESTIONS.filter((q) => q.cwdIndependent).map((q) => q.id));
+    const byLevel = [];
+    for (const perturb of perturbations) {
+      for (const level of levels) {
+        const rows = samples.filter((s) => s.perturb === perturb.id && s.level === level);
+        const rs = rows.map((s) => s.recall);
+        const cwdRs = rows.map((s) => s.hitIds.filter((id) => cwdIds.has(id)).length / cwdIds.size);
+        byLevel.push({
+          perturb: perturb.id,
+          level,
+          n: rs.length,
+          recallMean: mean(rs),
+          recallStdev: stdev(rs),
+          recallMin: Math.min(...rs),
+          recallMax: Math.max(...rs),
+          cwdIndependentRecallMean: mean(cwdRs),
+          cwdIndependentRecallStdev: stdev(cwdRs),
+          cwdIndependentN: cwdIds.size,
+        });
+      }
+    }
 
     const perQuestion = QUESTIONS.map((q) => ({
       id: q.id,
@@ -541,25 +644,78 @@ function main() {
       })),
     }));
 
-    const at = (level) => byLevel.find((b) => b.level === level)?.recallMean ?? null;
+    // R1·R2·R4는 **첫 조건**(기본 none)에서 판정한다 — E1이 그 조건에서 발행한 임계이기 때문이다.
+    const primary = byLevel.filter((b) => b.perturb === perturbations[0].id);
+    const at = (level) => primary.find((b) => b.level === level)?.recallMean ?? null;
+    // 단조성은 **조건 안에서** 본다. 조건 경계를 넘어 비교하면 섭동 차이가 레벨 차이로 둔갑한다.
     const monotonicViolations = [];
-    for (let i = 1; i < byLevel.length; i++) {
-      if (byLevel[i].recallMean > byLevel[i - 1].recallMean) {
-        monotonicViolations.push({
-          from: byLevel[i - 1].level, to: byLevel[i].level,
-          means: [byLevel[i - 1].recallMean, byLevel[i].recallMean],
-          delta: byLevel[i].recallMean - byLevel[i - 1].recallMean,
-          stdevAtTo: byLevel[i].recallStdev,
-        });
+    for (const perturb of perturbations) {
+      const seq = byLevel.filter((b) => b.perturb === perturb.id);
+      for (let i = 1; i < seq.length; i++) {
+        if (seq[i].recallMean > seq[i - 1].recallMean) {
+          monotonicViolations.push({
+            perturb: perturb.id,
+            from: seq[i - 1].level, to: seq[i].level,
+            means: [seq[i - 1].recallMean, seq[i].recallMean],
+            delta: seq[i].recallMean - seq[i - 1].recallMean,
+            stdevAtTo: seq[i].recallStdev,
+          });
+        }
       }
     }
-    const worstStdev = byLevel.reduce((a, b) => (b.recallStdev > a.recallStdev ? b : a), byLevel[0]);
+    const worstStdev = primary.reduce((a, b) => (b.recallStdev > a.recallStdev ? b : a), primary[0]);
+
+    // R6 — title 섭동 민감도. E1 §4의 진단("슬롯을 title 정렬이 정한다")의 순수 검정이다.
+    // 같은 레벨에서 섭동 3조건의 recall이 **모든 레벨에서** 0.05 미만으로만 갈리면 그 진단은
+    // 반증된다. 조건이 하나뿐인 실행은 이 값을 계산할 수 없으므로 fired를 null로 남긴다 —
+    // false(=반증 안 됨)로 적으면 재지 않은 것을 잰 것처럼 보이게 된다.
+    const R6_THRESHOLD = 0.05;
+    const spreads = levels.map((level) => {
+      const ms = byLevel.filter((b) => b.level === level).map((b) => b.recallMean);
+      return { level, recallByPerturb: Object.fromEntries(byLevel.filter((b) => b.level === level).map((b) => [b.perturb, b.recallMean])), spread: Math.max(...ms) - Math.min(...ms) };
+    });
+    const r6Computable = perturbations.length >= 2;
+
+    // R7 — filler title 중복. 어느 샘플의 어느 카테고리에서든 maxDuplicate > 1이면 발화한다.
+    const dupSamples = samples.filter((s) => s.maxFillerTitleDuplicate > 1);
+    const worstDup = dupSamples.reduce((a, s) => (a === null || s.maxFillerTitleDuplicate > a.maxFillerTitleDuplicate ? s : a), null);
+
     const refutation = {
       R1: { fired: at(50) !== null && at(50) >= 0.90, basis: { 'recall(50)': at(50), threshold: 0.90 }, meaning: '라우팅은 병목이 아니다 → I2를 v0.3에서도 착수하지 않는다' },
       R2: { fired: at(24) !== null && at(24) < 0.60, basis: { 'recall(24)': at(24), threshold: 0.60 }, meaning: '실사용 규모에서 이미 실패 중' },
       R3: { fired: monotonicViolations.length > 0, basis: { violations: monotonicViolations }, meaning: '단조 감소 위반 → 하니스 결함, 전 결과 폐기' },
-      R4: { fired: worstStdev ? worstStdev.recallStdev > 0.25 : false, basis: { worstLevel: worstStdev?.level ?? null, stdev: worstStdev?.recallStdev ?? null, threshold: 0.25 }, meaning: 'filler 명명에 지배됨, 정책 결론 금지' },
+      R4: {
+        fired: worstStdev ? worstStdev.recallStdev > 0.25 : false,
+        retired: true,
+        basis: {
+          worstLevel: worstStdev?.level ?? null,
+          stdev: worstStdev?.recallStdev ?? null,
+          threshold: 0.25,
+          retiredBecause: '시드 분산은 정답 title rank가 시드마다 고정이라 이 실패 모드를 탐지할 수 없다 — R6이 대체한다',
+        },
+        meaning: 'filler 명명에 지배됨, 정책 결론 금지 (은퇴 — 판정을 정책 근거로 쓰지 않는다)',
+      },
       R5: { fired: calibration.mismatches.length > 0, basis: { mismatches: calibration.mismatches }, meaning: '캘리브레이션 불일치 → 전 결과 무효' },
+      R6: {
+        fired: r6Computable ? spreads.every((s) => s.spread < R6_THRESHOLD) : null,
+        computable: r6Computable,
+        basis: {
+          conditions: perturbations.map((p) => p.id),
+          threshold: R6_THRESHOLD,
+          spreadByLevel: spreads,
+          ...(r6Computable ? {} : { notComputableBecause: `섭동 조건이 ${perturbations.length}개뿐이다 — R6은 같은 레벨에서 3조건을 비교한다(--perturb all)` }),
+        },
+        meaning: '모든 레벨에서 섭동 간 recall 차이가 0.05 미만 → E1 §4의 "슬롯을 title 정렬이 정한다"가 반증된다',
+      },
+      R7: {
+        fired: dupSamples.length > 0,
+        basis: {
+          samplesWithDuplicate: dupSamples.length,
+          totalSamples: samples.length,
+          worst: worstDup ? { level: worstDup.level, seed: worstDup.seed, perturb: worstDup.perturb, maxDuplicate: worstDup.maxFillerTitleDuplicate, fillerTitleStats: worstDup.fillerTitleStats } : null,
+        },
+        meaning: 'filler title이 중복 생성됐다 — 중복은 정렬상 인접해 한 카테고리의 두 슬롯을 같은 title 두 벌이 먹는다(실번들에 없는 인공물)',
+      },
     };
 
     const pluginVersion = readJson(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json')).version;
@@ -575,9 +731,13 @@ function main() {
         commit,
         levels,
         seeds: args.seeds,
-        questionSet: 'test/fixtures/bench/gate-recall.json',
+        round: args.e2 ? 'E2' : 'E1',
+        perturbations: perturbations.map((p) => ({ id: p.id, prefix: p.prefix })),
+        questionSet: QUESTIONS_REL,
         questionSetFrozenAt: QUESTIONS_FILE.frozenAt,
         shapeFixture: SHAPE_REL,
+        distractorSet: `test/fixtures/bench/gate-recall/${DISTRACTORS_REL}`,
+        fillerTitleUniquenessStrategy: TITLE_SUFFIX_STRATEGY,
         // PATH 트랩이 **깔려 있었는가**, 그리고 **발동했는가**. 둘 다 상수 선언이 아니라
         // 파일시스템 실측이다 — 스텁이 없으면 tripped=false는 아무것도 증명하지 않으므로
         // 소비자(test/smoke.mjs 단언 8)는 installed=true를 AND로 요구한다. 실행이 다 끝난
@@ -607,10 +767,12 @@ function main() {
     fs.writeFileSync(outPath, `${JSON.stringify(out, null, 2)}\n`);
 
     for (const b of byLevel) {
-      console.log(`N=${b.level}  recall ${b.recallMean.toFixed(3)} ± ${b.recallStdev.toFixed(3)}  (n=${b.n}, ${b.recallMin.toFixed(2)}–${b.recallMax.toFixed(2)})  cwdIndep ${b.cwdIndependentRecallMean.toFixed(3)}`);
+      const tag = perturbations.length > 1 ? `[${b.perturb}] ` : '';
+      console.log(`${tag}N=${b.level}  recall ${b.recallMean.toFixed(3)} ± ${b.recallStdev.toFixed(3)}  (n=${b.n}, ${b.recallMin.toFixed(2)}–${b.recallMax.toFixed(2)})  cwdIndep ${b.cwdIndependentRecallMean.toFixed(3)}`);
     }
     console.log(`calibration mismatches: ${calibration.mismatches.length}`);
-    console.log(`R1..R5 fired: ${Object.entries(refutation).filter(([, v]) => v.fired).map(([k]) => k).join(',') || 'none'}`);
+    console.log(`R1..R7 fired: ${Object.entries(refutation).filter(([, v]) => v.fired === true).map(([k]) => k).join(',') || 'none'}${refutation.R6.fired === null ? '  (R6 계산 불가 — 조건 1개)' : ''}`);
+    console.log(`filler title maxDuplicate across samples: ${Math.max(0, ...samples.map((s) => s.maxFillerTitleDuplicate))}`);
     console.log(`paidCallTrap: installed=${out.meta.paidCallTrapInstalled} tripped=${out.meta.paidCallTrapTripped}`);
     console.log(`hook cross-check byte-identical at hook config: ${crossChecks.filter((c) => c.byteIdenticalAtHookConfig).length}/${crossChecks.length}`);
     console.log(`plan-regex (\`- [\`) survivors across all samples: ${out.meta.planRegexSurvivorTotal}`);

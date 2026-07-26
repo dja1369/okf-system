@@ -931,6 +931,59 @@ console.log('\n=== gate module + recall harness ===');
       reportOk,
       `reports=${JSON.stringify(reportNames)} byLevel=${JSON.stringify(reduced.byLevel.map((b) => ({ level: b.level, n: b.n, min: b.recallMin, max: b.recallMax })))}`);
   }
+
+  // --- 14. E2 픽스처 선행성 -----------------------------------------------
+  // E1의 가장 큰 구멍(리포트 §6-b 5번): 질문·distractor·형상 픽스처가 **사전등록 커밋이 아니라
+  // 리포트 커밋에서 처음 git에 등장**했다. 임계만 선행 고정됐고 결과를 실제로 결정한 재료는
+  // 그렇지 않았다는 뜻이다. 12·13번은 문서 두 개의 순서만 보므로 이 구멍을 보지 못한다.
+  //
+  // 여기서 기계로 막는다: **E2 픽스처 3개가 처음 추가된 커밋이 E2 리포트가 처음 추가된 커밋보다
+  // 앞서야 한다.** 사전등록서와 같은 커밋인 것은 허용이고 오히려 목표다 — 위반은 "리포트와
+  // 같은(또는 그보다 뒤인) 커밋에서 픽스처가 처음 등장하는 것"이다. 등호를 왜 통과로 두지
+  // 않는지는 strictlyBefore의 주석을 보라.
+  {
+    const E2_FIXTURES = [
+      'test/fixtures/bench/gate-recall-e2.json',
+      'test/fixtures/bench/gate-recall/live-shape-2026-07-27-e2.json',
+      'test/fixtures/bench/gate-recall/distractors-e2.json',
+    ];
+    // lib/git.mjs의 `git`을 가리지 않도록 이름을 따로 둔다.
+    const gitOut = (args) => {
+      const r = spawnSync('git', args, { cwd: PLUGIN_ROOT, encoding: 'utf8' });
+      return r.status === 0 ? (r.stdout ?? '') : null;
+    };
+    // 파일이 **처음 추가된** 커밋. `git log`는 최신부터 내므로 마지막 줄이 최초 추가다.
+    const firstAddCommit = (rel) => {
+      const out = gitOut(['log', '--diff-filter=A', '--format=%H', '--', rel]);
+      const lines = (out ?? '').trim().split('\n').filter(Boolean);
+      return lines.length ? lines[lines.length - 1] : null;
+    };
+    // a가 b보다 **엄격히** 앞서는가.
+    //
+    // 리포트에 대해서는 "같은 커밋"을 통과로 두면 안 된다. E1이 정확히 그 상태였다 — 픽스처
+    // 3개와 리포트가 전부 커밋 b842c24에 함께 들어왔다(실측). 등호를 허용하면 이 단언은 자기가
+    // 막으려는 바로 그 사고에서 초록이 되어 아무것도 증명하지 못한다. 픽스처가 **사전등록서와**
+    // 같은 커밋인 것은 여전히 허용이고 목표다 — 여기서 비교하는 상대는 리포트뿐이기 때문이다.
+    const strictlyBefore = (a, b) => a !== b
+      && spawnSync('git', ['merge-base', '--is-ancestor', a, b], { cwd: PLUGIN_ROOT }).status === 0;
+
+    const missingFiles = E2_FIXTURES.filter((rel) => !fs.existsSync(path.join(PLUGIN_ROOT, rel)));
+    const reportE2 = fs.readdirSync(BENCH_DOCS).filter((f) => /^gate-recall-.*e2\.md$/.test(f));
+    const fixtureCommits = Object.fromEntries(E2_FIXTURES.map((rel) => [rel, firstAddCommit(rel)]));
+    const reportCommits = Object.fromEntries(reportE2.map((f) => [f, firstAddCommit(`docs/benchmarks/${f}`)]));
+    // 리포트가 커밋되지 않았으면(=아직 발행 전이면) 순서를 판정할 대상이 없다. 그 경우에도
+    // 검사할 사실은 남는다 — 픽스처 파일 3개가 실재하는가.
+    const publishedReports = Object.entries(reportCommits).filter(([, c]) => c !== null);
+    const violations = [];
+    for (const [rel, fc] of Object.entries(fixtureCommits)) {
+      for (const [report, rc] of publishedReports) {
+        if (fc === null || !strictlyBefore(fc, rc)) violations.push(`${rel}(${fc ?? '미커밋'}) !< ${report}(${rc})`);
+      }
+    }
+    ok(`E2 fixtures enter git no later than the E2 report${publishedReports.length ? '' : ' [리포트 미발행 — 픽스처 3종의 실재만 검사]'}`,
+      missingFiles.length === 0 && violations.length === 0,
+      `missing=${JSON.stringify(missingFiles)} fixtureCommits=${JSON.stringify(fixtureCommits)} reports=${JSON.stringify(reportCommits)} violations=${JSON.stringify(violations)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
