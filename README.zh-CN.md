@@ -47,6 +47,7 @@ claude plugin install okf@okf-marketplace
 | `/okf:okf-index` | 查看分类、concept 标题和最近变更 |
 | `/okf:okf-visualize` | 仅显示 OKF concept 与 concept 之间的关系 |
 | `/okf:okf-analysis [路径]` | 分析代码库，并只显示相关 OKF concept |
+| `/okf:okf-deprecate <目标>` | 退役一个 concept —— 文件和链接保留，gate 不再注入它 |
 
 `visualize` 不扫描代码库。`analysis` 会拒绝不存在或非目录的路径，显示 truncated、被隐藏的无关 concept，以及各语言的文件/声明/internal edge 统计。两者生成的 HTML 均自包含，不使用外部 CDN，也不在运行时联网。
 
@@ -213,7 +214,7 @@ fallback analyzer 是确定性的、零依赖并采取保守连接；“发现�
 
 ## 配置和删除
 
-使用 `~/.claude/okf/.okf/config.md` 或 `/okf:okf-config`。主要默认值：`enabled: true`（收集、gate 和 batch 的总开关）、`batch_interval_hours: 1`、`batch_max_digest_kb: 600`、`batch_digest_cap_kb: 150`、`sweep_min_idle_minutes: 60`（最后一次活动后需空闲这么久才会被收集，`0` 表示立即收集）、`remove_candidate_ttl_days: 30`、`inject_max_lines` / `inject_max_bytes` 为 `120` / `9000`。未知或无效值回退到安全默认值。
+使用 `~/.claude/okf/.okf/config.md` 或 `/okf:okf-config`。主要默认值：`enabled: true`（收集、gate 和 batch 的总开关）、`batch_interval_hours: 1`、`batch_max_digest_kb: 600`、`batch_digest_cap_kb: 150`、`sweep_min_idle_minutes: 60`（最后一次活动后需空闲这么久才会被收集，`0` 表示立即收集）、`remove_candidate_ttl_days: 30`、`inject_max_lines` / `inject_max_bytes` 为 `120` / `9000`、`sweep_backfill_days: 0`（sweep 可以回溯到安装标记**之前**多少天；默认 `0` 表示只收集安装之后的对话；硬性的 7 天窗口仍是上限）、`batch_max_usd_per_day: 0`（每日 LLM 支出上限，单位 USD；`0` 表示不限，且为默认值 —— 无论是否设上限，费用始终会被记录并展示；这是 best-effort 的护栏，累计值存放在 `.okf/last-batch.json`）。未知或无效值回退到安全默认值。
 
 ```sh
 claude plugin uninstall okf

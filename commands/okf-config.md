@@ -23,6 +23,16 @@ OKF 설정 파일 `<OKF_HOME>/.okf/config.md`를 다룬다. `<OKF_HOME>`은 `/ok
 - `remove_candidate_ttl_days`: `_remove_candidate/`에 보관 후 자동 삭제까지의 일수
 - `inject_max_lines` / `inject_max_bytes`: 세션 시작 시 주입되는 인덱스의 줄/바이트 상한
 - `claude_bin` / `node_bin`: PATH 탐색이 실패할 때 쓸 절대경로 override
+- `sweep_backfill_days`: 설치 시각 **이전**의 대화를 며칠까지 거슬러 수집할지. 기본 `0`은
+  "설치 이후 대화만". 설치 직후 첫 배치가 지난 7일치 전 프로젝트 대화를 통째로 LLM에
+  태우는 것을 막는다. `SWEEP_LOOKBACK_DAYS`(7일) 창은 그대로 남으므로 7을 넘겨도 추가
+  효과가 없다. 이 릴리스 이전부터 쓰던 번들에서는 하한이 기존 7일 창을 좁히지 않는다.
+- `batch_max_usd_per_day`: 배치의 하루 LLM 지출 상한(USD). **기본 `0`은 무제한**이며 비용은
+  그와 무관하게 항상 기록·표시된다. 0보다 크면 그 날 누계가 상한에 닿은 회차부터 유료 호출
+  없이 종료하고, 대기 중인 세션은 `raw/`에 그대로 남아 다음 날 처리된다.
+  **하드 과금 차단이 아니라 best-effort 가드다** — 이 상한은 `.okf/last-batch.json`의 당일
+  누계에 근거하므로 그 파일이 지워지거나 손상되면 누계가 0에서 다시 시작하고, 배치가
+  SIGKILL로 죽으면 그 회차 지출은 누계에 잡히지 않는다.
 
 ## 2. 값 변경
 
@@ -34,7 +44,8 @@ OKF 설정 파일 `<OKF_HOME>/.okf/config.md`를 다룬다. `<OKF_HOME>`은 `/ok
 - 안전 범위를 지켜라: `batch_interval_hours`는 0~8760, `batch_max_digest_kb`는 1~102400,
   `batch_max_sessions`는 1~1000, `batch_digest_cap_kb`는 1~10240, `sweep_min_idle_minutes`는 0~10080,
   `remove_candidate_ttl_days`는 1~3650, `inject_max_lines`는 20~1000,
-  `inject_max_bytes`는 1024~9000이다. 범위를 벗어나거나 타입이 틀린 값은 다음 실행에서
+  `inject_max_bytes`는 1024~9000, `batch_max_usd_per_day`는 0~1000(소수 허용, 0=무제한),
+  `sweep_backfill_days`는 0~30 정수다. 범위를 벗어나거나 타입이 틀린 값은 다음 실행에서
   안전한 기본값으로 대체되고 상태/로그에는 키 이름과 오류 코드만 남는다.
 - `batch_model`은 영문자/숫자로 시작하고 영문자, 숫자, `.`, `_`, `:`, `/`, `-`만 쓸 수 있다.
   `claude_bin`과 `node_bin`에는 Windows 셸 메타문자(`" & | < > ^ % !`)나 줄바꿈을 넣지 마라.

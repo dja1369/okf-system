@@ -2,7 +2,7 @@
 
 **Turn decisions from past Claude Code sessions into a local, reviewable knowledge bundle that future sessions can actually use.**
 
-![MIT license](https://img.shields.io/badge/license-MIT-blue) ![OKF v0.1](https://img.shields.io/badge/OKF-v0.1%20Draft-4ecdc4) ![Node only](https://img.shields.io/badge/runtime-Node%20only-5c6bc0) ![no npm install](https://img.shields.io/badge/dependencies-vendored-66bb6a)
+![MIT license](https://img.shields.io/badge/license-MIT-blue) ![OKF v0.2](https://img.shields.io/badge/OKF-v0.2-4ecdc4) ![Node only](https://img.shields.io/badge/runtime-Node%20only-5c6bc0) ![no npm install](https://img.shields.io/badge/dependencies-vendored-66bb6a)
 
 **English** · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português](README.pt-BR.md)
 
@@ -51,6 +51,7 @@ Plugin commands always require the `okf:` namespace.
 | `/okf:okf-index` | List categories, concept titles, and recent changes |
 | `/okf:okf-visualize` | Render OKF concepts and concept-to-concept links only |
 | `/okf:okf-analysis [path]` | Analyze a repository and show code plus only related OKF concepts |
+| `/okf:okf-deprecate <target>` | Retire a concept — the file and its links stay, the gate stops injecting it |
 
 `visualize` answers “what does my bundle know?” and never scans a repository. `analysis` answers “what is this codebase, given what my bundle knows?” It rejects missing/non-directory paths, reports truncated analysis and hidden unrelated concepts, and exposes language-level file/declaration/internal-edge counts.
 
@@ -315,6 +316,8 @@ Edit `~/.claude/okf/.okf/config.md` or use `/okf:okf-config`. Unknown or invalid
 | `batch_digest_cap_kb` | `150` | Per-session LLM-facing digest cap; raw stays complete |
 | `remove_candidate_ttl_days` | `30` | Retention before processed raw deletion |
 | `inject_max_lines` / `inject_max_bytes` | `120` / `9000` | Inline gate limits below Claude Code’s 10,000-character threshold |
+| `sweep_backfill_days` | `0` | Days *before* the install marker that sweep may reach back; `0` (default) = conversations recorded after you installed OKF only. The hard 7-day window still caps it. |
+| `batch_max_usd_per_day` | `0` | Daily LLM spend cap in USD; `0` = unlimited (default). Spend is recorded and shown either way. Best-effort only — the tally lives in `.okf/last-batch.json`. |
 
 ## Removal
 

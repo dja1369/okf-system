@@ -65,10 +65,21 @@ function build() {
   } else {
     try {
       const last = JSON.parse(fs.readFileSync(p.lastBatch, 'utf8'));
-      if (last.lastResult && last.lastResult !== 'ok' && last.lastResult !== 'noop') {
+      // pre-batch lint 실패는 배치를 영구 정지시킨다 — 사용자가 고치기 전까지 매 회차 같은
+      // 지점에서 멈춘다. 일반 실패와 구분해 표시한다. 이미 파싱한 JSON의 필드 하나이므로
+      // 추가 I/O는 0이다. **파일명은 상태줄에 노출하지 않는다**(전사 파생 경로일 수 있다).
+      if (last.blocked?.kind === 'pre-batch-lint') {
+        parts.push('blocked: lint');
+      } else if (last.lastResult && last.lastResult !== 'ok' && last.lastResult !== 'noop') {
         parts.push(`last: ${last.lastResult}`); // 실패는 조용히 넘기지 않는다
       } else if (typeof last.lastRunEpochMs === 'number') {
         parts.push(relTime(last.lastRunEpochMs));
+      }
+      // 오늘 지출. 이미 파싱한 JSON의 필드 두 개라 추가 I/O는 0이다. 날짜 비교 규칙은
+      // bin/batch.mjs의 localDateString과 같아야 한다(toLocaleDateString('en-CA')).
+      if (last.spendDate === new Date().toLocaleDateString('en-CA')
+        && Number.isFinite(last.spendTodayUsd) && last.spendTodayUsd > 0) {
+        parts.push(`$${last.spendTodayUsd.toFixed(2)} today`);
       }
     } catch {
       parts.push('no batch yet');

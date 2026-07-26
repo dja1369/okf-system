@@ -25,12 +25,39 @@ repository: inspect, diff, back up, or remove it with normal tools.
 /okf:okf-index               list categories, concepts, and recent changes
 /okf:okf-visualize           render bundle concepts only
 /okf:okf-analysis [path]     analyze code and show only related bundle concepts
+/okf:okf-deprecate <target>  retire a concept: keeps the file and its links, drops it from the gate
 ```
 
 `okf-visualize` never scans a repository. `okf-analysis` defaults to the current directory,
 rejects missing or non-directory paths, and reports language file/declaration/internal-edge
 coverage, truncation, oversized files, and hidden unrelated concepts. Its HTML output is
 self-contained and makes no CDN or runtime network requests.
+
+## Retiring a concept
+
+When a concept stops being useful — superseded, or noise that turned out not to be knowledge —
+retire it instead of deleting it:
+
+```
+/okf:okf-deprecate troubleshooting/obsolete-thing.md
+```
+
+This sets `status: deprecated` in the file's frontmatter. **Nothing is deleted or moved.** The
+concept keeps its line in the category `index.md` (prefixed with `[deprecated]` and sorted to the
+end) so existing links still resolve, and the session gate stops injecting it — the budget it was
+occupying goes back to live concepts. `--restore` puts it back.
+
+The statusline's concept count includes retired files, while `index.md` counts only live ones.
+If the two numbers differ, that difference is your retired count.
+
+If your bundle predates this release it may hold tombstone concepts — `# 리다이렉트` stubs left
+behind by an earlier cleanup, which still occupy gate slots. There is no automatic migration for
+them (a hardcoded file list would be dead weight in every other user's bundle). Retire them by
+hand once:
+
+```
+/okf:okf-deprecate <the tombstone's path>
+```
 
 ## Optional statusline
 
@@ -52,6 +79,8 @@ The main controls in `.okf/config.md` are:
 | `capture_exclude_cwd` | `[]` | Directories whose sessions are never collected (matched against each session's cwd) |
 | `sweep_min_idle_minutes` | `60` | Idle time after the last activity before a conversation is collected; `0` collects immediately |
 | `inject_max_lines` / `inject_max_bytes` | `120` / `9000` | Inline gate limits |
+| `sweep_backfill_days` | `0` | How many days *before* the install marker sweep may reach back. `0` (default) means "conversations from after you installed OKF only" — with one edge: a conversation that *started* before the install and was still active afterwards is collected whole, because the cutoff compares the transcript's last-activity time, not per-message timestamps. Exclude that working directory with `capture_exclude_cwd` if that matters — it stops the first batch after install from shipping a week of every project's history to the LLM. The hard 7-day `SWEEP_LOOKBACK_DAYS` window still applies, so values above 7 add nothing. Bundles that predate this release keep their full 7-day window. |
+| `batch_max_usd_per_day` | `0` | Daily LLM spend cap in USD; `0` means unlimited (the default). Cost is always recorded and shown regardless. Best-effort only: the running total lives in `.okf/last-batch.json`, so deleting that file restarts the tally at zero, and a SIGKILLed batch never records its spend. |
 
 Files above 512 KiB remain visible in analysis but are marked unanalyzed. Repository analysis
 stops at 2,000 files and reports `truncated: true`. The fallback parser is conservative and

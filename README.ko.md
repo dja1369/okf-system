@@ -2,7 +2,7 @@
 
 **지난 Claude Code 세션의 결정을 로컬의 검토 가능한 지식 번들로 만들고, 다음 세션이 실제로 찾아 쓰게 합니다.**
 
-![MIT license](https://img.shields.io/badge/license-MIT-blue) ![OKF v0.1](https://img.shields.io/badge/OKF-v0.1%20Draft-4ecdc4) ![Node only](https://img.shields.io/badge/runtime-Node%20only-5c6bc0) ![no npm install](https://img.shields.io/badge/dependencies-vendored-66bb6a)
+![MIT license](https://img.shields.io/badge/license-MIT-blue) ![OKF v0.2](https://img.shields.io/badge/OKF-v0.2-4ecdc4) ![Node only](https://img.shields.io/badge/runtime-Node%20only-5c6bc0) ![no npm install](https://img.shields.io/badge/dependencies-vendored-66bb6a)
 
 [English](README.md) · **한국어** · [日本語](README.ja.md) · [简体中文](README.zh-CN.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português](README.pt-BR.md)
 
@@ -51,6 +51,7 @@ Claude Code를 다시 시작하고 평소처럼 세션을 끝낸 뒤 확인합�
 | `/okf:okf-index` | 카테고리, concept 제목, 최근 변경 조회 |
 | `/okf:okf-visualize` | OKF concept와 concept 간 링크만 시각화 |
 | `/okf:okf-analysis [경로]` | 저장소와 관련 있는 OKF concept만 함께 분석 |
+| `/okf:okf-deprecate <대상>` | concept 은퇴 — 파일과 링크는 그대로 두고 게이트 주입에서만 뺀다 |
 
 `visualize`는 “번들이 무엇을 아는가?”에 답하며 저장소를 스캔하지 않습니다. `analysis`는 “번들이 아는 내용을 기준으로 이 코드는 무엇인가?”에 답합니다. 없는 경로나 파일 경로는 거부하고, 분석 잘림·제외된 무관 concept·언어별 파일/선언/internal edge 수를 표시합니다.
 
@@ -312,6 +313,8 @@ fallback 분석기는 결정적이고 의존성이 없으며 보수적으로 연
 | `batch_digest_cap_kb` | `150` | 세션별 LLM digest 상한, raw는 무손실 |
 | `remove_candidate_ttl_days` | `30` | 처리된 raw 삭제 전 보존일 |
 | `inject_max_lines` / `inject_max_bytes` | `120` / `9000` | Claude Code 10,000자 기준 아래 inline gate 상한 |
+| `sweep_backfill_days` | `0` | 설치 시각 **이전**으로 며칠까지 소급 수집할지. `0`(기본)=설치 이후 대화만. 하드 7일 창이 여전히 상한이다. |
+| `batch_max_usd_per_day` | `0` | 하루 LLM 지출 상한(USD). `0`=무제한(기본). 상한과 무관하게 비용은 항상 기록·표시된다. best-effort 가드이며 누계는 `.okf/last-batch.json`에 산다. |
 
 ## 제거
 

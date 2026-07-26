@@ -47,6 +47,7 @@ Por que baseado em ociosidade? Sessões raramente terminam de forma explícita �
 | `/okf:okf-index` | Categorias, títulos e mudanças recentes |
 | `/okf:okf-visualize` | Somente concepts OKF e relações entre eles |
 | `/okf:okf-analysis [caminho]` | Repositório mais apenas os concepts OKF relacionados |
+| `/okf:okf-deprecate <alvo>` | Aposentar um concept — o arquivo e seus links ficam, o gate para de injetá-lo |
 
 `visualize` não analisa repositórios. `analysis` rejeita caminhos ausentes/não diretórios e informa truncamento, concepts irrelevantes ocultos e estatísticas por linguagem. Ambos geram HTML autocontido, sem CDN nem rede durante a execução.
 
@@ -213,7 +214,7 @@ A validação corrigiu um `Error` padrão do Swift ligado a um tipo nested homô
 
 ## Configuração e remoção
 
-Use `~/.claude/okf/.okf/config.md` ou `/okf:okf-config`. Principais valores: `enabled: true` (chave mestra para coleta, gate e batch), `batch_interval_hours: 1`, `batch_max_digest_kb: 600`, `batch_digest_cap_kb: 150`, `remove_candidate_ttl_days: 30`, `inject_max_lines` / `inject_max_bytes`: `120` / `9000`, `sweep_min_idle_minutes: 60` (tempo de ociosidade após a última atividade antes da sessão ser coletada; `0` coleta imediatamente). Valores inválidos voltam a defaults seguros.
+Use `~/.claude/okf/.okf/config.md` ou `/okf:okf-config`. Principais valores: `enabled: true` (chave mestra para coleta, gate e batch), `batch_interval_hours: 1`, `batch_max_digest_kb: 600`, `batch_digest_cap_kb: 150`, `remove_candidate_ttl_days: 30`, `inject_max_lines` / `inject_max_bytes`: `120` / `9000`, `sweep_min_idle_minutes: 60` (tempo de ociosidade após a última atividade antes da sessão ser coletada; `0` coleta imediatamente), `sweep_backfill_days: 0` (quantos dias **antes** do marcador de instalação o sweep pode alcançar; `0`, o padrão, = apenas conversas posteriores à instalação; a janela rígida de 7 dias continua sendo o teto), `batch_max_usd_per_day: 0` (teto de gasto diário com o LLM em USD; `0` = ilimitado, o padrão — o custo é registrado e exibido de qualquer forma; é uma guarda best-effort cujo acumulado vive em `.okf/last-batch.json`). Valores inválidos voltam a defaults seguros.
 
 ```sh
 claude plugin uninstall okf

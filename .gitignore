@@ -27,3 +27,12 @@ test/.bench-chain-settings.json
 # 체인별 OKF_HOME 빌드 산출물(최종 상태만 선별해 docs/benchmarks/에 커밋한다)
 .bench-targets/
 .bench-chain/
+
+# 편집기 스왑/임시 파일
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Serena MCP 서버가 만드는 프로젝트 캐시 — 저장소 산출물이 아니다
+.serena/
