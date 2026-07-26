@@ -219,6 +219,80 @@ node test/smoke.mjs                            # regression guards
 [E1 report](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
 [E1 pre-registration](docs/benchmarks/pre-registration-2026-07-26-e1.md)
 
+<!-- okf-benchmark: 2026-07-27-efficiency -->
+
+### Gate efficiency — does the index format earn its bytes? (axis E, 2026-07-27)
+
+E1–E3 only ever perturbed OKF's own inputs, so "does the format earn its bytes" could not be asked —
+there was no comparison. Axis E builds one: **same bundle, same byte budget, six index strategies
+swapped in.** It costs **$0.00**, again proven by the PATH trap rather than declared.
+
+Queries are no longer hand-written. Each of the 20 answer concepts gets a query built mechanically
+from the top-8 tf-idf terms of its own *body* — the part the index never carries. The retriever is
+BM25 with standard parameters fixed before measuring; its length normalisation penalises long lines,
+so the choice is stacked **against** OKF. The seed count (40) came from a power calculation done
+before the run, not inherited from an earlier round.
+
+**Of five pre-registered hypotheses, two survive and three are refuted.**
+
+| Hypothesis | Verdict | Evidence |
+|---|---|---|
+| title+description beats category-links-only | **supported** | okf wins 12/12 cells, all p<1e-4 |
+| descriptions earn their bytes | **refuted** | stripping them wins 12/12 cells at matched ordering |
+| round-robin earns its overhead | **refuted, conditionally** | −0.050 at cap 2048; +0.017…+0.218 at cap 9000 |
+| an ordered index beats a random one | supported, narrowly | okf wins 7/12 — but loses all three cells at N=26 |
+| paths alone are not enough | **refuted** | path-only wins 8/12 cells |
+
+The first row settles something that had never been measured. The live bundle's own architecture
+note justifies the 2026-07-17 switch from "category counts only" to "title + description" with a
+single anecdote, and prices it at n=3. It now has a number.
+
+**The format buys precision and sells capacity.** An OKF line, once injected, is almost always
+ranked first (precision 0.93–1.00); the bottleneck is that only ~12–14 concept lines fit in the
+9,000-byte default. Title-only lines fit all 26 at N=26 (precision 0.649); path-only lines fit all
+26 at precision 0.350. Descriptions are **~82%** of a line's bytes — 733 B per line, 133 B without
+them.
+
+**Round-robin's sign flips with the budget.** Six categories each pre-charge a heading and an
+omission marker, so at cap 2048 that fixed cost outweighs the benefit at every bundle size
+(−0.050 across all four); at the shipped default of 9,000 it pays, and the payoff grows with the
+bundle (+0.218 at N=200). **The shipped default is right at its own operating point** — and the
+code applies round-robin regardless of budget.
+
+> **This does not say "drop descriptions."** The round measures *finding*, not *answering*. Gate
+> rule 1 promises "if the title and description contain the answer, cite the line without a Read",
+> and that path dies without them. Whether descriptions repay their 82% is the **paid axis, which
+> has never been run.** What this round produced is a price tag, not a verdict.
+
+**Live bundle, read-only, counts and bytes only.** 26 concepts / 108,431 B. The gate spends
+**8,885 B — 98.7% of its budget — to show 14 of 26 concepts (53.8%)**. Compression is 12.2×; 71.6%
+of the injected bytes are knowledge and 28.4% structure, of which the `log.md` tail alone is
+1,341 B (15.1% of the injection, 2.6× headings and omission markers combined). The synthetic bundle
+predicted that 53.8% coverage to within **2.3 points** — an external check on the synthesis.
+
+**The round caught one of its own defects before publishing.** The first registered run scored
+path-only reach at 0.000 in all 12 cells, which reads as a finding and was a bug: the scorer
+extracted paths only from markdown link syntax. Fixing it flipped that hypothesis from supported to
+refuted. Nine new smoke assertions were each mutation-tested, and all six mutations killed their
+guard.
+
+**Not measured, and published as such**: BM25 is lexical overlap, not model judgement; the bundle is
+synthetic, so this is an upper bound; the answer-concept list is still hand-picked (only the queries
+are mechanical); the `paths` scores depend on this bundle being Korean prose with English slugs;
+n=40 detects an effect consistent across 80% of seeds with power 0.981 but only 0.703 at 70%, so
+"no difference" here means "not established"; the live sample is one author's bundle; token counts
+were not measured because no offline tokenizer was available; and no independent adversarial lens
+ran — the verification was self-run.
+
+```sh
+node test/gate-efficiency.mjs                    # 4 levels × 3 budgets × 40 seeds, ~30 s
+node test/gate-efficiency.mjs --determinism-check
+node test/gate-live-efficiency.mjs               # live bundle, read-only
+```
+
+[Axis E report](docs/benchmarks/gate-efficiency-2026-07-27.md) ·
+[Axis E pre-registration](docs/benchmarks/pre-registration-2026-07-27-efficiency.md)
+
 ### End-to-end paid run (v3, 2026-07-16)
 
 <!-- okf-benchmark: 2026-07-16-v3 -->

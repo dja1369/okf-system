@@ -218,6 +218,85 @@ node test/smoke.mjs                            # Regressions-Guards
 [E1-Report](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
 [E1-Präregistrierung](docs/benchmarks/pre-registration-2026-07-26-e1.md)
 
+<!-- okf-benchmark: 2026-07-27-efficiency -->
+
+### Gate-Effizienz — verdient das Indexformat seine Bytes? (Achse E, 2026-07-27)
+
+E1–E3 haben ausschließlich OKFs eigene Eingaben variiert, deshalb ließ sich „verdient das Format
+seine Bytes?" gar nicht stellen — es gab keinen Vergleichsmaßstab. Achse E stellt einen auf:
+**dasselbe Bundle, dasselbe Byte-Budget, sechs ausgetauschte Indexstrategien.** Kosten: **$0,00**,
+erneut nicht behauptet, sondern zur Laufzeit über die PATH-Falle bewiesen.
+
+Die Fragen sind nicht mehr handgeschrieben. Zu jedem der 20 Antwort-Concepts wird die Anfrage
+maschinell aus den acht stärksten tf-idf-Termen seines eigenen **Fließtexts** gebildet — also genau
+aus dem Teil, den der Index nie transportiert. Der Retriever ist BM25 mit vor der Messung
+festgelegten Standardparametern; seine Längennormalisierung bestraft lange Zeilen, die Wahl ist
+also **gegen** OKF geneigt. Die Zahl der Seeds (40) stammt aus einer Trennschärfeberechnung vor dem
+Lauf, nicht aus einer früheren Runde.
+
+**Von fünf präregistrierten Hypothesen halten zwei stand, drei sind widerlegt.**
+
+| Hypothese | Urteil | Beleg |
+|---|---|---|
+| Titel+Beschreibung schlägt reine Kategorielinks | **gestützt** | okf gewinnt 12/12 Zellen, alle p<1e-4 |
+| Beschreibungen verdienen ihre Bytes | **widerlegt** | ohne sie gewinnt der Index 12/12 Zellen bei gleicher Reihenfolge |
+| Round-Robin verdient seinen Overhead | **bedingt widerlegt** | −0,050 bei Cap 2048; +0,017…+0,218 bei Cap 9000 |
+| ein sortierter Index schlägt einen zufälligen | knapp gestützt | okf gewinnt 7/12 — verliert aber alle drei Zellen bei N=26 |
+| Pfade allein genügen nicht | **widerlegt** | der reine Pfadindex gewinnt 8/12 Zellen |
+
+Die erste Zeile schließt etwas ab, das nie gemessen worden war. Die Architekturnotiz des Live-Bundles
+begründet den Wechsel vom 2026-07-17 („nur Kategoriezahlen" → „Titel + Beschreibung") mit einer
+**einzigen Anekdote** und beziffert die Kosten mit **n=3**. Jetzt gibt es eine Zahl.
+
+**Das Format kauft Präzision und verkauft Kapazität.** Eine OKF-Zeile wird, einmal eingespielt, fast
+immer auf Platz 1 gerankt (Präzision 0,93–1,00); der Engpass ist, dass in die voreingestellten
+9.000 Bytes nur etwa 12–14 Concept-Zeilen passen. Nur-Titel-Zeilen fassen bei N=26 alle 26
+(Präzision 0,649), Nur-Pfad-Zeilen ebenfalls alle 26 (Präzision 0,350). **Beschreibungen machen rund
+82 %** der Zeilenbytes aus — 733 B pro Zeile, ohne sie 133 B.
+
+**Das Vorzeichen von Round-Robin kippt mit dem Budget.** Sechs Kategorien belasten je eine
+Überschrift und einen Auslassungsmarker vorab, deshalb frisst dieser Fixkostenblock bei Cap 2048 den
+Nutzen auf allen vier Bundle-Größen auf (−0,050); beim ausgelieferten Standard von 9.000 zahlt er
+sich aus, und der Gewinn wächst mit dem Bundle (+0,218 bei N=200). **Der ausgelieferte Standard ist
+an seinem eigenen Arbeitspunkt richtig** — und der Code wendet Round-Robin unabhängig vom Budget an.
+
+> **Das heißt nicht „Beschreibungen weglassen".** Diese Runde misst das **Finden**, nicht das
+> **Antworten**. Gate-Regel 1 verspricht: „Wenn Titel und Beschreibung die Antwort enthalten, zitiere
+> die Zeile ohne Read" — und genau dieser Weg stirbt ohne sie. Ob Beschreibungen ihre 82 %
+> zurückzahlen, ist die **kostenpflichtige Achse, die nie gelaufen ist.** Diese Runde liefert ein
+> Preisschild, kein Urteil.
+
+**Live-Bundle, nur lesend, ausschließlich Anzahlen und Bytes.** 26 Concepts / 108.431 B. Das Gate
+verbraucht **8.885 B — 98,7 % seines Budgets — um 14 von 26 Concepts (53,8 %) zu zeigen.** Die
+Kompression beträgt 12,2×; 71,6 % der eingespielten Bytes sind Wissen, 28,4 % Struktur, davon allein
+1.341 B der `log.md`-Tail (15,1 % der Injektion, das 2,6-Fache von Überschriften plus
+Auslassungsmarkern). Das synthetische Bundle sagte diese Abdeckung von 53,8 % auf **2,3 Punkte genau**
+voraus — eine externe Kontrolle der Synthese.
+
+**Die Runde hat vor der Veröffentlichung einen eigenen Defekt gefunden.** Im ersten registrierten Lauf
+lag die Trefferquote der Nur-Pfad-Strategie in allen 12 Zellen bei 0,000. Das liest sich wie ein
+Befund und war ein Bug: Der Scorer extrahierte Pfade nur aus Markdown-Linksyntax. Nach der Korrektur
+kippte jene Hypothese von gestützt zu widerlegt. Alle neun neuen Smoke-Assertions wurden einzeln
+mutationsgetestet; alle sechs Mutationen töteten ihren Guard.
+
+**Nicht gemessen — und genau so veröffentlicht**: BM25 ist lexikalische Überlappung, kein
+Modellurteil; das Bundle ist synthetisch, also ist dies eine Obergrenze; die Liste der
+Antwort-Concepts ist weiterhin von mir ausgewählt (maschinell sind nur die Anfragen); die
+`paths`-Werte hängen daran, dass dieses Bundle koreanischer Fließtext mit englischen Slugs ist;
+n=40 erkennt einen über 80 % der Seeds konsistenten Effekt mit Trennschärfe 0,981, bei 70 % aber nur
+0,703 — „kein Unterschied" heißt hier also „nicht nachgewiesen"; die Live-Stichprobe ist das Bundle
+eines einzigen Autors; Tokenzahlen wurden mangels Offline-Tokenizer nicht gemessen; und es lief keine
+unabhängige adversariale Prüfung — die Verifikation erfolgte durch mich selbst.
+
+```sh
+node test/gate-efficiency.mjs                    # 4 Größen × 3 Budgets × 40 Seeds, ~30 s
+node test/gate-efficiency.mjs --determinism-check
+node test/gate-live-efficiency.mjs               # Live-Bundle, nur lesend
+```
+
+[Bericht Achse E](docs/benchmarks/gate-efficiency-2026-07-27.md) ·
+[Präregistrierung Achse E](docs/benchmarks/pre-registration-2026-07-27-efficiency.md)
+
 ### Bezahlter Ende-zu-Ende-Lauf (v3, 2026-07-16)
 
 <!-- okf-benchmark: 2026-07-16-v3 -->

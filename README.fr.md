@@ -221,6 +221,86 @@ node test/smoke.mjs                            # gardes de régression
 [Rapport E1](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
 [Préenregistrement E1](docs/benchmarks/pre-registration-2026-07-26-e1.md)
 
+<!-- okf-benchmark: 2026-07-27-efficiency -->
+
+### Efficacité de la porte — le format d'index mérite-t-il ses octets ? (axe E, 2026-07-27)
+
+E1–E3 n'ont jamais perturbé que les entrées d'OKF lui-même ; la question « ce format mérite-t-il ses
+octets ? » ne pouvait donc même pas être posée : il n'existait aucun terme de comparaison. L'axe E en
+construit un : **même paquet, même budget en octets, six stratégies d'index interchangées.** Coût :
+**0,00 $**, là encore non pas déclaré mais prouvé à l'exécution par le piège PATH.
+
+Les questions ne sont plus écrites à la main. Pour chacun des 20 concepts-réponses, la requête est
+générée mécaniquement à partir des 8 termes tf-idf les plus forts de son propre **corps de texte** —
+précisément la partie que l'index ne transporte jamais. Le moteur de recherche est BM25 avec des
+paramètres standard fixés avant la mesure ; sa normalisation par longueur pénalise les lignes longues,
+donc ce choix penche **en défaveur** d'OKF. Le nombre de graines (40) provient d'un calcul de
+puissance effectué avant l'exécution, et non d'un héritage d'une manche précédente.
+
+**Sur cinq hypothèses préenregistrées, deux tiennent et trois sont réfutées.**
+
+| Hypothèse | Verdict | Preuve |
+|---|---|---|
+| titre+description bat les seuls liens de catégorie | **soutenue** | okf gagne 12/12 cellules, toutes à p<1e-4 |
+| les descriptions méritent leurs octets | **réfutée** | les retirer gagne 12/12 cellules à ordre égal |
+| le round-robin mérite son surcoût | **réfutée, sous condition** | −0,050 au plafond 2048 ; +0,017…+0,218 au plafond 9000 |
+| un index trié bat un index aléatoire | soutenue de justesse | okf gagne 7/12 — mais perd les trois cellules à N=26 |
+| les chemins seuls ne suffisent pas | **réfutée** | l'index de chemins seuls gagne 8/12 cellules |
+
+La première ligne clôt un point jamais mesuré. La note d'architecture du paquet en production
+justifie le changement du 2026-07-17 (« seulement les compteurs de catégorie » → « titre +
+description ») par **une seule anecdote** et en chiffre le coût à **n=3**. Il y a désormais un nombre.
+
+**Le format achète de la précision et vend de la capacité.** Une ligne OKF, une fois injectée, est
+presque toujours classée première (précision 0,93–1,00) ; le goulot d'étranglement, c'est que les
+9 000 octets par défaut ne contiennent qu'environ 12 à 14 lignes de concept. Les lignes titre-seul
+tiennent les 26 à N=26 (précision 0,649) ; les lignes chemin-seul également (précision 0,350). **Les
+descriptions représentent environ 82 %** des octets d'une ligne — 733 B par ligne, 133 B sans elles.
+
+**Le signe du round-robin s'inverse avec le budget.** Six catégories préemptent chacune un titre de
+section et un marqueur d'omission ; au plafond 2048, ce coût fixe dévore le bénéfice à toutes les
+tailles (−0,050). Au défaut livré de 9 000, il est rentable, et le gain croît avec le paquet
+(+0,218 à N=200). **Le défaut livré est correct à son propre point de fonctionnement** — et le code
+applique le round-robin quel que soit le budget.
+
+> **Cela ne dit pas « supprimez les descriptions ».** Cette manche mesure le fait de **trouver**, pas
+> celui de **répondre**. La règle 1 de la porte promet : « si le titre et la description contiennent
+> la réponse, cite la ligne sans faire de Read » — et ce chemin meurt sans elles. Savoir si les
+> descriptions remboursent ces 82 % relève de l'**axe payant, qui n'a jamais été exécuté.** Ce que
+> cette manche produit est une étiquette de prix, pas un verdict.
+
+**Paquet en production, lecture seule, uniquement des comptes et des octets.** 26 concepts /
+108 431 B. La porte dépense **8 885 B — 98,7 % de son budget — pour montrer 14 concepts sur 26
+(53,8 %).** La compression est de 12,2× ; 71,6 % des octets injectés sont de la connaissance et
+28,4 % de la structure, dont la seule queue de `log.md` fait 1 341 B (15,1 % de l'injection, soit
+2,6 fois les titres de section et les marqueurs d'omission réunis). Le paquet synthétique a prédit
+cette couverture de 53,8 % à **2,3 points près** — un contrôle externe de la synthèse.
+
+**Cette manche a trouvé un de ses propres défauts avant publication.** Lors de la première exécution
+enregistrée, le taux d'atteinte de la stratégie chemins-seuls était de 0,000 dans les 12 cellules. Lu
+tel quel, cela ressemble à un résultat ; c'était un bug : l'évaluateur n'extrayait les chemins que de
+la syntaxe de lien markdown. Après correction, cette hypothèse est passée de soutenue à réfutée. Les
+neuf nouvelles assertions de fumée ont chacune été testées par mutation, et les six mutations ont tué
+leur garde.
+
+**Ce qui n'a pas été mesuré, publié comme tel** : BM25 est un recouvrement lexical, pas un jugement
+du modèle ; le paquet est synthétique, ceci est donc une borne supérieure ; la liste des
+concepts-réponses reste choisie par moi (seules les requêtes sont mécaniques) ; les scores de `paths`
+dépendent du fait que ce paquet est en prose coréenne avec des slugs anglais ; n=40 détecte avec une
+puissance de 0,981 un effet cohérent sur 80 % des graines, mais seulement 0,703 à 70 % — donc ici
+« pas de différence » signifie « non établi » ; l'échantillon en production est le paquet d'un seul
+auteur ; le nombre de tokens n'a pas été mesuré faute de tokeniseur hors ligne ; et aucune lentille
+adverse indépendante n'a tourné — la vérification a été faite par moi-même.
+
+```sh
+node test/gate-efficiency.mjs                    # 4 tailles × 3 budgets × 40 graines, ~30 s
+node test/gate-efficiency.mjs --determinism-check
+node test/gate-live-efficiency.mjs               # paquet en production, lecture seule
+```
+
+[Rapport axe E](docs/benchmarks/gate-efficiency-2026-07-27.md) ·
+[Préenregistrement axe E](docs/benchmarks/pre-registration-2026-07-27-efficiency.md)
+
 ### Exécution payante de bout en bout (v3, 2026-07-16)
 
 <!-- okf-benchmark: 2026-07-16-v3 -->

@@ -216,6 +216,85 @@ node test/smoke.mjs                            # guardas de regressão
 [Relatório E1](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
 [Pré-registro E1](docs/benchmarks/pre-registration-2026-07-26-e1.md)
 
+<!-- okf-benchmark: 2026-07-27-efficiency -->
+
+### Eficiência do portão — o formato de índice paga pelos bytes que ocupa? (eixo E, 2026-07-27)
+
+E1–E3 só perturbaram as próprias entradas do OKF, de modo que «o formato paga pelos seus bytes?» nem
+podia ser perguntado — não havia termo de comparação. O eixo E constrói um: **o mesmo pacote, o mesmo
+orçamento em bytes, seis estratégias de índice trocadas.** Custa **US$ 0,00** e, de novo, isso não é
+declarado: é provado em execução pela armadilha de PATH.
+
+As perguntas não são mais escritas à mão. Para cada um dos 20 conceitos-resposta, a consulta é gerada
+mecanicamente a partir dos 8 termos tf-idf mais fortes do seu próprio **corpo de texto** — justamente
+a parte que o índice nunca carrega. O buscador é BM25 com parâmetros padrão fixados antes da medição;
+sua normalização por comprimento penaliza linhas longas, ou seja, a escolha pende **contra** o OKF. O
+número de sementes (40) veio de um cálculo de poder feito antes da execução, não herdado de uma
+rodada anterior.
+
+**De cinco hipóteses pré-registradas, duas se sustentam e três são refutadas.**
+
+| Hipótese | Veredicto | Evidência |
+|---|---|---|
+| título+descrição supera apenas links de categoria | **sustentada** | okf vence 12/12 células, todas com p<1e-4 |
+| descrições pagam pelos seus bytes | **refutada** | removê-las vence 12/12 células com a ordem igualada |
+| o round-robin paga pelo seu custo fixo | **refutada, com ressalva** | −0,050 no teto 2048; +0,017…+0,218 no teto 9000 |
+| um índice ordenado supera um aleatório | sustentada por pouco | okf vence 7/12 — mas perde as três células em N=26 |
+| caminhos sozinhos não bastam | **refutada** | o índice só de caminhos vence 8/12 células |
+
+A primeira linha encerra algo que nunca havia sido medido. A própria nota de arquitetura do pacote em
+produção justifica a mudança de 2026-07-17 («só contagens de categoria» → «título + descrição») com
+**um único caso** e estima o custo em **n=3**. Agora existe um número.
+
+**O formato compra precisão e vende capacidade.** Uma linha do OKF, uma vez injetada, quase sempre
+fica em primeiro lugar (precisão 0,93–1,00); o gargalo é que nos 9.000 bytes padrão cabem apenas
+cerca de 12 a 14 linhas de conceito. Linhas só com título cabem todas as 26 em N=26 (precisão 0,649);
+linhas só com caminho também cabem todas as 26 (precisão 0,350). **As descrições são cerca de 82 %**
+dos bytes de uma linha — 733 B por linha, 133 B sem elas.
+
+**O sinal do round-robin se inverte com o orçamento.** Seis categorias descontam antecipadamente um
+cabeçalho e um marcador de omissão cada, então no teto 2048 esse custo fixo devora o benefício em
+todos os quatro tamanhos (−0,050); no padrão de fábrica de 9.000 ele compensa, e o ganho cresce com o
+pacote (+0,218 em N=200). **O padrão de fábrica está certo no seu próprio ponto de operação** — e o
+código aplica round-robin independentemente do orçamento.
+
+> **Isso não quer dizer «removam as descrições».** Esta rodada mede **encontrar**, não **responder**.
+> A regra 1 do portão promete «se o título e a descrição contiverem a resposta, cite a linha sem
+> fazer Read», e esse caminho morre sem elas. Se as descrições devolvem esses 82 % é assunto do
+> **eixo pago, que nunca foi executado.** O que esta rodada produziu é uma etiqueta de preço, não um
+> veredicto.
+
+**Pacote em produção, somente leitura, apenas contagens e bytes.** 26 conceitos / 108.431 B. O portão
+gasta **8.885 B — 98,7 % do seu orçamento — para mostrar 14 de 26 conceitos (53,8 %).** A compressão
+é de 12,2×; 71,6 % dos bytes injetados são conhecimento e 28,4 % são estrutura, e dentro dela a cauda
+do `log.md` sozinha ocupa 1.341 B (15,1 % da injeção, 2,6 vezes os cabeçalhos mais os marcadores de
+omissão somados). O pacote sintético previu essa cobertura de 53,8 % com margem de **2,3 pontos** —
+uma verificação externa do desenho sintético.
+
+**A rodada encontrou um defeito próprio antes de publicar.** Na primeira execução registrada, o
+alcance da estratégia só-caminhos foi 0,000 nas 12 células. Lido ao pé da letra parece um achado, mas
+era um bug: o avaliador extraía caminhos apenas da sintaxe de link markdown. Corrigido, aquela
+hipótese virou de sustentada para refutada. As nove novas asserções de fumaça passaram uma a uma por
+teste de mutação, e as seis mutações mataram sua respectiva guarda.
+
+**O que não foi medido, publicado como tal**: BM25 é sobreposição lexical, não julgamento do modelo;
+o pacote é sintético, portanto isto é um limite superior; a lista de conceitos-resposta continua
+sendo escolha minha (mecânicas são apenas as consultas); os resultados de `paths` dependem de este
+pacote ser prosa em coreano com slugs em inglês; n=40 detecta com poder 0,981 um efeito consistente
+em 80 % das sementes, mas apenas 0,703 a 70 %, de modo que aqui «sem diferença» significa «não
+estabelecido»; a amostra em produção é o pacote de um único autor; a contagem de tokens não foi
+medida por falta de tokenizador offline; e nenhuma lente adversarial independente rodou — a
+verificação foi feita por mim mesmo.
+
+```sh
+node test/gate-efficiency.mjs                    # 4 tamanhos × 3 orçamentos × 40 sementes, ~30 s
+node test/gate-efficiency.mjs --determinism-check
+node test/gate-live-efficiency.mjs               # pacote em produção, somente leitura
+```
+
+[Relatório do eixo E](docs/benchmarks/gate-efficiency-2026-07-27.md) ·
+[Pré-registro do eixo E](docs/benchmarks/pre-registration-2026-07-27-efficiency.md)
+
 ### Execução paga de ponta a ponta (v3, 2026-07-16)
 
 <!-- okf-benchmark: 2026-07-16-v3 -->

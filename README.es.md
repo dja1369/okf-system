@@ -218,6 +218,85 @@ node test/smoke.mjs                            # guardas de regresión
 [Informe E1](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
 [Prerregistro E1](docs/benchmarks/pre-registration-2026-07-26-e1.md)
 
+<!-- okf-benchmark: 2026-07-27-efficiency -->
+
+### Eficiencia de la compuerta — ¿el formato del índice se gana sus bytes? (eje E, 2026-07-27)
+
+E1–E3 solo perturbaron las entradas del propio OKF, así que «¿el formato se gana sus bytes?» ni
+siquiera podía plantearse: no existía término de comparación. El eje E lo construye: **el mismo
+paquete, el mismo presupuesto en bytes, seis estrategias de índice intercambiadas.** Cuesta
+**$0,00**, y de nuevo no se declara: se demuestra en ejecución con la trampa de PATH.
+
+Las preguntas ya no están escritas a mano. Para cada uno de los 20 conceptos de respuesta, la
+consulta se genera mecánicamente a partir de los 8 términos tf-idf principales de su propio
+**cuerpo**, que es justamente la parte que el índice nunca transporta. El buscador es BM25 con
+parámetros estándar fijados antes de medir; su normalización por longitud penaliza las líneas
+largas, es decir, la elección está inclinada **en contra** de OKF. El número de semillas (40) sale
+de un cálculo de potencia hecho antes de la ejecución, no heredado de una ronda anterior.
+
+**De cinco hipótesis preregistradas, dos se sostienen y tres quedan refutadas.**
+
+| Hipótesis | Veredicto | Evidencia |
+|---|---|---|
+| título+descripción supera a solo enlaces de categoría | **respaldada** | okf gana 12/12 celdas, todas con p<1e-4 |
+| las descripciones se ganan sus bytes | **refutada** | quitarlas gana 12/12 celdas con el orden igualado |
+| el round-robin se gana su sobrecoste | **refutada, con condición** | −0,050 con tope 2048; +0,017…+0,218 con tope 9000 |
+| un índice ordenado supera a uno aleatorio | respaldada por poco | okf gana 7/12 — pero pierde las tres celdas con N=26 |
+| las rutas por sí solas no bastan | **refutada** | el índice de solo rutas gana 8/12 celdas |
+
+La primera fila cierra algo que nunca se había medido. La propia nota de arquitectura del paquete en
+vivo justifica el cambio del 2026-07-17 («solo recuentos de categoría» → «título + descripción») con
+**una sola anécdota** y cifra su coste con **n=3**. Ahora tiene un número.
+
+**El formato compra precisión y vende capacidad.** Una línea de OKF, una vez inyectada, casi siempre
+queda en primer lugar (precisión 0,93–1,00); el cuello de botella es que en los 9.000 bytes por
+defecto solo caben unas 12–14 líneas de concepto. Las líneas de solo título caben las 26 con N=26
+(precisión 0,649); las de solo ruta también caben las 26 (precisión 0,350). **Las descripciones son
+alrededor del 82 %** de los bytes de una línea: 733 B por línea, 133 B sin ellas.
+
+**El signo del round-robin se invierte con el presupuesto.** Seis categorías descuentan por
+adelantado un encabezado y un marcador de omisión cada una, así que con tope 2048 ese coste fijo se
+come el beneficio en los cuatro tamaños (−0,050); con el valor por defecto de 9.000 sí compensa, y
+el beneficio crece con el paquete (+0,218 con N=200). **El valor por defecto es correcto en su
+propio punto de operación** — y el código aplica round-robin sea cual sea el presupuesto.
+
+> **Esto no dice «eliminad las descripciones».** Esta ronda mide **encontrar**, no **responder**. La
+> regla 1 de la compuerta promete «si el título y la descripción contienen la respuesta, cita la
+> línea sin hacer Read», y esa vía muere sin ellas. Si las descripciones devuelven ese 82 % es el
+> **eje de pago, que nunca se ha ejecutado.** Lo que produce esta ronda es una etiqueta de precio, no
+> un veredicto.
+
+**Paquete en vivo, solo lectura, únicamente recuentos y bytes.** 26 conceptos / 108.431 B. La
+compuerta gasta **8.885 B — el 98,7 % de su presupuesto — para mostrar 14 de 26 conceptos (53,8 %).**
+La compresión es de 12,2×; el 71,6 % de los bytes inyectados es conocimiento y el 28,4 % estructura,
+y dentro de ella la cola de `log.md` por sí sola son 1.341 B (el 15,1 % de la inyección, 2,6 veces
+los encabezados más los marcadores de omisión juntos). El paquete sintético predijo esa cobertura del
+53,8 % con un margen de **2,3 puntos** — una comprobación externa del diseño sintético.
+
+**La ronda detectó un defecto propio antes de publicar.** En la primera ejecución registrada, el
+alcance de la estrategia de solo rutas fue 0,000 en las 12 celdas. Leído tal cual parece un hallazgo,
+pero era un fallo: el evaluador extraía rutas únicamente de la sintaxis de enlace markdown. Al
+corregirlo, esa hipótesis pasó de respaldada a refutada. Las nueve nuevas aserciones de humo se
+sometieron una a una a pruebas de mutación, y las seis mutaciones mataron su guardia.
+
+**Lo que no se midió, publicado como tal**: BM25 es solapamiento léxico, no juicio del modelo; el
+paquete es sintético, así que esto es una cota superior; la lista de conceptos de respuesta sigue
+siendo elección mía (lo mecánico son solo las consultas); los resultados de `paths` dependen de que
+este paquete sea prosa coreana con slugs en inglés; n=40 detecta con potencia 0,981 un efecto
+consistente en el 80 % de las semillas, pero solo 0,703 al 70 %, así que aquí «sin diferencia»
+significa «no establecido»; la muestra en vivo es el paquete de un solo autor; el recuento de tokens
+no se midió por no haber tokenizador sin conexión; y no corrió ninguna lente adversaria
+independiente: la verificación fue propia.
+
+```sh
+node test/gate-efficiency.mjs                    # 4 tamaños × 3 presupuestos × 40 semillas, ~30 s
+node test/gate-efficiency.mjs --determinism-check
+node test/gate-live-efficiency.mjs               # paquete en vivo, solo lectura
+```
+
+[Informe del eje E](docs/benchmarks/gate-efficiency-2026-07-27.md) ·
+[Preregistro del eje E](docs/benchmarks/pre-registration-2026-07-27-efficiency.md)
+
 ### Ejecución de pago de extremo a extremo (v3, 2026-07-16)
 
 <!-- okf-benchmark: 2026-07-16-v3 -->
