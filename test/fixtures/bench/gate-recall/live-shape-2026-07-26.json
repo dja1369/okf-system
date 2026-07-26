@@ -1,0 +1,81 @@
+{
+  "measuredAt": "2026-07-26",
+  "source": "카테고리별 index.md 줄의 바이트 길이만. 제목·설명 원문 미포함(프라이버시).",
+  "supersedes": "test/fixtures/live-shape-2026-07-25.json (수정 전 버그 상태를 기록한 값)",
+  "note": "expected는 라이브 head(686B)를 대입해 정규화한 값이다 — 실제 head는 okfHome 경로 길이에 비례하므로 샌드박스에서 재현할 수 없다. cap - head 는 경로와 무관하므로 정규화가 성립한다: assembledBytes = liveHeadBytes + indexBytes + 1 + tailBytes.",
+  "config": {
+    "inject_max_bytes": 9000,
+    "inject_max_lines": 120
+  },
+  "liveHeadBytes": 686,
+  "liveHeadLines": 10,
+  "tailBytes": 1358,
+  "tailLines": 18,
+  "indexBudgetBytes": 6956,
+  "indexBudgetLines": 92,
+  "logMd": "# Log\n\n## 2026-07-26\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- pad-a\n- pad-b\n",
+  "categories": [
+    {
+      "dir": "decisions",
+      "lineBytes": [
+        423,
+        413
+      ]
+    },
+    {
+      "dir": "patterns",
+      "lineBytes": [
+        1546,
+        489,
+        660,
+        549,
+        379,
+        466
+      ]
+    },
+    {
+      "dir": "preferences",
+      "lineBytes": [
+        510,
+        206,
+        1207
+      ]
+    },
+    {
+      "dir": "projects",
+      "lineBytes": [
+        503,
+        321,
+        283
+      ]
+    },
+    {
+      "dir": "references",
+      "lineBytes": [
+        602,
+        554,
+        222,
+        202,
+        219,
+        944
+      ]
+    },
+    {
+      "dir": "troubleshooting",
+      "lineBytes": [
+        973,
+        126
+      ]
+    }
+  ],
+  "expected": {
+    "taken": 12,
+    "total": 22,
+    "indexBytes": 6834,
+    "assembledBytes": 8879,
+    "finalBytes": 8879,
+    "truncatedBytes": 0,
+    "leftoverBytes": 114,
+    "cappedLines": 0
+  }
+}

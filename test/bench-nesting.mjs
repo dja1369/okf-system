@@ -14,14 +14,18 @@ const { okfPaths } = await import(`${ROOT}/lib/paths.mjs`);
 const pad = (n) => (n <= 0 ? '' : '가'.repeat(Math.floor(n / 3)) + 'x'.repeat(n % 3));
 
 // 라이브와 같은 규모: concept 25개를 6개 카테고리에 분산, 설명 190B 내외
-function build(home, nested) {
+// depth: 1=평면(F), 2=`<카테고리>/<주제>`(N2), 3=`.../<하위>`(N3), 4=`.../<말단>`(N4).
+// **파일 내용(제목·설명·type)은 depth와 무관하게 동일**하다 — 배치만 바뀐다.
+// 그래야 concept 줄 수 차이가 배치 때문임이 분리된다.
+function build(home, depth) {
   const cats = ['decisions', 'patterns', 'preferences', 'projects', 'references', 'troubleshooting'];
   const TYPE = { decisions: 'decision', patterns: 'pattern', preferences: 'preference',
     projects: 'project', references: 'reference', troubleshooting: 'troubleshooting' };
   let made = 0;
   for (const c of cats) {
     for (let i = 0; i < 5 && made < 25; i++, made++) {
-      const sub = nested ? path.join(c, `주제${i % 3}`) : c;
+      const segs = [`주제${i % 3}`, `하위${i % 2}`, `말단${i % 2}`].slice(0, depth - 1);
+      const sub = path.join(c, ...segs);
       fs.mkdirSync(path.join(home, sub), { recursive: true });
       const name = `c${String(made).padStart(2, '0')}.md`;
       const title = `개념 제목 ${String(made).padStart(2, '0')}`;
@@ -35,10 +39,10 @@ function build(home, nested) {
   regenerateIndex(home);
 }
 
-function measure(label, nested) {
+function measure(label, depth) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'okf-bench-'));
   ensureBootstrap(home);
-  build(home, nested);
+  build(home, depth);
   const lockPath = okfPaths(home).lock;
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedEpochMs: Date.now() }));
@@ -76,12 +80,15 @@ function measure(label, nested) {
   };
 }
 
-const rows = [measure('평면(F)', false), measure('중첩(N2)', true)];
+const rows = [measure('평면(F)', 1), measure('중첩(N2)', 2), measure('중첩(N3)', 3), measure('중첩(N4)', 4)];
 console.log('=== 축 A-2/A-3 실측 (유료 0, concept 25개 고정) ===');
 for (const r of rows) {
   console.log(`\n[${r.label}]`);
   for (const [k, v] of Object.entries(r)) if (k !== 'label') console.log(`  ${k.padEnd(18)} ${v}`);
 }
-const [f, n] = rows;
-console.log(`\n중첩 비용: concept 줄 ${f.그중_concept} → ${n.그중_concept} (${((n.그중_concept - f.그중_concept) / f.그중_concept * 100).toFixed(0)}%)`);
-console.log(`index 파일 바이트: ${f.index파일_총바이트} → ${n.index파일_총바이트}`);
+const f = rows[0];
+console.log('\n--- F 대비 concept 줄 증감 ---');
+for (const r of rows.slice(1)) {
+  const d = (r.그중_concept - f.그중_concept) / f.그중_concept * 100;
+  console.log(`  ${r.label}: ${f.그중_concept} → ${r.그중_concept} (${d.toFixed(1)}%)  index파일 ${f.index파일_총바이트} → ${r.index파일_총바이트}`);
+}
