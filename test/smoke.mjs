@@ -539,8 +539,11 @@ console.log('\n=== 게이트 예산 회계 (R5: 마커·heading 선차감 + star
   fs.mkdirSync(path.join(home, 'troubleshooting'), { recursive: true });
   fs.writeFileSync(path.join(home, 'decisions', 'a-short.md'),
     '---\ntype: decision\ntitle: 짧은 결정\ndescription: 짧다\ntimestamp: 2026-07-15\n---\n본문\n');
+  // 정렬이 **제목순**(공식 규범)이라 `거대한 결정`이 `짧은 결정`보다 앞에 온다 — 예전 파일명순
+  // 픽스처(1,200자)는 cap 5000에 들어가버려 starvation 시나리오가 성립하지 않았다.
+  // 확실히 감당 불가하도록 키운다: 이 줄 하나가 index 예산 전체보다 커야 의도가 산다.
   fs.writeFileSync(path.join(home, 'decisions', 'b-huge.md'),
-    `---\ntype: decision\ntitle: 거대한 결정\ndescription: ${'나'.repeat(1200)}\ntimestamp: 2026-07-15\n---\n본문\n`);
+    `---\ntype: decision\ntitle: 거대한 결정\ndescription: ${'나'.repeat(2400)}\ntimestamp: 2026-07-15\n---\n본문\n`);
   for (let i = 0; i < 5; i++) {
     fs.writeFileSync(path.join(home, 'troubleshooting', `t${i}.md`),
       `---\ntype: troubleshooting\ntitle: 트러블슈팅 ${i}\ndescription: 트러블슈팅 설명 ${i}\ntimestamp: 2026-07-15\n---\n본문\n`);
@@ -551,7 +554,9 @@ console.log('\n=== 게이트 예산 회계 (R5: 마커·heading 선차감 + star
   ok('an unaffordable line in one category no longer starves the later categories',
     ctx.includes('트러블슈팅 3') && ctx.includes('트러블슈팅 4'),
     `bytes=${Buffer.byteLength(ctx, 'utf8')}`);
-  ok('the unaffordable line itself is still reported as omitted', ctx.includes('decisions (결정) — 1/2개'));
+  // 개수 표기는 **게이트 heading**의 것이다(index 파일에는 공식 규범대로 개수가 없다).
+  ok('the unaffordable line itself is still reported as omitted',
+    /decisions \(결정\) — \d+\/2개/.test(ctx), ctx.split('\n').filter((l) => l.startsWith('##')).join('|'));
   ok('starvation fix still respects the byte cap', Buffer.byteLength(ctx, 'utf8') <= 5000);
 }
 {
@@ -674,9 +679,13 @@ console.log('\n=== index-gen: nested domains (OKF spec) ===');
   // ledger.md 하나가 중간 인덱스의 하위 도메인 개수와 루트의 카테고리 개수까지 올라오지 않으면,
   // 게이트는 "decisions 1개"라고 믿고 나머지 2개를 영영 모른다. 여기서 총 3개다:
   // top-level.md + sales/orders.md + sales/tables/ledger.md.
-  ok('an intermediate index counts the concepts inside its nested domain', parent.includes('concept 2개'));
+  // 공식 index에는 개수 표기가 없다(74개 항목 전수 확인). 사슬이 끝까지 재생성되는지는
+  // **각 단계의 index가 자기 아래를 실제로 열거하는가**로 고정한다 — 그게 원래 계약이다.
+  ok('an intermediate index links to its nested domain', nested.includes('](tables/index.md)'));
+  const deepIdx = readIfExists(path.join(home, 'decisions', 'sales', 'tables', 'index.md'));
+  ok('the deepest index enumerates its own concept', deepIdx.includes('](ledger.md)'), deepIdx);
   const rootIdx = readIfExists(path.join(home, 'index.md'));
-  ok('a concept three levels deep propagates its count to the root index', /\(decisions\/index\.md\) - .*concept 3개/.test(rootIdx));
+  ok('the chain reaches the root index', rootIdx.includes('](decisions/index.md)'), rootIdx);
 }
 
 // ---------------------------------------------------------------------------
@@ -1468,12 +1477,12 @@ function runDeprecate(okfHome, args) {
   ok('deprecated concept is marked and sorted after the live ones',
     catIndex.includes('* [deprecated] [묘비 제목]')
     && catIndex.indexOf('현역 제목') < catIndex.indexOf('묘비 제목'), catIndex);
-  // 카운트의 목적은 "지금 유효한 지식이 몇 개인가"다 — 은퇴는 빠진다(줄 수와 어긋나는 건 의도).
-  ok('gate and root counts exclude deprecated concepts',
-    /\(decisions\/index\.md\) - .*concept 1개/.test(readIfExists(path.join(home, 'index.md'))),
-    readIfExists(path.join(home, 'index.md')));
-  ok('a nested deprecated concept is excluded from the parent and root counts',
-    catIndex.includes('concept 0개'), catIndex);
+  // 은퇴 concept는 index에 **남지만**(링크 보존) 게이트에서는 빠진다 — 그게 계약이다.
+  // 개수 표기는 공식 규범에 없어 사라졌으므로, 그 계약을 게이트 산출로 직접 고정한다.
+  const depCtx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+  ok('deprecated concepts are excluded from the gate',
+    !depCtx.includes('묘비 제목') && depCtx.includes('현역 제목'),
+    depCtx.split('\n').filter((l) => l.startsWith('* ')).join('|'));
 }
 {
   // 게이트 축출: 묘비가 점유하던 슬롯이 현역 문서로 교체되는가. 개수가 아니라 **존재/부재**로
@@ -3531,7 +3540,7 @@ console.log('\n=== 유휴(idle) 기반 수집 — 수집 기준은 SessionEnd가
   ok('seed ships bundle rules', fs.existsSync(path.join(home, 'preferences', 'okf-bundle-rules.md')));
   ok('seed defaults to English', fs.readFileSync(path.join(home, 'references', 'okf-format.md'), 'utf8').includes('What OKF'));
   const rootIndex = fs.readFileSync(okfPaths(home).rootIndex, 'utf8');
-  ok('seeded concepts appear in the generated root index', /\(references\/index\.md\) - .*concept 3개/s.test(rootIndex));
+  ok('seeded concepts appear in the generated root index', rootIndex.includes('](references/index.md)'));
 
   // user edits to a seed file must survive re-bootstrap (a reinstall must not revert them)
   const seedFile = path.join(home, 'references', 'okf-format.md');
@@ -5037,11 +5046,50 @@ if (process.platform !== 'win32') {
   // **heading 텍스트는 "그 목록이 무엇을 담는지"를 말한다** — 공식 세 번들
   // (acme_retail·ga4·stackoverflow)이 전부 하위 디렉토리 목록에 `# Subdirectories`를 쓰고,
   // concept 목록에는 내용 라벨(`# BigQuery Table`)을 쓴다.
-  ok('concept를 담은 index는 내용 라벨을 쓴다(`# Subdirectories`가 아니다)',
-    leaf.startsWith('# manna'), JSON.stringify(leaf.slice(0, 40)));
-  ok('하위 디렉토리만 담은 index는 `# Subdirectories`다(공식 고정 문자열)',
+  // **heading은 concept의 `type` 값이다**(공식 생성기 `grouped[typ or "Other"]`).
+  // 디렉토리 이름이 아니다 — 이름이 다른 `joins/`·`metrics/`가 둘 다 `# Reference`인 것이 증거다.
+  ok('concept를 담은 index의 heading은 그 concept의 type 값이다',
+    leaf.startsWith('# project'), JSON.stringify(leaf.slice(0, 40)));
+  ok('하위 디렉토리는 언제나 `# Subdirectories` 그룹이다(공식 리터럴)',
     readIfExists(path.join(home, 'projects', 'index.md')).startsWith('# Subdirectories'),
     JSON.stringify(readIfExists(path.join(home, 'projects', 'index.md')).slice(0, 40)));
+
+  // --- 공식 생성기(`bundle/index.py`)의 그룹핑·정렬 규칙 ---
+  // 한 index.md에 **섹션이 여러 개** 올 수 있다: concept과 하위 디렉토리가 섞인 디렉토리는 둘 다 낸다.
+  // 실증: `stackoverflow/references/index.md`가 `# Reference` + `# Subdirectories` 두 섹션이다.
+  const mixed = bootstrapped('okf-sections');
+  fs.mkdirSync(path.join(mixed, 'references', 'joins'), { recursive: true });
+  const R = (t, ty, d) => `---\ntype: ${ty}\ntitle: "${t}"\ndescription: "${d}"\ntimestamp: 2026-07-15\n---\n본문\n`;
+  // **파일명순과 제목순을 일부러 어긋나게 둔다** — 같으면 정렬을 지워도(안정 정렬) 결과가 같아
+  // 회귀가 안 잡힌다. `aaa.md`가 제목은 Zebra, `zzz.md`가 제목은 Alpha다.
+  fs.writeFileSync(path.join(mixed, 'references', 'aaa.md'), R('Zebra', 'reference', '마지막'));
+  fs.writeFileSync(path.join(mixed, 'references', 'zzz.md'), R('Alpha', 'reference', '첫째'));
+  fs.writeFileSync(path.join(mixed, 'references', 'mmm.md'), R('Middle', 'pattern', '다른 type'));
+  fs.writeFileSync(path.join(mixed, 'references', 'joins', 'j.md'), R('Join', 'reference', '조인'));
+  // 설명이 없으면 ` - ` 접미사 자체를 생략한다(공식: `suffix = f" - {desc}" if desc else ""`).
+  fs.writeFileSync(path.join(mixed, 'references', 'nodesc.md'),
+    '---\ntype: reference\ntitle: "No Description"\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(mixed);
+  const refIdx = readIfExists(path.join(mixed, 'references', 'index.md'));
+  const headings = (refIdx.match(/^# .*$/gm) || []);
+  ok('한 index.md에 type별 섹션이 여러 개 온다',
+    headings.length === 3, JSON.stringify(headings));
+  ok('heading은 concept의 type 값 그대로다(디렉토리 이름이 아니다)',
+    headings.includes('# reference') && headings.includes('# pattern'), JSON.stringify(headings));
+  ok('섹션 순서는 heading 알파벳 오름차순이다',
+    JSON.stringify(headings) === JSON.stringify([...headings].sort()), JSON.stringify(headings));
+  const refSection = refIdx.slice(refIdx.indexOf('# reference'));
+  // 파일명순이면 Zebra(aaa.md)가 먼저다 — 제목순이어야 Alpha(zzz.md)가 먼저 온다.
+  ok('섹션 안 항목은 링크 텍스트 오름차순이다(파일명순이 아니다)',
+    refSection.indexOf('[Alpha]') < refSection.indexOf('[No Description]')
+    && refSection.indexOf('[No Description]') < refSection.indexOf('[Zebra]'), refSection);
+  ok('설명이 없으면 ` - ` 접미사를 생략한다(concept)',
+    refIdx.split('\n').includes('* [No Description](nodesc.md)'), JSON.stringify(refIdx));
+  // 하위 디렉토리도 같다. `joins`는 DIR_DESCRIPTIONS에 없으므로 설명이 없어야 한다.
+  ok('설명이 없으면 ` - ` 접미사를 생략한다(하위 디렉토리)',
+    refIdx.split('\n').includes('* [joins](joins/index.md)'), JSON.stringify(refIdx));
+  ok('index 어디에도 개수 표기가 없다(공식 74개 항목 전수 확인)',
+    !/개\b/.test(refIdx.replace(/^# .*$/gm, '')), JSON.stringify(refIdx));
   ok('루트 index도 같은 규칙이다(언제나 하위 디렉토리 목록)',
     /^# Subdirectories$/m.test(readIfExists(okfPaths(home).rootIndex)),
     JSON.stringify(readIfExists(okfPaths(home).rootIndex).slice(0, 120)));
@@ -5053,8 +5101,11 @@ if (process.platform !== 'win32') {
     !/\]\(\//.test(leaf), JSON.stringify(leaf));
 
   const parent = readIfExists(path.join(home, 'projects', 'index.md'));
+  // 하위 디렉토리 링크 텍스트는 **디렉토리 이름 그대로**이고 링크는 `dir/index.md`다.
+  // 설명이 없으면 ` - ` 접미사 자체를 생략한다(공식 생성기의 `suffix = f" - {desc}" if desc else ""`).
   ok('상위 index는 하위 index로 내려가는 링크를 같은 포맷으로 낸다',
-    parent.includes('* [manna](manna/index.md) - '), JSON.stringify(parent));
+    parent.includes('* [manna](manna/index.md)') && parent.startsWith('# Subdirectories'),
+    JSON.stringify(parent));
 
   const root = readIfExists(okfPaths(home).rootIndex);
   ok('루트 index도 bullet 목록이다(카테고리별 heading이 아니다)',

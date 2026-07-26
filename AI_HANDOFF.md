@@ -321,12 +321,30 @@ okf/bundles/acme_retail/tables/index.md
   * [Customer Orders](orders.md) - One row per completed customer order across …
 ```
 
-규범 셋: **heading** · **`* ` bullet** · **상대경로 링크 + ` - ` 설명**.
-세 번들(`acme_retail`·`ga4`·`stackoverflow`)에서 동일함을 확인했다 — 한 번들에 과적합하지 않았다.
+공식 저장소를 index.md **25개 전수** + `SPEC.md` §8 + **실제 생성 코드**
+(`okf/src/reference_agent/bundle/index.py`)까지 대조했다. 규칙은 이렇다:
 
-**heading 텍스트는 "그 목록이 무엇을 담는지"를 말한다**: 하위 디렉토리만 담으면
-`# Subdirectories`(공식 고정 문자열), concept를 담으면 내용 라벨(`# BigQuery Table`).
-루트 index는 언제나 하위 디렉토리 목록이므로 `# Subdirectories`다.
+- **heading은 concept의 `type` frontmatter 값 그대로**다(`# Reference`). 디렉토리 이름이 아니다 —
+  이름이 다른 `joins/`·`metrics/`가 **둘 다 `# Reference`**인 것이 결정적 증거다(안의 concept이
+  전부 그 type이라서). `type`이 없으면 `# Other`.
+- **하위 디렉토리는 언제나 리터럴 `Subdirectories` 그룹**이다.
+- **한 index.md에 섹션이 여러 개 온다.** concept과 하위 디렉토리가 섞이면 둘 다 낸다
+  (`stackoverflow/references/index.md`가 `# Reference` + `# Subdirectories`).
+- 섹션 순서 = heading 알파벳 오름차순, 섹션 사이 빈 줄 1개.
+- 항목 순서 = 링크 텍스트 대소문자 무시 오름차순.
+- concept 링크 텍스트 = `title`(없으면 파일 stem), 하위 디렉토리 링크 텍스트 = **디렉토리 이름 그대로**.
+- 하위 디렉토리 링크는 `dir/index.md`다 — SPEC §8 예시는 `subdir/`이지만 **실물 74개 항목 중
+  `/`로 끝나는 링크는 0개**이고 생성 코드도 `f"{child.name}/{_INDEX_FILE}"`다. 실물이 규범이다.
+- **설명이 없으면 ` - ` 접미사 자체를 생략**한다.
+- **개수 표기는 어디에도 없다**(74개 항목 전수 확인).
+- **index.md에 frontmatter는 25개 중 0개.** SPEC §12가 루트 index.md에 한해 `okf_version`을
+  허용하고 우리 S2가 그것을 쓴다 — 스펙이 명시적으로 허용하는 유일한 예외다.
+
+`ga4`·`stackoverflow`는 위 생성 코드의 출력물이라 손으로 쓴 `acme_retail`보다 규범적이다
+(acme_retail은 정렬이 알파벳순이 아니고 `.py` 파일을 등재하는 예외가 있다).
+
+SPEC §8에는 **MUST가 하나도 없다.** 구속력 있는 문장은 §11-3(`index.md`는 §8 구조를 따른다)
+뿐이고, bullet 문자·구분자·heading=type·`dir/index.md`는 구현과 실물에서만 확인된다.
 예전 우리 포맷(`## dir (설명)` heading + `- [t](/abs): desc`)은 셋 다 어긋났다.
 
 - **모든 디렉토리에 index.md**가 있고 임의 깊이로 중첩된다(`regenerateDir`가 재귀). 루트도 같은
@@ -479,7 +497,7 @@ $0.216→$0.258→**$0.447**로 오히려 순증가했고, zero_base_chain도 $0
 
 ```sh
 node test/smoke.mjs
-# 670 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
+# 677 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
 
 node test/bench.mjs
 # SessionStart 57.4ms (56.7-58.2), SessionEnd 43.4ms (41.8-43.9)
