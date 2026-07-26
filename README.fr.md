@@ -57,6 +57,75 @@ Pourquoi une base sur l’idle ? Les sessions se terminent rarement de façon ex
 
 ## Benchmark OKF
 
+<!-- okf-benchmark: 2026-07-26-e1 -->
+
+### E1 — recall@cap de la porte, mesuré pour $0.00 (2026-07-26)
+
+Cette exécution a coûté **$0.00**, et c’est prouvé par l’exécution elle-même, pas déclaré : le
+harnais place un `claude` factice en tête de `PATH` avant de lancer le hook, et ce stub n’a jamais
+été exécuté (`paidCallTrapTripped: false`). 4 niveaux × 20 graines = **80 échantillons, 6,2 secondes**.
+
+Un seul nombre est mesuré : `recall(N)` — avec N concepts dans le bundle, la proportion des 20
+questions gelées dont le concept-réponse survit dans l’index que la porte injecte réellement.
+
+> **le recall n’est pas un taux de bonnes réponses.** Cette mesure répond seulement à « la porte
+> a-t-elle chargé la ligne pertinente ». Savoir si « le modèle a réellement utilisé cette ligne » est
+> invérifiable sans appels payants. Les distracteurs synthétiques ne donnent qu’une **borne
+> supérieure** de la performance du routeur : le recall en usage réel est donc plus bas.
+
+| N | recall moyenne ± écart-type | échantillon | min–max |
+|---|---|---|---|
+| 24 | 0.400 ± 0.000 | n=20 | 0.40–0.40 |
+| 50 | 0.277 ± 0.038 | n=20 | 0.20–0.35 |
+| 100 | 0.245 ± 0.036 | n=20 | 0.20–0.30 |
+| 200 | 0.248 ± 0.041 | n=20 | 0.15–0.30 |
+
+`n=` et le min–max figurent **sur la même ligne** que la moyenne. C’est une convention établie par
+`test/bench-report.mjs` et imposée par le smoke, afin qu’une médiane sur deux échantillons ne soit
+plus jamais tracée comme un point de courbe.
+
+**R3 s’est déclenché** (violation de la décroissance monotone : +0,0025 de N=100 à N=200), et **R2
+s’est déclenché lui aussi** (`recall(24)` = 0.400 < 0.60). Conformément à la règle de traitement
+pré-enregistrée, **les valeurs absolues de recall ne servent donc de fondement à aucune décision de
+politique.** Cette règle tient bien que le delta fautif ne vaille qu’un 1/16 de l’écart-type entre
+graines de ce niveau, car le pré-enregistrement avait fixé d’avance qu’un petit delta n’annule pas un
+déclenchement. Le tableau est publié ; il ne décide de rien.
+
+**Le résultat, c’est la forme et non le niveau.** Sur les 20 questions, 8 survivent à 0 à tous les
+niveaux et 3 survivent à 1.0 à tous les niveaux — ici le recall est quasi binaire plutôt qu’un
+curseur continu. La porte remplit en round-robin, une ligne par catégorie ; la catégorie
+`references`, qui concentre 8 des réponses, en écarte donc **structurellement** 7 — indépendamment de
+la qualité du savoir ou de la difficulté de la question. Et le seul signal qui décide quelles 1–2
+lignes occupent ces places est **l’ordre alphabétique du nom de fichier** : la porte actuelle ne
+contient aucune référence au cwd, à la fraîcheur ou à la requête.
+
+**Profondeur d’imbrication (axe A-2).** 25 concepts fixés, contenus identiques, seuls les chemins
+rendus plus profonds :
+
+| Condition | lignes de concept injectées | liens de sous-domaine |
+|---|---:|---:|
+| plat | 28 | 0 |
+| 2 niveaux | 27 | 0 |
+| 3 niveaux | 26 | 0 |
+| 4 niveaux | 25 | 0 |
+
+Exactement une ligne perdue par niveau de profondeur — linéaire, sans effondrement (-7,1 % à 3
+niveaux face au plat). La cause est la pression en octets, pas un déroulé de chaîne défaillant :
+chaque segment de chemin supplémentaire allonge toutes les lignes jusqu’à en pousser une hors du
+budget. (28 et non 25 parce qu’`ensureBootstrap` plante les mêmes concepts d’amorçage dans chaque
+condition ; cela n’affecte pas la comparaison entre conditions.)
+
+```sh
+node test/gate-recall.mjs     # 4 niveaux × 20 graines, ~6 s, zéro appel payant
+node test/bench-nesting.mjs   # l’axe de profondeur d’imbrication
+node test/smoke.mjs           # garde-fous de régression
+```
+
+[Rapport E1](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
+[pré-enregistrement E1](docs/benchmarks/pre-registration-2026-07-26-e1.md)
+
+### Exécution payante de bout en bout (v3, 2026-07-16)
+
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
 **OKF est un surcoût pour presque tout ce que le code peut résoudre, et là où le code n’a aucune

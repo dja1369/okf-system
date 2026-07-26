@@ -58,6 +58,75 @@ Por ejemplo, “desplegar 10% → 50% → 100% y revertir por encima de 0,5% de 
 
 ## Benchmark de OKF
 
+<!-- okf-benchmark: 2026-07-26-e1 -->
+
+### E1 — recall@cap de la puerta, medido por $0.00 (2026-07-26)
+
+Esta ejecución costó **$0.00**, y eso queda probado por la propia ejecución, no declarado: el arnés
+coloca un `claude` de pega al principio del `PATH` antes de lanzar el hook, y ese stub no se ejecutó
+ni una vez (`paidCallTrapTripped: false`). 4 niveles × 20 semillas = **80 muestras, 6,2 segundos**.
+
+Mide un único número: `recall(N)` — con N conceptos en el paquete, la fracción de 20 preguntas
+congeladas cuyo concepto-respuesta sobrevive en el índice que la puerta inyecta realmente.
+
+> **recall no es una tasa de acierto.** Esta medición solo responde a «¿cargó la puerta la línea
+> relevante?». Si «el modelo usó realmente esa línea» no puede verificarse sin llamadas de pago. Los
+> distractores sintéticos dan solo una **cota superior** del rendimiento del enrutador, así que el
+> recall en uso real es más bajo que este.
+
+| N | recall media ± desv. típ. | muestra | min–max |
+|---|---|---|---|
+| 24 | 0.400 ± 0.000 | n=20 | 0.40–0.40 |
+| 50 | 0.277 ± 0.038 | n=20 | 0.20–0.35 |
+| 100 | 0.245 ± 0.036 | n=20 | 0.20–0.30 |
+| 200 | 0.248 ± 0.041 | n=20 | 0.15–0.30 |
+
+`n=` y el min–max viajan **en la misma fila** que la media. Es una convención que estableció
+`test/bench-report.mjs` y que el smoke impone, para que nunca vuelva a dibujarse una mediana de dos
+muestras como un punto de una curva.
+
+**R3 se disparó** (violación del descenso monótono: +0,0025 de N=100 a N=200), y **R2 también se
+disparó** (`recall(24)` = 0.400 < 0.60). Según la regla de tratamiento preinscrita, **los valores
+absolutos de recall no se usan como fundamento de ninguna decisión de política.** Esa regla se
+mantiene aunque el delta infractor sea 1/16 de la desviación típica entre semillas de ese nivel,
+porque la preinscripción fijó de antemano que un delta pequeño no cancela un disparo. La tabla se
+publica; no decide nada.
+
+**El hallazgo es la forma, no el nivel.** De las 20 preguntas, 8 sobreviven con 0 en todos los
+niveles y 3 sobreviven con 1.0 en todos los niveles: aquí el recall es casi binario en vez de un
+dial continuo. La puerta rellena por turnos, una línea por categoría, así que la categoría
+`references`, que concentra 8 de las respuestas, descarta **estructuralmente** 7 de ellas, al margen
+de la calidad del conocimiento o de la dificultad de la pregunta. Y la única señal que decide qué 1–2
+líneas ocupan esos huecos es el **orden alfabético del nombre de archivo**: la puerta actual no
+contiene ninguna referencia a cwd, a la novedad ni a la consulta.
+
+**Profundidad de anidamiento (eje A-2).** 25 conceptos fijos, contenidos idénticos, solo las rutas
+más profundas:
+
+| Condición | líneas de concepto inyectadas | enlaces de subdominio |
+|---|---:|---:|
+| plano | 28 | 0 |
+| 2 niveles | 27 | 0 |
+| 3 niveles | 26 | 0 |
+| 4 niveles | 25 | 0 |
+
+Se pierde exactamente una línea por nivel de profundidad — lineal, sin colapso (-7,1 % con 3 niveles
+frente al plano). La causa es la presión de bytes, no un recorrido de cadena fallido: cada segmento
+extra de ruta alarga todas las líneas hasta que una queda fuera del presupuesto. (28 y no 25 porque
+`ensureBootstrap` planta los mismos conceptos semilla en todas las condiciones; no afecta a la
+comparación entre condiciones.)
+
+```sh
+node test/gate-recall.mjs     # 4 niveles × 20 semillas, ~6 s, cero llamadas de pago
+node test/bench-nesting.mjs   # el eje de profundidad de anidamiento
+node test/smoke.mjs           # guardas de regresión
+```
+
+[Informe E1](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
+[preinscripción E1](docs/benchmarks/pre-registration-2026-07-26-e1.md)
+
+### Ejecución de pago de extremo a extremo (v3, 2026-07-16)
+
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
 **OKF supone una sobrecarga para casi todo lo que el código puede responder, y donde el código no tiene

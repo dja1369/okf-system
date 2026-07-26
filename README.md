@@ -71,6 +71,70 @@ Claude Code permits one `statusLine`. OKF does not install or overwrite it. Poin
 
 ## OKF benchmark
 
+<!-- okf-benchmark: 2026-07-26-e1 -->
+
+### E1 — gate recall@cap, measured for $0.00 (2026-07-26)
+
+This run cost **$0.00**, and that is proven by the run rather than declared: the harness puts a stub
+`claude` at the front of `PATH` before launching the hook, and the stub was never executed
+(`paidCallTrapTripped: false`). 4 levels × 20 seeds = **80 samples, 6.2 seconds**.
+
+It measures one number: `recall(N)` — with N concepts in the bundle, the fraction of 20 frozen
+questions whose answer concept survives into the index the gate actually injects.
+
+> **recall is not an accuracy rate.** This measurement only answers "did the gate load the relevant
+> line". Whether "the model actually used that line" cannot be verified without paid calls. Synthetic
+> distractors give only an **upper bound** on router performance, so real-world recall is lower than this.
+
+| N | recall mean ± stdev | samples | min–max |
+|---|---|---|---|
+| 24 | 0.400 ± 0.000 | n=20 | 0.40–0.40 |
+| 50 | 0.277 ± 0.038 | n=20 | 0.20–0.35 |
+| 100 | 0.245 ± 0.036 | n=20 | 0.20–0.30 |
+| 200 | 0.248 ± 0.041 | n=20 | 0.15–0.30 |
+
+`n=` and the min–max ride in the same row as the mean. That is a convention `test/bench-report.mjs`
+established and smoke enforces, so that a two-sample median can never again be drawn as a point on a
+curve.
+
+**R3 fired** (monotonic decrease violated: +0.0025 from N=100 to N=200), and **R2 fired** as well
+(`recall(24)` = 0.400 < 0.60). Under the pre-registered handling rule, **the absolute recall values
+are therefore not used as grounds for any policy decision.** That rule holds even though the
+violating delta is 1/16 of that level's seed-to-seed stdev, because the pre-registration fixed in
+advance that a small delta does not cancel a firing. The table is published; it decides nothing.
+
+**The shape is the finding, not the level.** Of the 20 questions, 8 survive at 0 across every level
+and 3 survive at 1.0 across every level — recall here is close to binary rather than a continuous
+dial. The gate fills round-robin, one line per category, so the `references` category, which holds 8
+of the answers, structurally drops 7 of them — independent of knowledge quality or question
+difficulty. And the only signal deciding which 1–2 lines take those slots is **alphabetical filename
+order**: the current gate contains zero references to cwd, recency, or the query.
+
+**Nesting depth (axis A-2).** 25 concepts held fixed, contents identical, only the paths made deeper:
+
+| Condition | concept lines injected | sub-domain links |
+|---|---:|---:|
+| flat | 28 | 0 |
+| 2 levels | 27 | 0 |
+| 3 levels | 26 | 0 |
+| 4 levels | 25 | 0 |
+
+Exactly one line is lost per level of depth — linear, with no collapse (-7.1% at 3 levels against
+flat). The cause is byte pressure, not a failed chain walk: each extra path segment lengthens every
+line until one is pushed out of the budget. (28 rather than 25 because `ensureBootstrap` plants the
+same seed concepts in every condition; it does not affect the comparison between conditions.)
+
+```sh
+node test/gate-recall.mjs     # 4 levels × 20 seeds, ~6 s, no paid calls
+node test/bench-nesting.mjs   # the nesting-depth axis
+node test/smoke.mjs           # regression guards
+```
+
+[E1 report](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
+[E1 pre-registration](docs/benchmarks/pre-registration-2026-07-26-e1.md)
+
+### End-to-end paid run (v3, 2026-07-16)
+
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
 **OKF is overhead on almost everything code can answer, and where code has no answer at all, a

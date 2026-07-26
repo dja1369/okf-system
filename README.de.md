@@ -58,6 +58,74 @@ Warum idle-basiert? Sitzungen enden selten explizit — Background-Agenten tun e
 
 ## OKF-Benchmark
 
+<!-- okf-benchmark: 2026-07-26-e1 -->
+
+### E1 — Gate-recall@cap, gemessen für $0.00 (2026-07-26)
+
+Dieser Lauf kostete **$0.00**, und das ist durch den Lauf bewiesen, nicht bloß behauptet: Die Harness
+setzt vor dem Start des Hooks ein Stub-`claude` an den Anfang von `PATH`, und dieser Stub wurde nie
+ausgeführt (`paidCallTrapTripped: false`). 4 Ebenen × 20 Seeds = **80 Stichproben, 6,2 Sekunden**.
+
+Gemessen wird eine einzige Zahl: `recall(N)` — bei N Konzepten im Bundle der Anteil der 20
+eingefrorenen Fragen, deren Antwort-Konzept in dem Index überlebt, den das Gate tatsächlich injiziert.
+
+> **recall ist keine Trefferquote.** Diese Messung beantwortet nur: „Hat das Gate die relevante Zeile
+> geladen?“ Ob „das Modell diese Zeile tatsächlich genutzt hat“, lässt sich ohne bezahlte Aufrufe nicht
+> prüfen. Synthetische Distraktoren liefern nur eine **Obergrenze** der Router-Leistung, der reale
+> recall liegt also darunter.
+
+| N | recall Mittel ± Stdabw | Stichprobe | min–max |
+|---|---|---|---|
+| 24 | 0.400 ± 0.000 | n=20 | 0.40–0.40 |
+| 50 | 0.277 ± 0.038 | n=20 | 0.20–0.35 |
+| 100 | 0.245 ± 0.036 | n=20 | 0.20–0.30 |
+| 200 | 0.248 ± 0.041 | n=20 | 0.15–0.30 |
+
+`n=` und min–max stehen **in derselben Zeile** wie der Mittelwert. Das ist eine Konvention, die
+`test/bench-report.mjs` etabliert hat und die der Smoke-Test erzwingt — damit nie wieder ein Median
+aus zwei Stichproben als Punkt einer Kurve gezeichnet wird.
+
+**R3 hat ausgelöst** (Verletzung der monotonen Abnahme: +0,0025 von N=100 auf N=200), und **R2 hat
+ebenfalls ausgelöst** (`recall(24)` = 0.400 < 0.60). Nach der vorregistrierten Behandlungsregel werden
+**die absoluten recall-Werte deshalb nicht als Grundlage für eine Policy-Entscheidung verwendet.**
+Diese Regel gilt, obwohl das verletzende Delta nur 1/16 der Seed-Standardabweichung dieser Ebene
+beträgt — die Vorregistrierung hat vorab festgeschrieben, dass ein kleines Delta ein Auslösen nicht
+aufhebt. Die Tabelle wird veröffentlicht; entschieden wird damit nichts.
+
+**Der Befund ist die Form, nicht das Niveau.** Von den 20 Fragen überleben 8 auf allen Ebenen mit 0
+und 3 auf allen Ebenen mit 1.0 — recall ist hier nahezu binär statt ein kontinuierlicher Regler. Das
+Gate füllt im Round-Robin je eine Zeile pro Kategorie, deshalb fallen in der Kategorie `references`,
+die 8 der Antworten enthält, **strukturell** 7 davon heraus — unabhängig von Wissensqualität oder
+Schwierigkeit der Frage. Und das einzige Signal, das entscheidet, welche 1–2 Zeilen diese Plätze
+belegen, ist die **alphabetische Reihenfolge der Dateinamen**: Das aktuelle Gate enthält null
+Referenzen auf cwd, Aktualität oder die Anfrage.
+
+**Verschachtelungstiefe (Achse A-2).** 25 Konzepte fest, Inhalte identisch, nur die Pfade tiefer:
+
+| Bedingung | injizierte Konzept-Zeilen | Sub-Domain-Links |
+|---|---:|---:|
+| flach | 28 | 0 |
+| 2 Ebenen | 27 | 0 |
+| 3 Ebenen | 26 | 0 |
+| 4 Ebenen | 25 | 0 |
+
+Pro Tiefenstufe geht genau eine Zeile verloren — linear, ohne Zusammenbruch (-7,1 % bei 3 Ebenen
+gegenüber flach). Ursache ist Byte-Druck, kein gescheitertes Auflösen der Kette: Jedes zusätzliche
+Pfadsegment verlängert jede Zeile, bis eine aus dem Budget gedrängt wird. (28 statt 25, weil
+`ensureBootstrap` in jeder Bedingung dieselben Seed-Konzepte anlegt; der Vergleich zwischen den
+Bedingungen bleibt davon unberührt.)
+
+```sh
+node test/gate-recall.mjs     # 4 Ebenen × 20 Seeds, ~6 s, keine bezahlten Aufrufe
+node test/bench-nesting.mjs   # die Achse der Verschachtelungstiefe
+node test/smoke.mjs           # Regressions-Guards
+```
+
+[E1-Bericht](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
+[E1-Vorregistrierung](docs/benchmarks/pre-registration-2026-07-26-e1.md)
+
+### Bezahlter Ende-zu-Ende-Lauf (v3, 2026-07-16)
+
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
 **OKF ist Overhead bei fast allem, was Code beantworten kann, und dort, wo Code überhaupt keine

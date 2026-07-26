@@ -57,6 +57,51 @@ Por que baseado em ociosidade? Sessões raramente terminam de forma explícita �
 
 ## Benchmark do OKF
 
+<!-- okf-benchmark: 2026-07-26-e1 -->
+
+### E1 — recall@cap do gate, medido por $0.00 (2026-07-26)
+
+Esta execução custou **$0.00**, e isso é provado pela própria execução, não declarado: o arnês coloca um `claude` de mentira no início do `PATH` antes de subir o hook, e esse stub nunca foi executado (`paidCallTrapTripped: false`). 4 níveis × 20 sementes = **80 amostras, 6,2 segundos**.
+
+Mede um único número: `recall(N)` — com N conceitos no bundle, a fração das 20 perguntas congeladas cujo conceito-resposta sobrevive no índice que o gate de fato injeta.
+
+> **recall não é taxa de acerto.** Esta medição só responde "o gate carregou a linha relevante?". Se "o modelo realmente usou aquela linha" não dá para verificar sem chamadas pagas. Distratores sintéticos dão apenas um **limite superior** do desempenho do roteador, então o recall no uso real é menor que este.
+
+| N | recall média ± desvio-padrão | amostra | min–max |
+|---|---|---|---|
+| 24 | 0.400 ± 0.000 | n=20 | 0.40–0.40 |
+| 50 | 0.277 ± 0.038 | n=20 | 0.20–0.35 |
+| 100 | 0.245 ± 0.036 | n=20 | 0.20–0.30 |
+| 200 | 0.248 ± 0.041 | n=20 | 0.15–0.30 |
+
+(Pôr `n=` e o min–max **na mesma linha** da média é uma convenção que `test/bench-report.mjs` estabeleceu e que o smoke impõe.)
+
+**R3 disparou** (violação da queda monotônica: +0,0025 de N=100 para N=200) e **R2 também disparou** (`recall(24)` = 0.400 < 0.60). Pela regra de tratamento pré-registrada, **os valores absolutos de recall não são usados como fundamento de nenhuma decisão de política.** A regra vale mesmo que o delta infrator seja 1/16 do desvio-padrão entre sementes daquele nível, porque o pré-registro fixou de antemão que um delta pequeno não cancela um disparo. A tabela é publicada; ela não decide nada.
+
+**O achado é a forma, não o nível.** Das 20 perguntas, 8 sobrevivem em 0 em todos os níveis e 3 sobrevivem em 1.0 em todos os níveis — aqui o recall é quase binário, e não um dial contínuo. O gate preenche em round-robin, uma linha por categoria, então a categoria `references`, que concentra 8 das respostas, descarta **estruturalmente** 7 delas — independentemente da qualidade do conhecimento ou da dificuldade da pergunta. E o único sinal que decide quais 1–2 linhas ocupam essas vagas é a **ordem alfabética do nome do arquivo**: o gate atual não tem nenhuma referência a cwd, recência ou termos da consulta.
+
+**Profundidade de aninhamento (eixo A-2).** 25 conceitos fixos, conteúdo idêntico, só os caminhos mais profundos:
+
+| Condição | linhas de conceito injetadas | links de subdomínio |
+|---|---:|---:|
+| plano | 28 | 0 |
+| 2 níveis | 27 | 0 |
+| 3 níveis | 26 | 0 |
+| 4 níveis | 25 | 0 |
+
+Exatamente uma linha a menos por nível de profundidade — linear, sem colapso (-7,1% em 3 níveis contra o plano). A causa é pressão de bytes, não uma travessia de cadeia que falhou: cada segmento a mais no caminho alonga todas as linhas até empurrar uma para fora do orçamento.
+
+```sh
+node test/gate-recall.mjs     # 4 níveis × 20 sementes, ~6 s, zero chamadas pagas
+node test/bench-nesting.mjs   # o eixo de profundidade de aninhamento
+node test/smoke.mjs           # guardas de regressão
+```
+
+[Relatório E1](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
+[pré-registro E1](docs/benchmarks/pre-registration-2026-07-26-e1.md)
+
+### Execução paga de ponta a ponta (v3, 2026-07-16)
+
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
 **O OKF é sobrecarga em quase tudo que o código consegue responder, e onde o código não tem resposta alguma, um simples CLAUDE.md também o supera — a única vantagem do OKF é fazer isso de forma mais barata. Um teste direto de sua promessa central (conhecimento acumulado compensa ao longo do tempo) foi executado e refutado.**
