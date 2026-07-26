@@ -58,6 +58,58 @@ Por ejemplo, “desplegar 10% → 50% → 100% y revertir por encima de 0,5% de 
 
 ## Benchmark de OKF
 
+<!-- okf-benchmark: 2026-07-26-e2 -->
+
+### E2 — cuatro caracteres delante del `title` (2026-07-26)
+
+No se cambió ni un byte de ningún cuerpo, nombre de archivo ni ruta. Solo se antepusieron cuatro
+caracteres al **`title`** del frontmatter del concepto-respuesta, y con N=400 el `recall` pasa de
+**0.262 a 0.533** — el doble —, y con N=24 pasa de **0.400 a 1.000**. El mismo conocimiento, los
+mismos archivos, el mismo tamaño de paquete. Lo único que cambió es el lugar que ocupa esa línea al
+ordenar.
+
+> **recall no es una tasa de acierto.** Los distractores sintéticos dan solo una **cota superior** del
+> rendimiento del enrutador.
+> **No se deben comparar las cifras de E2 con las de E1 y hablar de «mejora» o «empeoramiento»**: el
+> presupuesto (+11 B) y la forma de generar el relleno cambiaron, así que las dos ejecuciones son
+> condiciones distintas. Lo comparable son las tres condiciones de perturbación *dentro* de E2.
+
+| N | none | front (`!!! `) | back (`힣힣 `) | spread |
+|---|---|---|---|---|
+| 24 | 0.400 ± 0.000 (n=20, 0.40–0.40) | **1.000 ± 0.000** (n=20, 1.00–1.00) | 0.400 ± 0.000 (n=20, 0.40–0.40) | **0.600** |
+| 50 | 0.277 ± 0.038 (n=20, 0.20–0.35) | 0.560 ± 0.064 (n=20, 0.50–0.70) | 0.182 ± 0.044 (n=20, 0.15–0.30) | **0.378** |
+| 100 | 0.247 ± 0.034 (n=20, 0.20–0.30) | 0.523 ± 0.030 (n=20, 0.45–0.55) | 0.170 ± 0.025 (n=20, 0.15–0.20) | **0.353** |
+| 200 | 0.250 ± 0.040 (n=20, 0.15–0.30) | 0.528 ± 0.030 (n=20, 0.45–0.55) | 0.175 ± 0.026 (n=20, 0.15–0.20) | **0.353** |
+| 400 | 0.262 ± 0.039 (n=20, 0.15–0.30) | 0.533 ± 0.024 (n=20, 0.50–0.55) | 0.185 ± 0.024 (n=20, 0.15–0.20) | **0.348** |
+
+**R6 se diseñó para refutar, y el intento de refutación fracasó.** R6 se preinscribió como «si cambiar
+el `title` no mueve el `recall`, el diagnóstico de dominio del orden es falso», con un umbral de 0,05.
+El spread medido va de 0,348 a 0,600, es decir, **de 7 a 12 veces el umbral**: el intento de
+refutación no prosperó y el diagnóstico sobrevivió. **En una puerta que no contiene ninguna señal de
+relevancia este es el resultado esperado, no el hallazgo de un fallo**; lo nuevo es que su magnitud ya
+es un número.
+
+**`cwdIndependent` se da la vuelta.** Los 6 conceptos que en E1 quedaban aniquilados (0.000) con
+N≥200 vuelven a **0.967** con un solo prefijo. Aquel resultado de E1 no decía «el conocimiento
+independiente del repositorio está en desventaja»: era una función del nombrado.
+
+**R2 y R3 volvieron a dispararse**, así que, según la regla de tratamiento preinscrita, los valores
+absolutos de recall siguen sin usarse como fundamento de ninguna decisión de política.
+
+**En disciplina de medición sí se avanzó un paso.** En E1 los fixtures aparecían por primera vez en el
+commit del informe; en E2 viajan dentro del commit de preinscripción, y el smoke impone una
+desigualdad estricta mediante `git log --diff-filter=A`.
+
+```sh
+node test/gate-recall.mjs --e2 --perturb all   # 3 condiciones × 5 niveles × 20 semillas
+```
+
+Esa ejecución registra **$0.00** y **26,6 segundos** para 300 muestras. Ambas son propiedades del
+arnés de medición, no afirmaciones sobre el coste ni la velocidad de la puerta.
+
+[Informe E2](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
+[preinscripción E2](docs/benchmarks/pre-registration-2026-07-26-e2.md)
+
 <!-- okf-benchmark: 2026-07-26-e1 -->
 
 ### E1 — recall@cap de la puerta, medido por $0.00 (2026-07-26)

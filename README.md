@@ -71,6 +71,56 @@ Claude Code permits one `statusLine`. OKF does not install or overwrite it. Poin
 
 ## OKF benchmark
 
+<!-- okf-benchmark: 2026-07-26-e2 -->
+
+### E2 — four characters in front of `title` (2026-07-26)
+
+Not one byte of any body, filename, or path was changed. Four characters were prepended to the
+frontmatter **`title`** of the answer concept, and at N=400 `recall` goes **0.262 → 0.533** — double —
+while at N=24 it goes **0.400 → 1.000**. Same knowledge, same files, same bundle size. The only thing
+that changed is where the line sorts.
+
+> **recall is not an accuracy rate.** Synthetic distractors give only an **upper bound** on router
+> performance.
+> **Do not compare E2's numbers against E1's and call it "better" or "worse"** — the budget (+11 B) and
+> the way filler is generated both changed, so the two runs are different conditions. What is
+> comparable is the three perturbation conditions *within* E2.
+
+| N | none | front (`!!! `) | back (`힣힣 `) | spread |
+|---|---|---|---|---|
+| 24 | 0.400 ± 0.000 (n=20, 0.40–0.40) | **1.000 ± 0.000** (n=20, 1.00–1.00) | 0.400 ± 0.000 (n=20, 0.40–0.40) | **0.600** |
+| 50 | 0.277 ± 0.038 (n=20, 0.20–0.35) | 0.560 ± 0.064 (n=20, 0.50–0.70) | 0.182 ± 0.044 (n=20, 0.15–0.30) | **0.378** |
+| 100 | 0.247 ± 0.034 (n=20, 0.20–0.30) | 0.523 ± 0.030 (n=20, 0.45–0.55) | 0.170 ± 0.025 (n=20, 0.15–0.20) | **0.353** |
+| 200 | 0.250 ± 0.040 (n=20, 0.15–0.30) | 0.528 ± 0.030 (n=20, 0.45–0.55) | 0.175 ± 0.026 (n=20, 0.15–0.20) | **0.353** |
+| 400 | 0.262 ± 0.039 (n=20, 0.15–0.30) | 0.533 ± 0.024 (n=20, 0.50–0.55) | 0.185 ± 0.024 (n=20, 0.15–0.20) | **0.348** |
+
+**R6 was designed to refute, and the refutation failed.** R6 was pre-registered as "if changing the
+`title` does not move `recall`, the sort-dominance diagnosis is wrong", with a threshold of 0.05. The
+measured spread is 0.348–0.600 — **7 to 12 times the threshold** — so the attempt to refute did not
+land and the diagnosis survived. **In a gate that contains zero relevance signals this is the expected
+result, not the discovery of a bug**; what is new is that its size is now a number.
+
+**`cwdIndependent` flips.** The 6 concepts that were wiped out (0.000) at N≥200 in E1 come back at
+**0.967** under a single prefix. That E1 result was not "repository-independent knowledge is
+disadvantaged" — it was a function of naming.
+
+**R2 and R3 fired again**, so under the pre-registered handling rule the absolute recall values are
+still not used as grounds for any policy decision.
+
+**One notch forward on measurement discipline.** In E1 the fixtures first appeared in the report
+commit; in E2 they ship inside the pre-registration commit, and smoke enforces a strict inequality via
+`git log --diff-filter=A`.
+
+```sh
+node test/gate-recall.mjs --e2 --perturb all   # 3 conditions × 5 levels × 20 seeds
+```
+
+That run reports **$0.00** and **26.6 seconds** for 300 samples. Both are properties of the measuring
+harness — they are not claims about the gate's cost or speed.
+
+[E2 report](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
+[E2 pre-registration](docs/benchmarks/pre-registration-2026-07-26-e2.md)
+
 <!-- okf-benchmark: 2026-07-26-e1 -->
 
 ### E1 — gate recall@cap, measured for $0.00 (2026-07-26)

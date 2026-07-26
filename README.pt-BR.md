@@ -57,6 +57,40 @@ Por que baseado em ociosidade? Sessões raramente terminam de forma explícita �
 
 ## Benchmark do OKF
 
+<!-- okf-benchmark: 2026-07-26-e2 -->
+
+### E2 — quatro caracteres antes do `title` (2026-07-26)
+
+Nenhum byte de corpo, nome de arquivo ou caminho foi alterado. Bastou pôr quatro caracteres antes do **`title`** do frontmatter do conceito-resposta para o `recall` ir de **0.262 a 0.533** em N=400 — o dobro — e de **0.400 a 1.000** em N=24. O mesmo conhecimento, os mesmos arquivos, o mesmo tamanho de bundle. O que mudou foi só a posição da linha na ordenação.
+
+> **recall não é taxa de acerto.** Distratores sintéticos dão apenas um **limite superior** do desempenho do roteador.
+> **Não compare os números do E2 com os do E1 e chame isso de "melhora" ou "piora"** — o orçamento (+11 B) e o modo de gerar o filler mudaram, então as duas execuções são condições diferentes. O que dá para comparar são as três condições de perturbação *dentro* do E2.
+
+| N | none | front (`!!! `) | back (`힣힣 `) | spread |
+|---|---|---|---|---|
+| 24 | 0.400 ± 0.000 (n=20, 0.40–0.40) | **1.000 ± 0.000** (n=20, 1.00–1.00) | 0.400 ± 0.000 (n=20, 0.40–0.40) | **0.600** |
+| 50 | 0.277 ± 0.038 (n=20, 0.20–0.35) | 0.560 ± 0.064 (n=20, 0.50–0.70) | 0.182 ± 0.044 (n=20, 0.15–0.30) | **0.378** |
+| 100 | 0.247 ± 0.034 (n=20, 0.20–0.30) | 0.523 ± 0.030 (n=20, 0.45–0.55) | 0.170 ± 0.025 (n=20, 0.15–0.20) | **0.353** |
+| 200 | 0.250 ± 0.040 (n=20, 0.15–0.30) | 0.528 ± 0.030 (n=20, 0.45–0.55) | 0.175 ± 0.026 (n=20, 0.15–0.20) | **0.353** |
+| 400 | 0.262 ± 0.039 (n=20, 0.15–0.30) | 0.533 ± 0.024 (n=20, 0.50–0.55) | 0.185 ± 0.024 (n=20, 0.15–0.20) | **0.348** |
+
+**R6 foi desenhado para refutar, e a tentativa de refutação falhou.** R6 foi pré-registrado como "se mexer no `title` não move o `recall`, o diagnóstico de dominância da ordenação está errado", com limiar de 0,05. O spread medido é de 0,348 a 0,600 — **de 7 a 12 vezes o limiar** —, então a refutação não se sustentou e o diagnóstico sobreviveu. **Num gate com zero sinais de relevância esse é o resultado esperado, não a descoberta de um bug**; o que há de novo é que o tamanho do efeito virou número.
+
+**`cwdIndependent` se inverte.** Os 6 conceitos que em E1 eram aniquilados (0.000) com N≥200 voltam a **0.967** com um único prefixo. Aquele resultado do E1 não era "conhecimento independente do repositório é prejudicado" — era **função da nomeação**.
+
+**R2 e R3 dispararam de novo**, então, pela regra de tratamento pré-registrada, os valores absolutos de recall continuam sem servir de fundamento para qualquer decisão de política.
+
+**Na disciplina de medição houve um passo à frente.** No E1 os fixtures apareciam pela primeira vez no commit do relatório; no E2 eles vão junto no commit do pré-registro, e o smoke impõe uma desigualdade estrita via `git log --diff-filter=A`.
+
+```sh
+node test/gate-recall.mjs --e2 --perturb all   # 3 condições × 5 níveis × 20 sementes
+```
+
+Essa execução registra **$0.00** e **26,6 segundos** para 300 amostras. Os dois são propriedades do arnês de medição — não são afirmações sobre custo ou velocidade do gate.
+
+[Relatório E2](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
+[pré-registro E2](docs/benchmarks/pre-registration-2026-07-26-e2.md)
+
 <!-- okf-benchmark: 2026-07-26-e1 -->
 
 ### E1 — recall@cap do gate, medido por $0.00 (2026-07-26)

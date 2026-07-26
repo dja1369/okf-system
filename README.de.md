@@ -58,6 +58,59 @@ Warum idle-basiert? Sitzungen enden selten explizit — Background-Agenten tun e
 
 ## OKF-Benchmark
 
+<!-- okf-benchmark: 2026-07-26-e2 -->
+
+### E2 — vier Zeichen vor dem `title` (2026-07-26)
+
+Kein einziges Byte an Text, Dateinamen oder Pfaden wurde geändert. Dem Frontmatter-**`title`** des
+Antwort-Konzepts wurden vier Zeichen vorangestellt, und bei N=400 geht `recall` von **0.262 auf
+0.533** — auf das Doppelte —, bei N=24 von **0.400 auf 1.000**. Gleiches Wissen, gleiche Dateien,
+gleiche Bundle-Größe. Geändert hat sich nur, an welcher Stelle die Zeile einsortiert wird.
+
+> **recall ist keine Trefferquote.** Synthetische Distraktoren liefern nur eine **Obergrenze** der
+> Router-Leistung.
+> **Die Zahlen aus E2 dürfen nicht direkt mit denen aus E1 verglichen und als „besser“ oder
+> „schlechter“ bezeichnet werden** — Budget (+11 B) und die Erzeugung der Filler haben sich geändert,
+> die beiden Läufe sind also verschiedene Bedingungen. Vergleichbar sind die drei
+> Störungsbedingungen *innerhalb* von E2.
+
+| N | none | front (`!!! `) | back (`힣힣 `) | spread |
+|---|---|---|---|---|
+| 24 | 0.400 ± 0.000 (n=20, 0.40–0.40) | **1.000 ± 0.000** (n=20, 1.00–1.00) | 0.400 ± 0.000 (n=20, 0.40–0.40) | **0.600** |
+| 50 | 0.277 ± 0.038 (n=20, 0.20–0.35) | 0.560 ± 0.064 (n=20, 0.50–0.70) | 0.182 ± 0.044 (n=20, 0.15–0.30) | **0.378** |
+| 100 | 0.247 ± 0.034 (n=20, 0.20–0.30) | 0.523 ± 0.030 (n=20, 0.45–0.55) | 0.170 ± 0.025 (n=20, 0.15–0.20) | **0.353** |
+| 200 | 0.250 ± 0.040 (n=20, 0.15–0.30) | 0.528 ± 0.030 (n=20, 0.45–0.55) | 0.175 ± 0.026 (n=20, 0.15–0.20) | **0.353** |
+| 400 | 0.262 ± 0.039 (n=20, 0.15–0.30) | 0.533 ± 0.024 (n=20, 0.50–0.55) | 0.185 ± 0.024 (n=20, 0.15–0.20) | **0.348** |
+
+**R6 war zum Widerlegen gebaut, und der Widerlegungsversuch ist gescheitert.** R6 wurde
+vorregistriert als „bewegt sich `recall` trotz geändertem `title` nicht, ist die Diagnose der
+Sortier-Dominanz falsch“, mit Schwelle 0,05. Der gemessene spread liegt bei 0,348–0,600, also beim
+**7- bis 12-Fachen der Schwelle** — der Widerlegungsversuch ist gescheitert und die Diagnose hat
+überlebt. **In einem Gate mit null Relevanzsignalen ist das das erwartete Ergebnis und nicht der Fund
+eines Bugs**; neu ist allein, dass die Größe dieses Effekts jetzt als Zahl vorliegt.
+
+**`cwdIndependent` kippt.** Die 6 Konzepte, die in E1 bei N≥200 vollständig ausfielen (0.000), kommen
+mit einem einzigen Präfix auf **0.967**. Jenes E1-Ergebnis hieß nicht „repository-unabhängiges Wissen
+ist im Nachteil“ — es war eine Funktion der Benennung.
+
+**R2 und R3 haben erneut ausgelöst**, also werden die absoluten recall-Werte nach der
+vorregistrierten Behandlungsregel weiterhin nicht als Grundlage für eine Policy-Entscheidung
+verwendet.
+
+**Bei der Messdisziplin ist ein Schritt gelungen.** In E1 tauchten die Fixtures erstmals im
+Report-Commit auf; in E2 liegen sie im Vorregistrierungs-Commit bei, und der Smoke-Test erzwingt per
+`git log --diff-filter=A` eine strikte Ungleichung.
+
+```sh
+node test/gate-recall.mjs --e2 --perturb all   # 3 Bedingungen × 5 Ebenen × 20 Seeds
+```
+
+Dieser Lauf weist **$0.00** und **26,6 Sekunden** für 300 Stichproben aus. Beides sind Eigenschaften
+der Mess-Harness — keine Aussagen über Kosten oder Geschwindigkeit des Gates.
+
+[E2-Bericht](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
+[E2-Vorregistrierung](docs/benchmarks/pre-registration-2026-07-26-e2.md)
+
 <!-- okf-benchmark: 2026-07-26-e1 -->
 
 ### E1 — Gate-recall@cap, gemessen für $0.00 (2026-07-26)

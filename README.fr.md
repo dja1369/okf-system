@@ -57,6 +57,61 @@ Pourquoi une base sur l’idle ? Les sessions se terminent rarement de façon ex
 
 ## Benchmark OKF
 
+<!-- okf-benchmark: 2026-07-26-e2 -->
+
+### E2 — quatre caractères devant le `title` (2026-07-26)
+
+Pas un octet de corps de texte, de nom de fichier ou de chemin n’a été modifié. Quatre caractères ont
+été ajoutés devant le **`title`** du frontmatter du concept-réponse, et à N=400 le `recall` passe de
+**0.262 à 0.533** — le double —, tandis qu’à N=24 il passe de **0.400 à 1.000**. Même savoir, mêmes
+fichiers, même taille de bundle. La seule chose qui a changé, c’est la place de cette ligne dans le
+tri.
+
+> **le recall n’est pas un taux de bonnes réponses.** Les distracteurs synthétiques ne donnent qu’une
+> **borne supérieure** de la performance du routeur.
+> **Il ne faut pas comparer directement les chiffres d’E2 à ceux d’E1 pour parler d’« amélioration »
+> ou de « dégradation »** — le budget (+11 o) et la façon de générer les remplisseurs ont changé : les
+> deux campagnes sont donc des conditions différentes. Ce qui est comparable, ce sont les trois
+> conditions de perturbation *à l’intérieur* d’E2.
+
+| N | none | front (`!!! `) | back (`힣힣 `) | spread |
+|---|---|---|---|---|
+| 24 | 0.400 ± 0.000 (n=20, 0.40–0.40) | **1.000 ± 0.000** (n=20, 1.00–1.00) | 0.400 ± 0.000 (n=20, 0.40–0.40) | **0.600** |
+| 50 | 0.277 ± 0.038 (n=20, 0.20–0.35) | 0.560 ± 0.064 (n=20, 0.50–0.70) | 0.182 ± 0.044 (n=20, 0.15–0.30) | **0.378** |
+| 100 | 0.247 ± 0.034 (n=20, 0.20–0.30) | 0.523 ± 0.030 (n=20, 0.45–0.55) | 0.170 ± 0.025 (n=20, 0.15–0.20) | **0.353** |
+| 200 | 0.250 ± 0.040 (n=20, 0.15–0.30) | 0.528 ± 0.030 (n=20, 0.45–0.55) | 0.175 ± 0.026 (n=20, 0.15–0.20) | **0.353** |
+| 400 | 0.262 ± 0.039 (n=20, 0.15–0.30) | 0.533 ± 0.024 (n=20, 0.50–0.55) | 0.185 ± 0.024 (n=20, 0.15–0.20) | **0.348** |
+
+**R6 a été conçu pour réfuter, et la tentative de réfutation a échoué.** R6 avait été pré-enregistré
+ainsi : « si changer le `title` ne fait pas bouger le `recall`, le diagnostic de domination du tri est
+faux », avec un seuil de 0,05. Le spread mesuré va de 0,348 à 0,600, soit **7 à 12 fois le seuil** :
+la tentative de réfutation a échoué et le diagnostic a survécu. **Dans une porte qui ne contient aucun
+signal de pertinence, c’est le résultat attendu et non la découverte d’un bug** ; ce qui est nouveau,
+c’est que sa taille est désormais un nombre.
+
+**`cwdIndependent` se retourne.** Les 6 concepts anéantis (0.000) à N≥200 dans E1 remontent à
+**0.967** avec un seul préfixe. Ce résultat d’E1 ne disait pas « le savoir indépendant du dépôt est
+désavantagé » : il était fonction du nommage.
+
+**R2 et R3 se sont déclenchés de nouveau**, si bien que, selon la règle de traitement
+pré-enregistrée, les valeurs absolues de recall ne servent toujours de fondement à aucune décision de
+politique.
+
+**Côté discipline de mesure, un cran a été gagné.** Dans E1, les fixtures apparaissaient pour la
+première fois dans le commit du rapport ; dans E2, elles accompagnent le commit de pré-enregistrement,
+et le smoke impose une inégalité stricte via `git log --diff-filter=A`.
+
+```sh
+node test/gate-recall.mjs --e2 --perturb all   # 3 conditions × 5 niveaux × 20 graines
+```
+
+Cette exécution affiche **$0.00** et **26,6 secondes** pour 300 échantillons. Ces deux valeurs sont
+des propriétés du harnais de mesure — ce ne sont pas des affirmations sur le coût ou la vitesse de la
+porte.
+
+[Rapport E2](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
+[pré-enregistrement E2](docs/benchmarks/pre-registration-2026-07-26-e2.md)
+
 <!-- okf-benchmark: 2026-07-26-e1 -->
 
 ### E1 — recall@cap de la porte, mesuré pour $0.00 (2026-07-26)
