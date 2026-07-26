@@ -337,9 +337,19 @@ const CEILING = (home) => allConceptLines(home).map((x) => x.line).join('\n');
 // ---------------------------------------------------------------------------
 // 측정
 
+// 줄에서 concept 경로를 뽑는다. **마크다운 링크만 보면 안 된다** — `paths` 전략은 맨 경로를
+// 싣는다. 첫 실행에서 이 함수가 링크 문법만 봐서 `paths`의 reach가 12셀 전부 0.000으로 나왔고,
+// 그것을 "경로만으로는 도달 자체가 안 된다"는 발견으로 읽을 뻔했다. 발견이 아니라 결함이었다.
+function conceptPathOf(line) {
+  const md = LINK_RE.exec(line)?.[1];
+  if (md) return md;
+  const bare = line.trim();
+  return /^\/[^\s)]+\.md$/.test(bare) ? bare : null;
+}
+
 function evaluate(indexText, queries) {
   const lines = indexText.split('\n').filter((l) => l.trim() !== '');
-  const linkOf = lines.map((l) => LINK_RE.exec(l)?.[1] ?? null);
+  const linkOf = lines.map(conceptPathOf);
   let reach = 0; let sel1 = 0; let sel5 = 0;
   const perQuery = [];
   for (const q of queries) {
@@ -523,7 +533,21 @@ function main() {
           reach: { meanDelta: mean(dReach), ...signTest(dReach) },
         };
       }
-      byCell.push({ level, budget, seeds: group.length, per, pairedVsOkf: paired });
+      // **등록된 H2는 두 변화를 겹쳐 잰다.** `titles`는 okf에서 설명을 뗀 것이 아니라
+      // `dump` 순서 + 설명 없음이다. 그래서 okf ↔ titles 차이에는 "설명을 뗀 효과"와
+      // "round-robin을 뺀 효과"가 함께 들어 있다. 등록된 전략만으로 둘을 가를 수 있다 —
+      // 순서가 같은 쌍끼리 비교하면 된다. 새 전략을 추가하지 않으므로 사후 추가가 아니다.
+      const contrast = (a, b) => {
+        const d = group.map((c) => c.strategies[a].sel1 - c.strategies[b].sel1);
+        return { a, b, meanDelta: mean(d), ...signTest(d) };
+      };
+      const decomposed = {
+        // 순서 고정(둘 다 dump 순서), 설명만 다름 → 순수 "설명 효과"
+        descriptionEffect: contrast('titles', 'dump'),
+        // 내용 고정(둘 다 title+description), 순서·오버헤드만 다름 → 순수 "round-robin 효과"
+        roundRobinEffect: contrast('okf', 'dump'),
+      };
+      byCell.push({ level, budget, seeds: group.length, per, pairedVsOkf: paired, decomposed });
     }
   }
 

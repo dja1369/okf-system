@@ -1008,6 +1008,99 @@ console.log('\n=== gate module + recall harness ===');
     ok(`E3 fixtures enter git no later than the E3 report${publishedE3.length ? '' : ' [리포트 미발행 — 픽스처 3종의 실재만 검사]'}`,
       missingE3.length === 0 && violationsE3.length === 0,
       `missing=${JSON.stringify(missingE3)} fixtureCommits=${JSON.stringify(fixtureCommitsE3)} reports=${JSON.stringify(reportCommitsE3)} violations=${JSON.stringify(violationsE3)}`);
+
+    // --- 15-b. 축 E(효율) 픽스처 선행성 -------------------------------------
+    // 같은 규율을 축 E에도 건다. 다만 **검사 대상에 하니스 자신을 포함한다** — 이 축은 질문
+    // 픽스처보다 전략 정의(=하니스 코드)가 결론을 훨씬 크게 좌우하기 때문이다. 픽스처만 걸면
+    // 리포트 커밋에서 전략을 바꿔치기해도 초록이다.
+    const EFF_FIXTURES = [
+      'test/fixtures/bench/gate-efficiency-queries.json',
+      'test/gate-efficiency.mjs',
+    ];
+    const missingEff = EFF_FIXTURES.filter((rel) => !fs.existsSync(path.join(PLUGIN_ROOT, rel)));
+    const reportEff = fs.readdirSync(BENCH_DOCS).filter((f) => /^gate-efficiency-.*\.md$/.test(f));
+    const fixtureCommitsEff = Object.fromEntries(EFF_FIXTURES.map((rel) => [rel, firstAddCommit(rel)]));
+    const reportCommitsEff = Object.fromEntries(reportEff.map((f) => [f, firstAddCommit(`docs/benchmarks/${f}`)]));
+    const publishedEff = Object.entries(reportCommitsEff).filter(([, c]) => c !== null);
+    const violationsEff = [];
+    for (const [rel, fc] of Object.entries(fixtureCommitsEff)) {
+      for (const [report, rc] of publishedEff) {
+        if (fc === null || !strictlyBefore(fc, rc)) violationsEff.push(`${rel}(${fc ?? '미커밋'}) !< ${report}(${rc})`);
+      }
+    }
+    ok(`axis-E fixtures and harness enter git before the axis-E report${publishedEff.length ? '' : ' [리포트 미발행 — 픽스처·하니스 실재만 검사]'}`,
+      missingEff.length === 0 && violationsEff.length === 0,
+      `missing=${JSON.stringify(missingEff)} fixtureCommits=${JSON.stringify(fixtureCommitsEff)} reports=${JSON.stringify(reportCommitsEff)} violations=${JSON.stringify(violationsEff)}`);
+  }
+
+  // --- 16-b. 축 E 계측 무결성 ---------------------------------------------
+  // 축 E의 결론은 "같은 예산에서 전략을 갈아끼웠다"에 전부 걸려 있다. 그 전제가 코드에서
+  // 실제로 성립하는지를 축소 실행으로 확인한다 — 리포트 문장이 아니라 여기서 지킨다.
+  {
+    const EFF_HARNESS = path.join(PLUGIN_ROOT, 'test', 'gate-efficiency.mjs');
+    const effOut = path.join(sandbox('gate-efficiency-out'), 'reduced-eff.json');
+    let eff = null;
+    let effError = null;
+    try {
+      execFileSync(process.execPath, [EFF_HARNESS, '--levels', '26,50', '--seeds', '3', '--budgets', '4096', '--out', effOut], { encoding: 'utf8' });
+      eff = JSON.parse(fs.readFileSync(effOut, 'utf8'));
+    } catch (err) {
+      effError = String(err?.message ?? err);
+    }
+    ok('axis-E harness completes a reduced run', eff !== null, effError ?? '');
+
+    if (eff) {
+      // 예산 준수. 전략끼리 예산이 다르면 비교 자체가 무의미해진다.
+      ok('every axis-E strategy respects the byte budget',
+        eff.guards.R3_budgetRespected.violations === 0,
+        JSON.stringify(eff.guards.R3_budgetRespected.firstFew));
+
+      // 항등식. 실리지 않은 concept가 1위로 뽑히면 계측이 거짓이다.
+      ok('axis-E sel@1 never exceeds reach',
+        eff.guards.R5_identity.violations === 0,
+        JSON.stringify(eff.guards.R5_identity.firstFew));
+
+      // 유료 0을 **실행으로** 증명한다. 스텁이 없으면 "발동 안 함"은 증거가 아니므로 둘 다 본다.
+      ok('axis-E proves $0 by trap, not by declaration',
+        eff.guards.R2_paidZero.installed === true && eff.guards.R2_paidZero.tripped === false,
+        JSON.stringify(eff.guards.R2_paidZero));
+
+      // **이 단언은 실제 결함을 고정한다.** 첫 등록 실행에서 evaluate가 마크다운 링크 문법으로만
+      // 경로를 뽑아 `paths` 전략의 reach가 12셀 전부 0.000이 나왔고, 하마터면 "경로만으로는 도달
+      // 자체가 안 된다"는 발견으로 발행할 뻔했다. 발견이 아니라 버그였다. conceptPathOf가
+      // 맨 경로를 다시 못 읽게 되면 여기서 FAIL한다.
+      const pathsReach = eff.byCell.map((c) => c.per.paths.reach);
+      ok('axis-E measures reach for bare-path lines (not only markdown links)',
+        pathsReach.every((r) => r > 0),
+        `paths reach per cell = ${JSON.stringify(pathsReach)}`);
+
+      // 전략이 조용히 같은 것으로 무너지지 않았는가. okf와 dump가 바이트까지 같아지면
+      // "round-robin 효과"는 0이 되고 그 0은 발견이 아니라 붕괴다.
+      const distinct = eff.byCell.some((c) => Math.abs(c.per.okf.injectedBytes - c.per.dump.injectedBytes) > 1);
+      ok('axis-E okf and dump are actually different strategies', distinct,
+        JSON.stringify(eff.byCell.map((c) => [c.per.okf.injectedBytes, c.per.dump.injectedBytes])));
+
+      // 천장이 무너지면 전략 비교가 의미를 잃는다(검색기가 무능한지 예산이 좁은지 못 가른다).
+      ok('axis-E retriever ceiling stays above the pre-registered 0.80',
+        eff.guards.R4_ceiling.pass, JSON.stringify(eff.guards.R4_ceiling));
+    }
+
+    // 쿼리가 정말 **기계 생성**인가. 손으로 고친 픽스처는 여기서 잡힌다 — 다시 생성해
+    // 바이트가 달라지면 그 픽스처는 코드가 낸 것이 아니다.
+    {
+      const rel = 'test/fixtures/bench/gate-efficiency-queries.json';
+      const abs = path.join(PLUGIN_ROOT, rel);
+      const before = fs.existsSync(abs) ? fs.readFileSync(abs) : null;
+      let after = null;
+      try {
+        execFileSync(process.execPath, [EFF_HARNESS, '--freeze-queries'], { encoding: 'utf8' });
+        after = fs.readFileSync(abs);
+      } catch { /* after는 null로 남는다 */ }
+      const same = before !== null && after !== null && before.equals(after);
+      if (before !== null && after !== null && !same) fs.writeFileSync(abs, before); // 사본으로 복구
+      ok('axis-E query fixture is reproducible from the generator (not hand-edited)', same,
+        `before=${before?.length ?? 'none'}B after=${after?.length ?? 'none'}B`);
+    }
   }
 
   // --- 16. E3 계측: 분해 항등식과 이산 격자 -------------------------------
