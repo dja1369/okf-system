@@ -5275,14 +5275,24 @@ function runRestructure(okfHome, mapping, extraArgs = []) {
   fs.mkdirSync(path.join(meta, 'patterns'), { recursive: true });
   const M = (rel, body) => fs.writeFileSync(path.join(meta, rel),
     `---\ntype: pattern\ntitle: "${path.basename(rel, '.md')}"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n${body}\n`);
-  M('patterns/node.md', '본문');
-  M('patterns/node-js.md', '본문');
-  M('patterns/ref2.md', '옮길 것: [a](/patterns/node.md)\n남의 것: [b](/patterns/node-js.md)');
+  // `|`는 이스케이프가 없으면 **최상위 대안 분기**가 되어, 오른쪽 가지(`cd.md`)가 경계 단언도
+  // 없이 번들 전체의 무관한 산문에 걸린다. `.`도 이스케이프가 없으면 와일드카드로 남는다.
+  M('patterns/ci|cd.md', '본문');
+  M('patterns/a.b.md', '본문');
+  M('patterns/axb.md', '본문');
+  M('patterns/ref2.md', '옮길 것: [a](/patterns/ci|cd.md)\n'
+    + '무관한 산문: 배포는 cd.md 문서를 보라\n'
+    + '남의 것: [b](/patterns/axb.md)');
   commitAll(meta, 'seed');
-  const metaRun = runRestructure(meta, { 'patterns/node.md': 'patterns/js/node.md' });
+  const metaRun = runRestructure(meta, {
+    'patterns/ci|cd.md': 'patterns/ops/cicd.md',
+    'patterns/a.b.md': 'patterns/ops/ab.md',
+  });
   const ref2 = readIfExists(path.join(meta, 'patterns', 'ref2.md'));
+  ok('정규식 메타문자를 이스케이프한다(`|` 분기가 무관한 산문을 갈아치우지 않는다)',
+    metaRun.status === 0 && ref2.includes('배포는 cd.md 문서를 보라'), `${metaRun.stderr}\n${ref2}`);
   ok('`.`을 와일드카드로 두지 않는다(다른 concept의 링크를 갈아치우지 않는다)',
-    metaRun.status === 0 && ref2.includes('[b](/patterns/node-js.md)'), `${metaRun.stderr}\n${ref2}`);
+    metaRun.status === 0 && ref2.includes('[b](/patterns/axb.md)'), `${metaRun.stderr}\n${ref2}`);
 
   // 깨진 링크는 lint에서 **경고(W1)**다. 에러만 보고 원복을 판단하면 이 도구가 방금 만든
   // 죽은 링크를 그대로 커밋한다. 이동 대상이 아닌 concept를 가리키는 죽은 링크를 심어 두고,
