@@ -71,22 +71,26 @@ Claude Code permits one `statusLine`. OKF does not install or overwrite it. Poin
 
 ## OKF benchmark
 
-<!-- okf-benchmark: 2026-07-26-e2 -->
+<!-- okf-benchmark: 2026-07-26-e3 -->
 
-### E2 — four characters in front of `title` (2026-07-26)
+### Gate recall@cap — three pre-registered rounds, E1 → E3 (2026-07-26)
 
-Not one byte of any body, filename, or path was changed. Four characters were prepended to the
-frontmatter **`title`** of the answer concept, and at N=400 `recall` goes **0.262 → 0.533** — double —
-while at N=24 it goes **0.400 → 1.000**. Same knowledge, same files, same bundle size. The only thing
-that changed is where the line sorts.
+All three rounds cost **$0.00**, and that is proven by the run rather than declared: the harness puts
+a stub `claude` at the front of `PATH` before launching the hook, records that the stub exists, and
+the stub was never executed (`paidCallTrapInstalled: true`, `paidCallTrapTripped: false`).
 
-> **recall is not an accuracy rate.** Synthetic distractors give only an **upper bound** on router
-> performance.
-> **Do not compare E2's numbers against E1's and call it "better" or "worse"** — the budget (+11 B) and
-> the way filler is generated both changed, so the two runs are different conditions. What is
-> comparable is the three perturbation conditions *within* E2.
+They measure one number: `recall(N)` — with N concepts in the bundle, the fraction of 20 frozen
+questions whose answer concept survives into the index the gate actually injects.
 
-| N | none | front (`!!! `) | back (`힣힣 `) | spread |
+> **recall is not an accuracy rate.** This measurement only answers "did the gate load the relevant
+> line". Whether the model actually *used* that line cannot be verified without paid calls. Synthetic
+> distractors give only an **upper bound** on router performance, so real-world recall is lower.
+
+**E2/E3 conditions** — 3 perturbations × 5 levels × 20 seeds = 300 samples, 28 s. Only four
+characters were prepended to the answer concept's frontmatter **`title`**; not one byte of any body,
+filename, or path changed.
+
+| N | `none` | `front` (`!!! `) | `back` (`힣힣 `) | spread |
 |---|---|---|---|---|
 | 24 | 0.400 ± 0.000 (n=20, 0.40–0.40) | **1.000 ± 0.000** (n=20, 1.00–1.00) | 0.400 ± 0.000 (n=20, 0.40–0.40) | **0.600** |
 | 50 | 0.277 ± 0.038 (n=20, 0.20–0.35) | 0.560 ± 0.064 (n=20, 0.50–0.70) | 0.182 ± 0.044 (n=20, 0.15–0.30) | **0.378** |
@@ -94,83 +98,77 @@ that changed is where the line sorts.
 | 200 | 0.250 ± 0.040 (n=20, 0.15–0.30) | 0.528 ± 0.030 (n=20, 0.45–0.55) | 0.175 ± 0.026 (n=20, 0.15–0.20) | **0.353** |
 | 400 | 0.262 ± 0.039 (n=20, 0.15–0.30) | 0.533 ± 0.024 (n=20, 0.50–0.55) | 0.185 ± 0.024 (n=20, 0.15–0.20) | **0.348** |
 
-**R6 was designed to refute, and the refutation failed.** R6 was pre-registered as "if changing the
-`title` does not move `recall`, the sort-dominance diagnosis is wrong", with a threshold of 0.05. The
-measured spread is 0.348–0.600 — **7 to 12 times the threshold** — so the attempt to refute did not
-land and the diagnosis survived. **In a gate that contains zero relevance signals this is the expected
-result, not the discovery of a bug**; what is new is that its size is now a number.
+`n=` and the min–max ride in the same row as the mean, a convention smoke enforces so that a
+two-sample median can never again be drawn as a point on a curve. E1 ran the `none` condition alone
+at a budget 11 B smaller (6,956 vs 6,967 B) and produced 0.400 / 0.277 / 0.245 / 0.248; those numbers
+are a **different condition** and must not be read as better or worse than the table above.
 
-**`cwdIndependent` flips.** The 6 concepts that were wiped out (0.000) at N≥200 in E1 come back at
-**0.967** under a single prefix. That E1 result was not "repository-independent knowledge is
-disadvantaged" — it was a function of naming.
+**Sorting decides survival, and E2 measured how much.** Four characters on `title` take N=400 from
+0.262 to 0.533 and N=24 from 0.400 to 1.000. R6 was written to *refute* that diagnosis — "if changing
+`title` does not move recall, sort dominance is wrong", threshold 0.05 — and the observed spread is
+7–12× the threshold, so the refutation attempt failed. The 6 `cwdIndependent` concepts that were
+wiped out (0.000) at N≥200 come back at **0.967** under a single prefix: that earlier result was not
+"repository-independent knowledge is disadvantaged", it was a function of naming. **In a system with
+zero relevance signals this is the expected outcome, not the discovery of a bug** — what is new is
+its size.
 
-**R2 and R3 fired again**, so under the pre-registered handling rule the absolute recall values are
-still not used as grounds for any policy decision.
+**E3 corrected two things E2 published.** First, E2 reported that recall "rises monotonically" from
+N=100 to 400 and handed the cause to E3. Under a paired directional test that rise does not exist:
+across 12 adjacent level pairs, `rising` verdicts number **0**. E2 had read means as a trend. E3's own
+main hypothesis was therefore never testable, and its refutation criterion R9 stayed *not computable*
+— there was no rise to attribute. Second, E2 said its `|Δ| ≤ 0.05` rule "cannot tell flat from slowly
+rising". That was also wrong. Replacing the rule with an exact paired sign test plus a
+distribution-free median confidence interval changes the verdict on exactly two pairs — and in both
+the old rule hid a statistically established **decline** (`none` and `front`, N=50→100, p = 0.0129
+and 0.0352). The old rule's flaw was not seeing direction wrongly but not looking at direction at all.
 
-**One notch forward on measurement discipline.** In E1 the fixtures first appeared in the report
-commit; in E2 they ship inside the pre-registration commit, and smoke enforces a strict inequality via
-`git log --diff-filter=A`.
+**The old R3 kept firing on noise.** R3's wording was "monotonic decrease violated → *harness defect*
+→ discard everything", but its implementation compared means with no uncertainty treatment, so ±0.005
+of seed noise tripped it in E1 and E2 alike — both rounds shipped in the self-contradictory state of
+"fired, but nothing discarded". E3 did not loosen the threshold; it pointed the criterion back at
+what the wording says and measured integrity directly (unplanted survivors, missing answer ranks,
+level-composition mismatch, candidate-count regression). On the same 300 samples the old R3 fires and
+the new R3a does not. The earlier firings were never evidence of a defect.
 
-```sh
-node test/gate-recall.mjs --e2 --perturb all   # 3 conditions × 5 levels × 20 seeds
-```
+**Survival is exactly `rank < taken`.** A concept survives iff its title-sort rank inside its category
+is below the number of lines that category actually got. That identity held on **all 6,000**
+question-checks (300 samples × 20 questions), so recall is a *complete* function of the rank and
+`taken` vectors and decomposes with no approximation (residual ≤ 1.1e-16). At N=24→50 the rank
+component dominates (−0.15 to −0.41); at N≥100 it dies to **exactly 0** — a floor effect, since the
+mean answer rank (26.9) is far past `taken` (10.5) and more filler cannot change concepts that are
+already out. The residual movement is entirely `taken`, which drifts up because the loaded lines get
+shorter under a fixed budget (702 B → 598 B, `taken` 9.00 → 10.50). The same table explains
+`front` at N=24 reaching 1.000: `taken` = 24 = every candidate, all six categories exhausted, so every
+omission marker is refunded and the whole bundle fits.
 
-That run reports **$0.00** and **26.6 seconds** for 300 samples. Both are properties of the measuring
-harness — they are not claims about the gate's cost or speed.
+**In the live bundle the bias is real but not yet established.** Measured read-only, emitting counts
+only — no titles, descriptions, filenames, or links leave the measurement, and `raw/` is never opened.
+Sorting compares `title.toLowerCase()` with `<`, i.e. **UTF-16 code-unit order, not locale collation**,
+so an ASCII-leading title always precedes a Hangul-leading one. ASCII-leading concepts are 65.4% of
+the bundle and take 70.6% of the gate's slots — a lift of 1.08×, but with 26 concepts the exact
+hypergeometric test gives **p = 0.667**. That is not a result. And a small lift must not be read as
+"sorting is harmless in practice": the gate currently loads **65.4%** of all candidates, and where
+everything loads, sorting decides nothing. Per category the load rate already splits — `decisions`
+and `projects` at 1.000, `patterns` at 0.500, `references` at **0.429**. Load rate is what connects
+E2's finding to this one; the closer it falls below 1, the more of E2's effect is realised.
 
-[E2 report](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
-[E2 pre-registration](docs/benchmarks/pre-registration-2026-07-26-e2.md)
-
-<!-- okf-benchmark: 2026-07-26-e1 -->
-
-### E1 — gate recall@cap, measured for $0.00 (2026-07-26)
-
-This run cost **$0.00**, and that is proven by the run rather than declared: the harness puts a stub
-`claude` at the front of `PATH` before launching the hook, and the stub was never executed
-(`paidCallTrapTripped: false`). 4 levels × 20 seeds = **80 samples, 6.2 seconds**.
-
-It measures one number: `recall(N)` — with N concepts in the bundle, the fraction of 20 frozen
-questions whose answer concept survives into the index the gate actually injects.
-
-> **recall is not an accuracy rate.** This measurement only answers "did the gate load the relevant
-> line". Whether "the model actually used that line" cannot be verified without paid calls. Synthetic
-> distractors give only an **upper bound** on router performance, so real-world recall is lower than this.
-
-| N | recall mean ± stdev | samples | min–max |
-|---|---|---|---|
-| 24 | 0.400 ± 0.000 | n=20 | 0.40–0.40 |
-| 50 | 0.277 ± 0.038 | n=20 | 0.20–0.35 |
-| 100 | 0.245 ± 0.036 | n=20 | 0.20–0.30 |
-| 200 | 0.248 ± 0.041 | n=20 | 0.15–0.30 |
-
-`n=` and the min–max ride in the same row as the mean. That is a convention `test/bench-report.mjs`
-established and smoke enforces, so that a two-sample median can never again be drawn as a point on a
-curve.
-
-**R3 fired** (monotonic decrease violated: +0.0025 from N=100 to N=200), and **R2 fired** as well
-(`recall(24)` = 0.400 < 0.60). Under the pre-registered handling rule, **the absolute recall values
-are therefore not used as grounds for any policy decision.** That rule holds even though the
-violating delta is 1/16 of that level's seed-to-seed stdev, because the pre-registration fixed in
-advance that a small delta does not cancel a firing. The table is published; it decides nothing.
+**What takes a slot is decided by ordering and line length, not relevance.** Five factors are
+confirmed in code: case-sensitive sorting of type section names, so `# Subdirectories` always
+precedes `# reference` (`lib/index-gen.mjs:242`) — which pulls nested concepts to the front of their
+category; within a section, alphabetical order of the frontmatter **`title`**, not the filename,
+which is only a fallback when frontmatter parsing fails (`:315`); `status: deprecated` demoted inside
+its section (`:245`); category walk order by directory name (`:227`); and **line byte length**, since
+a next line that exceeds the remaining budget stops that category there (`lib/gate.mjs:122`), so
+description length changes survival. The gate contains zero references to cwd, recency, or the query.
 
 **The shape is the finding, not the level.** Of the 20 questions, 9 survive at 0 across every level
-(q03, q07, q10, q13–q17, q20) and 3 survive at 1.0 across every level (q02, q12, q18); the remaining
-8 land in between. Per cell (20 questions × 4 levels = 80) that is 48 zeros, 19 ones and 13
-intermediate values — recall is not binary. Three of the intermediate questions even rise as N grows
-(q06: 0 → 0.60 → 0.65 → 0.70), and that rise is the arithmetic source of R3. The gate fills
-round-robin, cycling over the categories until the budget runs dry rather than taking one line per
-category and stopping; a category ends up with 1–3 lines only because a single line is large —
-concept lines run 200–1,030 B against a 6,956 B index budget, so the whole take is exhausted at 8–11
-lines. `references` has exactly one line taken at every level (1 of 57 lines at N=200), so of the 8
-answers concentrated there at most one can survive. What takes those slots is decided by
-generation-time ordering and line length, not relevance, and at least five factors are confirmed:
-case-sensitive sorting of type section names, so `# Subdirectories` always precedes `# reference`
-(`lib/index-gen.mjs:242`); within a section, alphabetical order of the frontmatter **`title`** — not
-the filename, which is only a fallback when frontmatter parsing fails (`:315`); `status: deprecated`
-demoted inside its section (`:245`); category walk order by directory name (`:227`); and **line byte
-length**, since a next line that exceeds the remaining budget stops that category there
-(`lib/gate.mjs:122`), so description length changes survival. The current gate contains zero
-references to cwd, recency, or the query.
+and 3 survive at 1.0 across every level; the remaining 8 land in between. Per cell that is 48 zeros,
+19 ones and 13 intermediate values — recall is not binary. The gate fills round-robin, cycling over
+categories until the budget runs dry rather than taking one line per category and stopping; a
+category ends up with 1–3 lines only because a single line is large — concept lines run 200–1,030 B
+against a ~6,960 B index budget, so the whole take is exhausted at 8–11 lines. `references` gets
+exactly one line at every level (1 of 57 at N=200), so of the 8 answers concentrated there at most
+one can survive.
 
 **Nesting depth (axis A-2).** 25 concepts held fixed, contents identical, only the paths made deeper:
 
@@ -184,16 +182,39 @@ references to cwd, recency, or the query.
 Each condition was measured **once** (n=1, no seed repetition), and in that single measurement one
 line was lost per level of depth. Four points cannot distinguish whether that decline is linear, and
 depths beyond 4 levels were not measured. Counted against the planted concepts, 3 levels is 25 → 23,
-**-8.0%**. The cause is byte pressure, not a failed chain walk: each extra path segment lengthens
+**−8.0%**. The cause is byte pressure, not a failed chain walk: each extra path segment lengthens
 every line until one is pushed out of the budget. (28 rather than 25 because `ensureBootstrap` plants
 the same seed concepts in every condition; it does not affect the comparison between conditions.)
 
+**R2 fires in every round** (`recall(24)` = 0.400 < 0.60). Under the pre-registered handling rule the
+**absolute recall values are not used as grounds for any policy decision** — the tables are published
+and decide nothing.
+
+**Measurement discipline, and where it improved.** In E1 the question, distractor, and shape fixtures
+first entered git in the **report** commit — the thresholds were fixed in advance but the materials
+that actually determined the numbers were not. From E2 on, fixtures ship inside the pre-registration
+commit and smoke enforces a **strict** inequality via `git log --diff-filter=A`; aimed at E1's file
+set that assertion produces 3 violations, so it catches the real accident rather than approving it.
+Every round also publishes, in its pre-registration, the values already known at writing time and any
+arithmetic changed after measurement. E3 changed one thing after seeing data — quantizing recall
+deltas onto the 1/20 measurement grid, because in double precision `0.25 − 0.20 = 0.04999…` while
+`0.20 − 0.15 = 0.05000…2`, so the same one-question move landed on opposite sides of the equivalence
+bound. That fix removed the one `indeterminate` verdict in the round, i.e. it cut **against** the
+report's own argument, and it is disclosed as such.
+
 ```sh
-node test/gate-recall.mjs     # 4 levels × 20 seeds, ~6 s, no paid calls
-node test/bench-nesting.mjs   # the nesting-depth axis
-node test/smoke.mjs           # regression guards
+node test/gate-recall.mjs --e3 --perturb all   # 3 conditions × 5 levels × 20 seeds, ~28 s
+node test/gate-title-distribution.mjs          # live-bundle title distribution (read-only)
+node test/gate-recall.mjs --e2 --perturb all   # E2
+node test/gate-recall.mjs                      # E1
+node test/bench-nesting.mjs                    # nesting-depth axis
+node test/smoke.mjs                            # regression guards
 ```
 
+[E3 report](docs/benchmarks/gate-recall-2026-07-26-e3.md) ·
+[E3 pre-registration](docs/benchmarks/pre-registration-2026-07-26-e3.md) ·
+[E2 report](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
+[E2 pre-registration](docs/benchmarks/pre-registration-2026-07-26-e2.md) ·
 [E1 report](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
 [E1 pre-registration](docs/benchmarks/pre-registration-2026-07-26-e1.md)
 
