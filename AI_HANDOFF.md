@@ -14,6 +14,25 @@ commit, push, PR, destructive Git 명령은 실행하지 않았다.
 
 ## 마지막으로 한 작업
 
+**concept 물리 재배치 도구(`bin/restructure.mjs`) + 실번들 마이그레이션 완료.**
+공식 OKF 번들처럼 `type/주제/개념.md`로 묶기 위해, 실번들 `~/.claude/okf`의 concept 10개를
+4개 하위 도메인(`patterns/testing`, `patterns/git`, `troubleshooting/okf`, `references/okf`)으로
+옮겼다(커밋 `7efc3e9`).
+
+경로가 곧 concept ID라서 이동은 상호참조를 전부 깨뜨린다. 그래서 `mv`가 아니라 도구로 했다:
+락 획득 → 경계 검증(전건 통과해야 착수) → rename → **모든 `.md`(`log.md` 포함) 링크 재작성**
+→ index 재생성 → lint(에러 시 자동 원복) → 단일 커밋. `--dry-run` 지원.
+설계상 두 가지가 중요하다.
+- **`git mv`를 쓰지 않는다.** rename을 인덱스에 올리면 기존 `rollback()`(checkout + clean)으로
+  되돌아가지 않는다 — 옛 경로가 삭제된 채 남는다. 평범한 rename이면 원복이 그대로 통하고,
+  커밋 시 `add -A`가 어차피 rename으로 인식한다(실측: `git show --stat`에 rename으로 표시).
+- **택소노미 디렉토리(첫 경로 조각) 변경은 거부한다.** lint W3가 첫 조각만 `type`과 대조하므로,
+  허용하면 옮긴 파일마다 경고가 뜨고 그 경고가 유료 repair 프롬프트로 흘러 분석기가
+  되돌리려 든다.
+
+링크 재작성은 정확한 경로 토큰만 바꾼다(전후 경계 단언). 단순 치환이면 `docs/patterns/git-x.md`
+같은 **남의 저장소 경로**까지 망가진다 — 이 경계를 지우는 돌연변이로 실제 FAIL을 확인했다.
+
 **OKF 스펙 v0.2 대응 — 릴리스 1(`0.2.0` 신뢰성) + 릴리스 2(`0.2.1` 스펙 대응) 구현 완료.**
 계획서는 [`docs/0-2_develop_plan.md`](docs/0-2_develop_plan.md), 근거 조사는
 `docs/okf-v0.2-2026-07-25-*.md` 3종이다. 브랜치 `feature/okf-v0.2-conformance`.
@@ -497,7 +516,7 @@ $0.216→$0.258→**$0.447**로 오히려 순증가했고, zero_base_chain도 $0
 
 ```sh
 node test/smoke.mjs
-# 677 passed, 0 failed   (릴리스 1+2 + 검증 라운드 반영 후. 착수 시점 기준선은 303)
+# 688 passed, 0 failed   (릴리스 1+2 + 검증 라운드 + 재배치 도구 반영 후. 착수 시점 기준선은 303)
 
 node test/bench.mjs
 # SessionStart 57.4ms (56.7-58.2), SessionEnd 43.4ms (41.8-43.9)
@@ -530,6 +549,13 @@ batch 비용, 개인정보, README 과장을 우선 점검했다. 발견한 Impo
 현재 미해결 Critical/Important 이슈는 없다.
 
 ## 남은 개선점
+
+0-a. **실번들은 이미 v0.2 구조인데 설치된 플러그인은 `0.1.6`이다.** 이 PR이 머지되고 플러그인이
+   갱신되기 전까지 게이트는 구버전 코드로 돈다. 실측(같은 번들, 게이트만 교체):
+   0.1.6 게이트는 재배치 전 concept 14줄 → 재배치 후 13줄 + 하위 도메인 링크 2줄,
+   v0.2 게이트는 재배치 후에도 14줄 + 하위 링크 0줄(사슬을 펼치므로 중첩 비용이 없다).
+   즉 과도기 손실은 1줄이고 사슬은 링크로 여전히 따라갈 수 있다 — 지식 유실은 아니지만,
+   플러그인 갱신 전까지는 이 상태다. 되돌리려면 `git -C ~/.claude/okf revert 7efc3e9`.
 
 0. **릴리스 3(`0.3.0`, 계획서 Part 2)은 I6가 선행이다.** `lib/gate.mjs` 추출 + recall@cap
    사전등록 실험($0)을 먼저 발행하지 않으면 I5/I3/I-M/I2에 착수하지 않는다. I2(관련성 라우팅)는

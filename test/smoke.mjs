@@ -16,7 +16,7 @@ import { runLint, formatReport } from '../lib/lint.mjs';
 import { UNSAFE_NAME_RE } from '../lib/paths.mjs';
 import { regenerateIndex, discoverConceptDirs } from '../lib/index-gen.mjs';
 import { digestFile, stripBoilerplate } from '../lib/digest.mjs';
-import { git } from '../lib/git.mjs';
+import { git, isDirty, commitAll } from '../lib/git.mjs';
 import { isLockStale, releaseLock, acquireLock, readLock } from '../lib/lock.mjs';
 import { readInstalledAt } from '../lib/installed-at.mjs';
 import { matchGlob } from '../lib/glob.mjs';
@@ -5162,6 +5162,74 @@ if (process.platform !== 'win32') {
   ok('중첩이 게이트의 concept 수를 무너뜨리지 않는다(같은 지식, 같은 예산)',
     nested.concepts >= flat.concepts - 2 && nested.concepts > 0,
     `평면=${flat.concepts} 중첩=${nested.concepts}`);
+}
+
+// --- S13: bin/restructure.mjs — concept 물리 재배치 ---
+// 파일 경로가 곧 concept ID다. 옮기는 것 자체보다 **상호참조를 따라 고치는가**가 계약이다.
+function runRestructure(okfHome, mapping, extraArgs = []) {
+  const fakeHome = isolatedHome();
+  const mapPath = path.join(fakeHome, 'map.json');
+  fs.mkdirSync(fakeHome, { recursive: true });
+  fs.writeFileSync(mapPath, JSON.stringify(mapping));
+  return spawnSync(process.execPath,
+    [path.join(PLUGIN_ROOT, 'bin', 'restructure.mjs'), mapPath, ...extraArgs], {
+      env: {
+        ...process.env, OKF_HOME: okfHome, HOME: fakeHome, USERPROFILE: fakeHome,
+        CLAUDE_CONFIG_DIR: path.join(fakeHome, '.claude'),
+      },
+      encoding: 'utf8',
+    });
+}
+{
+  const home = bootstrapped('restructure'); // git 저장소여야 락·원복·커밋이 진짜로 돌아간다
+  fs.mkdirSync(path.join(home, 'patterns'), { recursive: true });
+  const W = (rel, body) => fs.writeFileSync(path.join(home, rel),
+    `---\ntype: pattern\ntitle: "${path.basename(rel, '.md')}"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n${body}\n`);
+  W('patterns/git-x.md', '본문');
+  W('patterns/git-x-extra.md', '본문');
+  // **판별력의 핵심**: `docs/patterns/git-x.md`는 옮길 concept 경로를 통째로 **접미로** 품는다.
+  // 단순 문자열 치환이면 이 남의 저장소 경로까지 `docs/patterns/git/x.md`로 망가진다.
+  W('patterns/refer.md', '옮길 것: [/patterns/git-x.md](/patterns/git-x.md)\n'
+    + '남의 경로: `docs/patterns/git-x.md`');
+  fs.appendFileSync(path.join(home, 'log.md'), '\n- /patterns/git-x.md 를 만들었다\n');
+  commitAll(home, 'seed');
+
+  const moved = runRestructure(home, { 'patterns/git-x.md': 'patterns/git/x.md' });
+  ok('재배치가 성공 종료한다', moved.status === 0, `${moved.status} ${moved.stderr}`);
+  ok('파일이 실제로 옮겨진다',
+    fs.existsSync(path.join(home, 'patterns', 'git', 'x.md'))
+    && !fs.existsSync(path.join(home, 'patterns', 'git-x.md')));
+  const refer = readIfExists(path.join(home, 'patterns', 'refer.md'));
+  ok('다른 concept의 상호참조 링크가 새 경로로 고쳐진다',
+    refer.includes('[/patterns/git/x.md](/patterns/git/x.md)'), refer);
+  ok('경로 토큰 경계를 지킨다(같은 꼬리를 가진 남의 경로는 안 건드린다)',
+    refer.includes('`docs/patterns/git-x.md`'), refer);
+  ok('log.md의 경로 언급도 함께 고쳐진다',
+    readIfExists(path.join(home, 'log.md')).includes('/patterns/git/x.md 를 만들었다'));
+  ok('index가 재생성되어 새 위치를 가리킨다',
+    readIfExists(path.join(home, 'patterns', 'index.md')).includes('](git/index.md)'),
+    readIfExists(path.join(home, 'patterns', 'index.md')));
+  ok('커밋 1개로 끝나고 작업트리가 깨끗하다', !isDirty(home));
+
+  // 택소노미 디렉토리 변경은 거부한다 — 허용하면 옮긴 파일마다 lint W3가 뜨고 그 경고가
+  // 유료 repair 프롬프트로 흘러 분석기가 되돌리려 든다.
+  const crossType = runRestructure(home, { 'patterns/refer.md': 'references/refer.md' });
+  ok('택소노미 디렉토리를 바꾸는 매핑은 거부된다(lint W3)', crossType.status === 4, crossType.stderr);
+  ok('거부된 매핑은 아무것도 옮기지 않는다',
+    fs.existsSync(path.join(home, 'patterns', 'refer.md')) && !isDirty(home));
+
+  // 하나라도 부적합하면 **전부** 거부한다 — 부분 이동이 제일 나쁘다.
+  const partial = runRestructure(home, {
+    'patterns/git-x-extra.md': 'patterns/git/extra.md',
+    'patterns/없는파일.md': 'patterns/git/nope.md',
+  });
+  ok('한 건이라도 부적합하면 전부 거부한다(부분 이동 없음)',
+    partial.status === 4 && fs.existsSync(path.join(home, 'patterns', 'git-x-extra.md')), partial.stderr);
+
+  const dry = runRestructure(home, { 'patterns/git-x-extra.md': 'patterns/git/extra.md' }, ['--dry-run']);
+  ok('--dry-run은 계획만 내고 파일을 건드리지 않는다',
+    dry.status === 0 && dry.stdout.includes('→') && fs.existsSync(path.join(home, 'patterns', 'git-x-extra.md')),
+    dry.stdout);
 }
 
 // ---------------------------------------------------------------------------
