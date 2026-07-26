@@ -1,0 +1,236 @@
+{
+  "frozenAt": "2026-07-26",
+  "levels": [
+    24,
+    50,
+    100,
+    200,
+    400
+  ],
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20
+  ],
+  "compositionRules": {
+    "questions": 20,
+    "minPerCategory": 2,
+    "minCwdIndependent": 6
+  },
+  "titlePerturbation": {
+    "conditions": [
+      {
+        "id": "none",
+        "prefix": ""
+      },
+      {
+        "id": "front",
+        "prefix": "!!! "
+      },
+      {
+        "id": "back",
+        "prefix": "힣힣 "
+      }
+    ],
+    "appliesTo": "answerConcept의 frontmatter title에만. filler·시드는 건드리지 않는다."
+  },
+  "questions": [
+    {
+      "id": "q01",
+      "question_ko": "예전부터 쓰던 그 호칭이 지금 코드에서는 어떤 클래스를 뜻하고, 출력 버퍼링은 어디에 어떤 방향으로 등록하기로 정했더라?",
+      "answerConcept": "decisions/partner-settlement/emitter-wiring.md",
+      "sourceFile": "docs/benchmarks/bundles/slim-L20/decisions/partner-settlement/emitter-wiring.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": false
+    },
+    {
+      "id": "q02",
+      "question_ko": "환경마다 예외 상세 노출을 다르게 두기로 한 기준이 뭐고, 인증·권한 쪽 예외만 따로 막는 이유랑 전송 덩어리 크기를 왜 기본값 대신 큰 값으로 못 박았지?",
+      "answerConcept": "decisions/partner-settlement/error-handling.md",
+      "sourceFile": "docs/benchmarks/bundles/slim-L20/decisions/partner-settlement/error-handling.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": false
+    },
+    {
+      "id": "q03",
+      "question_ko": "잠금 파일만 가지고 캐시 열쇠를 만들면 뭐가 문제였고, 대충 비슷한 것까지 되살려 쓰는 옵션은 왜 껐지?",
+      "answerConcept": "decisions/dependency-cache-key-rejects-prefix-fallback.md",
+      "sourceFile": "test/fixtures/bench/gate-recall/concepts/decisions/dependency-cache-key-rejects-prefix-fallback.md",
+      "authored": true,
+      "cwdIndependent": true,
+      "grepable": false
+    },
+    {
+      "id": "q04",
+      "question_ko": "찾는 게 하나도 없을 때 검색 명령이 실패로 취급돼서 스텝 전체가 죽는 걸 어떻게 막지?",
+      "answerConcept": "patterns/grep-no-match-exit-code-kills-script.md",
+      "sourceFile": "test/fixtures/bench/gate-recall/concepts/patterns/grep-no-match-exit-code-kills-script.md",
+      "authored": true,
+      "cwdIndependent": true,
+      "grepable": false
+    },
+    {
+      "id": "q05",
+      "question_ko": "샌드박스 경로를 문자열로 맞춰보는 검사가 개발 머신에서만 깨지고 CI 서버에서는 통과하던데 왜지?",
+      "answerConcept": "patterns/tmpdir-symlink-realpath-mismatch.md",
+      "sourceFile": "test/fixtures/bench/gate-recall/concepts/patterns/tmpdir-symlink-realpath-mismatch.md",
+      "authored": true,
+      "cwdIndependent": true,
+      "grepable": false
+    },
+    {
+      "id": "q06",
+      "question_ko": "새 언어 기능을 바로 안 쓰고 몇 번 미뤘다가 도입하는 그 규칙, 숫자가 나온 진짜 까닭이랑 빠지는 경우가 뭐였지?",
+      "answerConcept": "preferences/rust-feature-thaw-policy.md",
+      "sourceFile": "docs/benchmarks/bundles/rfcs-L20/preferences/rust-feature-thaw-policy.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": false
+    },
+    {
+      "id": "q07",
+      "question_ko": "새벽에 스크립트를 돌렸더니 문서 맨 위 헤딩의 날짜가 하루 밀려 있던데, 이걸 막는 규칙이 뭐였지?",
+      "answerConcept": "preferences/iso-date-from-local-clock-not-utc.md",
+      "sourceFile": "test/fixtures/bench/gate-recall/concepts/preferences/iso-date-from-local-clock-not-utc.md",
+      "authored": true,
+      "cwdIndependent": true,
+      "grepable": false
+    },
+    {
+      "id": "q08",
+      "question_ko": "그 서비스가 어떤 웹 프레임을 깔고 돌아가고 운영하는 환경이 몇 종류였으며 지금 무슨 작업을 하던 중이었지?",
+      "answerConcept": "projects/partner-settlement-api.md",
+      "sourceFile": "docs/benchmarks/bundles/slim-L20/projects/partner-settlement-api.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": false
+    },
+    {
+      "id": "q09",
+      "question_ko": "어떤 작업 트리에도 없는 그 러너 이미지 굽는 쪽, 다시 굽는 주기랑 태그 규칙이 뭐였지?",
+      "answerConcept": "projects/ci-runner-image-pipeline.md",
+      "sourceFile": "test/fixtures/bench/gate-recall/concepts/projects/ci-runner-image-pipeline.md",
+      "authored": true,
+      "cwdIndependent": true,
+      "grepable": false
+    },
+    {
+      "id": "q10",
+      "question_ko": "예외를 받아 타입별 처리기를 고르는 순서가 어떻게 되고, 출력 단계에서 escape가 빠진 필드는 무엇이었지?",
+      "answerConcept": "references/slim4/error-pipeline.md",
+      "sourceFile": "docs/benchmarks/bundles/slim-L20/references/slim4/error-pipeline.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": true
+    },
+    {
+      "id": "q11",
+      "question_ko": "상태 코드용 예외 타입들이 어떤 상속 사슬을 이루고 만들 때 반드시 넣어야 하는 인자가 뭐며, 허용 메서드 헤더를 알아서 채워주는 놈은 어느 것이지?",
+      "answerConcept": "references/slim4/http-exceptions.md",
+      "sourceFile": "docs/benchmarks/bundles/slim-L20/references/slim4/http-exceptions.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": true
+    },
+    {
+      "id": "q12",
+      "question_ko": "경로 처리기를 클래스 형태로 붙이면 URL 변수가 요청 속성에 안 실리던데, 익명 함수로 달 때와 무엇이 다르고 어떻게 켜지?",
+      "answerConcept": "references/slim4/routing-app.md",
+      "sourceFile": "docs/benchmarks/bundles/slim-L20/references/slim4/routing-app.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": true
+    },
+    {
+      "id": "q13",
+      "question_ko": "확장점 묶음 쪽 비활성 목록에 이름을 올리면 그 생성 함수가 아예 안 불린다던데, 정확히 어느 단계에서 걸러지는 거지?",
+      "answerConcept": "references/k8s-scheduler-multipoint-disable.md",
+      "sourceFile": "docs/benchmarks/bundles-chain-v4/chain-7-final/references/k8s-scheduler-multipoint-disable.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": true
+    },
+    {
+      "id": "q14",
+      "question_ko": "파드를 토폴로지 도메인에 고르게 퍼뜨리는 점수 쪽은 어떤 구체 타입이 돌리고 등록표에 어떤 키로 올라가 있지?",
+      "answerConcept": "references/k8s-scheduler-podtopologyspread.md",
+      "sourceFile": "docs/benchmarks/bundles-chain-v4/chain-7-final/references/k8s-scheduler-podtopologyspread.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": true
+    },
+    {
+      "id": "q15",
+      "question_ko": "노드 자원 여유로 점수를 매기는 쪽은 설정값마다 계산식이 실행 시점에 바뀐다던데, 어떤 구조로 주입되고 기본 가중치는 얼마였지?",
+      "answerConcept": "references/kubernetes-scheduler-noderesourcesfit.md",
+      "sourceFile": "docs/benchmarks/bundles-chain-v4/chain-14-final/references/kubernetes-scheduler-noderesourcesfit.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": true
+    },
+    {
+      "id": "q16",
+      "question_ko": "같은 플러그인의 가중치가 두 군데에 다르게 적혀 있으면 어느 쪽이 최종으로 살아남지?",
+      "answerConcept": "references/kubernetes-scheduler-score-weight-merge.md",
+      "sourceFile": "docs/benchmarks/bundles-chain-v4/chain-14-final/references/kubernetes-scheduler-score-weight-merge.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": true
+    },
+    {
+      "id": "q17",
+      "question_ko": "점수 확장점에 이름을 다시 적으면 차례가 앞당겨진다는데, 최종 순서는 몇 단계로 재조립되는 거였지?",
+      "answerConcept": "references/kubernetes-scheduler-multipoint-override.md",
+      "sourceFile": "docs/benchmarks/bundles-chain-v4/chain-0-final/references/kubernetes-scheduler-multipoint-override.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": true
+    },
+    {
+      "id": "q18",
+      "question_ko": "버퍼링을 앞쪽으로 붙였을 때 응답 본문이 몽땅 빈 채로 나가는 사고가 왜 생길 수 있었지?",
+      "answerConcept": "troubleshooting/output-buffering-prepend-body-loss.md",
+      "sourceFile": "docs/benchmarks/bundles/slim-L20/troubleshooting/output-buffering-prepend-body-loss.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": true
+    },
+    {
+      "id": "q19",
+      "question_ko": "코드에 상수로 박아둔 버전 값이 변경 이력 문서 쪽 최신 릴리스보다 낮게 남아 있던 사례가 있었지?",
+      "answerConcept": "troubleshooting/slim4-version-constant-mismatch.md",
+      "sourceFile": "docs/benchmarks/bundles/slim-L20/troubleshooting/slim4-version-constant-mismatch.md",
+      "authored": false,
+      "cwdIndependent": false,
+      "grepable": true
+    },
+    {
+      "id": "q20",
+      "question_ko": "리눅스에서 잘 돌던 한 줄 치환 명령이 맥에서만 이상한 백업 파일을 남기고 원본을 망가뜨리던데 원인이 뭐였지?",
+      "answerConcept": "troubleshooting/bsd-inplace-edit-consumes-next-argument.md",
+      "sourceFile": "test/fixtures/bench/gate-recall/concepts/troubleshooting/bsd-inplace-edit-consumes-next-argument.md",
+      "authored": true,
+      "cwdIndependent": true,
+      "grepable": false
+    }
+  ]
+}

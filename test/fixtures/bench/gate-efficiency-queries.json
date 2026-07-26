@@ -1,0 +1,288 @@
+{
+  "frozenAt": "2026-07-27",
+  "note": "쿼리는 정답 concept 본문의 tf-idf 상위 8항이다. 손으로 쓰지 않았다. 생성 규칙은 test/gate-efficiency.mjs deriveQueries.",
+  "topK": 8,
+  "tokenizer": "latin/digit words + CJK character bigrams",
+  "queries": [
+    {
+      "id": "q01",
+      "answerConcept": "/decisions/partner-settlement/emitter-wiring.md",
+      "terms": [
+        "prepend",
+        "거기",
+        "에미",
+        "outputbufferingmiddleware",
+        "미터",
+        "었다",
+        "응답",
+        "붙인"
+      ]
+    },
+    {
+      "id": "q02",
+      "answerConcept": "/decisions/partner-settlement/error-handling.md",
+      "terms": [
+        "sandbox",
+        "트너",
+        "파트",
+        "partner",
+        "49152",
+        "details",
+        "errormiddleware",
+        "responseemitter"
+      ]
+    },
+    {
+      "id": "q03",
+      "answerConcept": "/decisions/dependency-cache-key-rejects-prefix-fallback.md",
+      "terms": [
+        "캐시",
+        "의존",
+        "잠금",
+        "존성",
+        "키가",
+        "설치",
+        "각을",
+        "메이"
+      ]
+    },
+    {
+      "id": "q04",
+      "answerConcept": "/patterns/grep-no-match-exit-code-kills-script.md",
+      "terms": [
+        "종료",
+        "스텝",
+        "실패",
+        "검색",
+        "날에",
+        "매치",
+        "색기",
+        "성공"
+      ]
+    },
+    {
+      "id": "q05",
+      "answerConcept": "/patterns/tmpdir-symlink-realpath-mismatch.md",
+      "terms": [
+        "드박",
+        "박스",
+        "샌드",
+        "링크",
+        "심링",
+        "경로",
+        "abcd",
+        "bench"
+      ]
+    },
+    {
+      "id": "q06",
+      "answerConcept": "/preferences/rust-feature-thaw-policy.md",
+      "terms": [
+        "해동",
+        "rust",
+        "stable",
+        "rfc",
+        "릴리",
+        "cargo",
+        "msrv",
+        "숫자"
+      ]
+    },
+    {
+      "id": "q07",
+      "answerConcept": "/preferences/iso-date-from-local-clock-not-utc.md",
+      "terms": [
+        "utc",
+        "날짜",
+        "재현",
+        "mm",
+        "대에",
+        "문서",
+        "사가",
+        "시계"
+      ]
+    },
+    {
+      "id": "q08",
+      "answerConcept": "/projects/partner-settlement-api.md",
+      "terms": [
+        "slim4",
+        "displayerrordetails",
+        "decisions",
+        "error",
+        "md",
+        "partner",
+        "exceptions",
+        "body"
+      ]
+    },
+    {
+      "id": "q09",
+      "answerConcept": "/projects/ci-runner-image-pipeline.md",
+      "terms": [
+        "미지",
+        "크플",
+        "플로",
+        "태그",
+        "이미",
+        "그를",
+        "장소",
+        "저장"
+      ]
+    },
+    {
+      "id": "q10",
+      "answerConcept": "/references/slim4/error-pipeline.md",
+      "terms": [
+        "title",
+        "스케",
+        "케이",
+        "htmlentities",
+        "더러",
+        "렌더",
+        "description",
+        "전부"
+      ]
+    },
+    {
+      "id": "q11",
+      "answerConcept": "/references/slim4/http-exceptions.md",
+      "terms": [
+        "생성",
+        "httpmethodnotallowedexception",
+        "php",
+        "httpexception",
+        "error",
+        "자동",
+        "allowed",
+        "method"
+      ]
+    },
+    {
+      "id": "q12",
+      "answerConcept": "/references/slim4/routing-app.md",
+      "terms": [
+        "id",
+        "request",
+        "php",
+        "attribute",
+        "변수",
+        "접근",
+        "app",
+        "로저"
+      ]
+    },
+    {
+      "id": "q13",
+      "answerConcept": "/references/k8s-scheduler-multipoint-disable.md",
+      "terms": [
+        "plugins",
+        "multipoint",
+        "scheduler",
+        "factory",
+        "k8s",
+        "config",
+        "imagelocality",
+        "enabled"
+      ]
+    },
+    {
+      "id": "q14",
+      "answerConcept": "/references/k8s-scheduler-podtopologyspread.md",
+      "terms": [
+        "podtopologyspread",
+        "framework",
+        "scheduler",
+        "names",
+        "pkg",
+        "plugins",
+        "go",
+        "new"
+      ]
+    },
+    {
+      "id": "q15",
+      "answerConcept": "/references/kubernetes-scheduler-noderesourcesfit.md",
+      "terms": [
+        "fit",
+        "go",
+        "score",
+        "resourceallocationscorer",
+        "scorer",
+        "weight",
+        "allocation",
+        "resource"
+      ]
+    },
+    {
+      "id": "q16",
+      "answerConcept": "/references/kubernetes-scheduler-score-weight-merge.md",
+      "terms": [
+        "weight",
+        "score",
+        "kubernetes",
+        "multipoint",
+        "enabled",
+        "framework",
+        "scheduler",
+        "nodeaffinity"
+      ]
+    },
+    {
+      "id": "q17",
+      "answerConcept": "/references/kubernetes-scheduler-multipoint-override.md",
+      "terms": [
+        "multipoint",
+        "enabled",
+        "plugins",
+        "score",
+        "go",
+        "framework",
+        "scheduler",
+        "행"
+      ]
+    },
+    {
+      "id": "q18",
+      "answerConcept": "/troubleshooting/output-buffering-prepend-body-loss.md",
+      "terms": [
+        "ob",
+        "clean",
+        "들러",
+        "핸들",
+        "prepend",
+        "start",
+        "잔여",
+        "출력"
+      ]
+    },
+    {
+      "id": "q19",
+      "answerConcept": "/troubleshooting/slim4-version-constant-mismatch.md",
+      "terms": [
+        "changelog",
+        "릴리",
+        "관리",
+        "권장",
+        "동화",
+        "갱신",
+        "리스",
+        "버전"
+      ]
+    },
+    {
+      "id": "q20",
+      "answerConcept": "/troubleshooting/bsd-inplace-edit-consumes-next-argument.md",
+      "terms": [
+        "원본",
+        "접미",
+        "치환",
+        "계열",
+        "미사",
+        "편집",
+        "환식",
+        "도는"
+      ]
+    }
+  ]
+}

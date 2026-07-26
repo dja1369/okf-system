@@ -27,6 +27,7 @@ import { stampGenerated } from '../lib/generated-stamp.mjs';
 import { analyzeProject } from '../lib/analyze.mjs';
 import { buildGraph, renderHtml, generateViz } from '../lib/viz.mjs';
 import { auditBenchmarkBundle, matchesBenchmarkAnswer } from '../lib/bench-audit.mjs';
+import { buildContext as buildGateContext, extractLatestLogSection } from '../lib/gate.mjs';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE_CLAUDE = path.join(PLUGIN_ROOT, 'test', 'fixtures', process.platform === 'win32' ? 'fake-claude.cmd' : 'fake-claude.mjs');
@@ -637,6 +638,572 @@ console.log('\n=== 게이트 예산 회계 (R5: 마커·heading 선차감 + star
     truncated === 0 && parts.taken >= LIVE_SHAPE.expected.taken
       && Buffer.byteLength(ctx, 'utf8') <= LIVE_SHAPE.expected.injectMaxBytes,
     `truncated=${truncated} taken=${parts.taken} bytes=${Buffer.byteLength(ctx, 'utf8')} indexBudget=${shaped.indexBudget}`);
+}
+
+// ---------------------------------------------------------------------------
+// I6의 회귀 가드(docs/0-2_develop_plan.md I6-8 "구현 방법 8"·"검증 방법" 표). 두 가지를 지킨다:
+//   (1) lib/gate.mjs 추출이 훅의 동작을 **바이트 하나도** 바꾸지 않았다는 것,
+//   (2) recall 하니스(test/gate-recall.mjs)가 동결된 예산 안에서, 결정적으로, **유료 호출 0**으로
+//       돈다는 것. 단언은 recall 값이 아니라 불변식에 건다 — recall은 OS·tmpdir 경로 길이에
+//       의존하므로 CI 단언 대상이 아니다(계획서 검증 표 11행).
+// 축소 실행(레벨 24·50 × 시드 2)만 여기서 돌린다. 전체 실행(4레벨 × 20시드)은 릴리스 때 수동이다.
+console.log('\n=== gate module + recall harness ===');
+{
+  const BENCH_FIXTURES = path.join(PLUGIN_ROOT, 'test', 'fixtures', 'bench');
+  const BENCH_DOCS = path.join(PLUGIN_ROOT, 'docs', 'benchmarks');
+  const HARNESS = path.join(PLUGIN_ROOT, 'test', 'gate-recall.mjs');
+  // 예산 회계 수정(R5) **이후**에 재측정한 형상이다. test/fixtures/live-shape-2026-07-25.json은
+  // 수정 전 상태(조립 9,218B / 절단 218B)를 기록한 별개의 픽스처이고, 위쪽 단언이 계속 쓴다.
+  const SHAPE = JSON.parse(fs.readFileSync(path.join(BENCH_FIXTURES, 'gate-recall', 'live-shape-2026-07-26.json'), 'utf8'));
+  const QSET = JSON.parse(fs.readFileSync(path.join(BENCH_FIXTURES, 'gate-recall.json'), 'utf8'));
+
+  const GATE_INDEX_MARKER = '--- index.md ---\n';
+  const GATE_TAIL_MARKER = '--- 최근 변경 (log.md) ---\n';
+  // index 구간만 떼어낸다. head는 `전역 지식 번들: ${okfHome}`로 경로를 그대로 실어서 샌드박스
+  // 경로 길이에 비례해 흔들리고, tail의 `- ` bullet은 concept 줄로 오인되기 쉽다.
+  const gateIndexSection = (text) => {
+    const iAt = text.indexOf(GATE_INDEX_MARKER);
+    const tAt = text.indexOf(GATE_TAIL_MARKER);
+    const from = iAt >= 0 ? iAt + GATE_INDEX_MARKER.length : 0;
+    return tAt >= 0 ? text.slice(from, tAt) : text.slice(from);
+  };
+  const writeConcept = (home, dir, name, type, title, description) => {
+    fs.mkdirSync(path.join(home, dir), { recursive: true });
+    fs.writeFileSync(path.join(home, dir, name),
+      `---\ntype: ${type}\ntitle: ${title}\ndescription: ${description}\ntimestamp: 2026-07-15\n---\n본문\n`);
+  };
+  const gateContextOf = (home) => {
+    const cfg = readConfig(home);
+    return buildGateContext({
+      okfHome: home,
+      latestLog: extractLatestLogSection(readIfExists(okfPaths(home).log)),
+      injectMaxLines: cfg.inject_max_lines,
+      injectMaxBytes: cfg.inject_max_bytes,
+    });
+  };
+
+  // 축소 실행 1회로 여러 단언을 먹인다 — 하니스는 자기 안에서 훅 서브프로세스를 띄우기 전에
+  // okfPaths(home).lock을 선주입한다(test/gate-recall.mjs:339, test/smoke.mjs:96-101 관용구).
+  // 그게 빠지면 훅 끝의 maybeSpawnBatch가 detached 실배치를 띄우고 개발 머신에서 과금된다.
+  const reducedOut = path.join(sandbox('gate-recall-out'), 'reduced.json');
+  // **하니스가 죽으면 여기서 스모크가 통째로 크래시한다** — 그러면 남은 단언이 실행조차 되지
+  // 않아 산출이 `0 failed`(조기 종료)로 나오고, 초록과 구별하기 어려워진다. 하니스 사망은
+  // 그 자체로 단언 하나로 만들고, 뒤 단언들이 빈 산출 위에서 정상적으로 FAIL하도록 둔다.
+  let reduced = null;
+  let harnessError = null;
+  try {
+    execFileSync(process.execPath, [HARNESS, '--levels', '24,50', '--seeds', '2', '--out', reducedOut], { encoding: 'utf8' });
+    reduced = JSON.parse(fs.readFileSync(reducedOut, 'utf8'));
+  } catch (err) {
+    harnessError = err;
+    // 빈 산출. 아래 단언들은 이 값에서 자기가 요구하는 사실을 못 찾고 FAIL한다.
+    reduced = { calibration: { observed: {}, mismatches: [] }, meta: {}, samples: [], byLevel: [] };
+  }
+  ok('gate-recall reduced run completes (no shape drift, no harness crash)',
+    harnessError === null,
+    `${harnessError?.message ?? ''} ${harnessError?.stderr ?? ''}`.trim().split('\n').slice(0, 4).join(' | '));
+
+  // --- 1. drift 0 --------------------------------------------------------
+  {
+    const home = bootstrapped('gate-drift');
+    writeConcept(home, 'decisions', 'a.md', 'decision', '드리프트 확인 결정', '모듈과 훅이 같은 바이트를 내는지 확인한다');
+    writeConcept(home, 'patterns', 'b.md', 'pattern', '드리프트 확인 패턴', '추출이 동작을 바꾸지 않았다는 증거');
+    writeConcept(home, 'troubleshooting', 'c.md', 'troubleshooting', '드리프트 확인 트러블슈팅', '바이트 단위 대조 대상');
+    regenerateIndex(home);
+    const moduleCtx = gateContextOf(home);
+    const hookCtx = JSON.parse(runHook('bin/session-start.mjs', { okfHome: home })).hookSpecificOutput.additionalContext;
+    ok('gate module and session-start subprocess emit byte-identical context',
+      moduleCtx === hookCtx,
+      `module=${Buffer.byteLength(moduleCtx, 'utf8')}B hook=${Buffer.byteLength(hookCtx, 'utf8')}B`);
+  }
+
+  // --- 2. 캘리브레이션(G3-0a / R5) ---------------------------------------
+  {
+    // 계획서 표는 taken 12 / total 22 / 조립 9,218 / 절단 218 / 잔여 58을 요구하지만 그 값들은
+    // **예산 회계 수정 이전**의 형상이다. 수정이 착지한 지금의 기준선은 재측정 픽스처의 expected다.
+    const exp = SHAPE.expected;
+    const obs = reduced.calibration.observed;
+    const KEYS = ['taken', 'total', 'assembledBytes', 'truncatedBytes', 'leftoverBytes', 'cappedLines'];
+    ok('gate stats reproduce the frozen live shape',
+      reduced.calibration.mismatches.length === 0 && KEYS.every((k) => obs[k] === exp[k]),
+      `observed=${JSON.stringify(obs)} expected=${JSON.stringify(exp)}`);
+  }
+
+  // --- 3. 계획서 생존 정규식이 신 포맷에서 0건이라는 사실을 못 박는다 -----
+  {
+    // 계획서 I6-5는 `/^- \[[^\]]*\]\((\/[^)\s]+)\)/`로 생존을 세라고 적었다. 그러나 주입 줄의
+    // bullet 문자는 `*`다(OKF 공식 번들 규범) — 이 정규식은 **한 건도** 매치하지 않는다. 하니스는
+    // 실제 포맷(`* [..](..)`)으로 세고, 계획서 정규식 결과는 산출 JSON에 증거로만 남긴다.
+    // **이 단언은 "되돌리기"를 잡지 못한다.** 여기서 보는 것은 포맷 사실(`* `는 매치하고 `- `는
+    // 0건)뿐이고, 하니스의 생존 정규식을 계획서 문구대로 되돌려도 이 세 값은 그대로다. 되돌리면
+    // 전 샘플의 survivorCount가 0이 되므로, 그건 아래 11("축소 실행의 불변식")이 잡는다.
+    const home = bootstrapped('gate-survivor-regex');
+    writeConcept(home, 'decisions', 'a.md', 'decision', '생존 정규식 확인', '실제 bullet 문자는 별표다');
+    regenerateIndex(home);
+    const idx = gateIndexSection(gateContextOf(home));
+    const actual = idx.split('\n').filter((l) => /^\* \[[^\]]*\]\((\/[^)\s]+)\)/.test(l)).length;
+    const planned = idx.split('\n').filter((l) => /^- \[[^\]]*\]\((\/[^)\s]+)\)/.test(l)).length;
+    ok('plan-spec survivor regex finds zero links in the current `* ` bullet format',
+      actual > 0 && planned === 0 && reduced.meta.planRegexSurvivorTotal === 0,
+      `actual=${actual} planned=${planned} harnessPlanTotal=${reduced.meta.planRegexSurvivorTotal}`);
+  }
+
+  // --- 4. 계측이 산출을 바꾸지 않는다 ------------------------------------
+  {
+    // stats 인자는 순수 관찰자여야 한다. 6개 카테고리를 다 깔아 stats.cats가 라이브와 같은 폭으로
+    // 채워지는지도 함께 본다(계획서 표 4행: `stats.cats.length === 6`).
+    const home = bootstrapped('gate-stats-noop');
+    const DIRS = [
+      ['decisions', 'decision'], ['patterns', 'pattern'], ['preferences', 'preference'],
+      ['projects', 'project'], ['references', 'reference'], ['troubleshooting', 'troubleshooting'],
+    ];
+    for (const [dir, type] of DIRS) {
+      for (let i = 0; i < 40; i++) {
+        writeConcept(home, dir, `c${String(i).padStart(2, '0')}.md`, type,
+          `${dir} 계측 확인 ${i}`, `계측이 산출을 바꾸지 않는지 확인하는 충분히 긴 설명 문장 ${i} — ${padBytes(120)}`);
+      }
+    }
+    regenerateIndex(home);
+    const cfg = readConfig(home);
+    const args = {
+      okfHome: home,
+      latestLog: extractLatestLogSection(readIfExists(okfPaths(home).log)),
+      injectMaxLines: cfg.inject_max_lines,
+      injectMaxBytes: cfg.inject_max_bytes,
+    };
+    const stats = {};
+    const plain = buildGateContext(args);
+    const instrumented = buildGateContext(args, stats);
+    ok('gate stats instrumentation does not change gate output',
+      plain === instrumented && stats.cats.length === 6,
+      `equal=${plain === instrumented} cats=${stats.cats?.length}`);
+  }
+
+  // --- 5. 결정성(G3-0c) ---------------------------------------------------
+  {
+    // 하니스의 --determinism-check가 같은 (level 24, seed 7)로 10회 재조립해 index 구간 sha256과
+    // 생존 집합을 대조한다. 10/10이 아니면 measure 이전 단계(filler 명명·정렬)가 흔들린 것이다.
+    // 위 축소 실행과 같은 이유로 감싼다 — 하니스가 죽으면 스모크가 통째로 크래시해서 남은
+    // 단언이 실행되지 않고, 그 조기 종료가 `0 failed`로 보인다.
+    let det = null;
+    let detError = null;
+    try {
+      det = JSON.parse(execFileSync(process.execPath, [HARNESS, '--determinism-check'], { encoding: 'utf8' }));
+    } catch (err) {
+      detError = err;
+    }
+    ok('gate-recall harness is deterministic for a fixed (level, seed)',
+      detError === null && det.pass === true && det.identicalDigests === '10/10' && det.identicalSurvivorSets === '10/10',
+      detError
+        ? `harness failed: ${`${detError.message} ${detError.stderr ?? ''}`.trim().split('\n').slice(0, 4).join(' | ')}`
+        : `digests=${det.identicalDigests} survivors=${det.identicalSurvivorSets}`);
+  }
+
+  // --- 6. head 길이 독립성 ------------------------------------------------
+  {
+    // head는 번들 경로를 그대로 실으므로 **바이트 수는 경로 길이에 비례해 달라진다**. 달라지면
+    // 안 되는 것은 그 아래 index 구간이다 — 샌드박스 경로가 길다는 이유로 concept가 밀려나면
+    // 하니스의 측정값이 tmpdir 구현에 좌우된다.
+    const build = (label) => {
+      const home = bootstrapped(label);
+      writeConcept(home, 'decisions', 'a.md', 'decision', '경로 독립 결정', '경로 길이와 무관해야 하는 줄');
+      writeConcept(home, 'troubleshooting', 'b.md', 'troubleshooting', '경로 독립 트러블슈팅', '두 홈에서 같아야 하는 줄');
+      regenerateIndex(home);
+      return home;
+    };
+    const shortHome = build('gp');
+    const longHome = build('gate-path-length-independence-padding-padding-padding');
+    const shortCtx = gateContextOf(shortHome);
+    const longCtx = gateContextOf(longHome);
+    const headBytesOf = (t) => Buffer.byteLength(t.slice(0, t.indexOf(GATE_INDEX_MARKER)), 'utf8');
+    ok('gate head byte length does not depend on the sandbox path length',
+      gateIndexSection(shortCtx) === gateIndexSection(longCtx) && headBytesOf(shortCtx) !== headBytesOf(longCtx),
+      `short=${headBytesOf(shortCtx)}B long=${headBytesOf(longCtx)}B indexEqual=${gateIndexSection(shortCtx) === gateIndexSection(longCtx)}`);
+  }
+
+  // --- 7. 유료 0(소스 검사) -----------------------------------------------
+  {
+    // **`\bclaude\b` 단독 패턴을 쓰지 마라** — 하니스는 훅 서브프로세스에 CLAUDE_CONFIG_DIR로
+    // `.claude` 경로를 조립하고 PATH 트랩 스텁 이름도 `claude`다. 잡아야 하는 것은 *호출*이다.
+    const src = fs.readFileSync(HARNESS, 'utf8');
+    ok('gate-recall harness never invokes a paid LLM',
+      !/claude_bin|runClaude|fake-claude|OKF_RUN_LIVE_BENCH/.test(src) && !/execFileSync\([^)]*claude/i.test(src));
+  }
+
+  // --- 8. 유료 0(PATH 트랩 실측) ------------------------------------------
+  {
+    // `meta.paidCalls: 0` 같은 상수 선언은 증거가 아니다. 트랩 파일의 존재 여부(파일시스템 실측)다.
+    // **`tripped === false`만 보면 안 된다** — 스텁 설치 코드를 지워도 false가 나오고, 스텁이
+    // 없는 false는 "안 불렀다"가 아니라 "재지 않았다"이다. 트랩이 실제로 깔려 있었다는 실측
+    // (meta.paidCallTrapInstalled = fs.existsSync(스텁))을 AND로 요구한다.
+    ok('gate-recall harness trips no paid claude invocation (with the trap actually installed)',
+      reduced.meta.paidCallTrapInstalled === true && reduced.meta.paidCallTrapTripped === false,
+      `installed=${reduced.meta.paidCallTrapInstalled} tripped=${reduced.meta.paidCallTrapTripped}`);
+  }
+
+  // --- 9. 동결 질문 세트의 자기 구성 규칙 ---------------------------------
+  {
+    const rules = QSET.compositionRules;
+    const byDir = {};
+    for (const q of QSET.questions) {
+      const dir = q.answerConcept.split('/')[0];
+      byDir[dir] = (byDir[dir] || 0) + 1;
+    }
+    const uniqueAnswers = new Set(QSET.questions.map((q) => q.answerConcept));
+    const cwdIndependent = QSET.questions.filter((q) => q.cwdIndependent).length;
+    const missingSources = QSET.questions.filter((q) => !fs.existsSync(path.join(PLUGIN_ROOT, q.sourceFile))).map((q) => q.sourceFile);
+    const dirs = Object.keys(byDir);
+    ok('frozen gate-recall question set satisfies its own composition rules',
+      QSET.questions.length === rules.questions
+        && uniqueAnswers.size === QSET.questions.length
+        && cwdIndependent >= rules.minCwdIndependent
+        && dirs.length === 6 && dirs.every((d) => byDir[d] >= rules.minPerCategory)
+        && missingSources.length === 0,
+      `n=${QSET.questions.length} uniq=${uniqueAnswers.size} cwdIndep=${cwdIndependent} byDir=${JSON.stringify(byDir)} missing=${JSON.stringify(missingSources)}`);
+  }
+
+  // --- 10. 레벨 하한 ------------------------------------------------------
+  {
+    // 레벨 하한이 24인 이유: 정답 20 + 부트스트랩 시드 4. N=8·22는 원리적으로 불가능하다.
+    // 시드 수는 **실측**한다 — templates/seed/가 늘면 하한도 같이 올라가야 하고, 하드코딩하면
+    // 그 순간 filler 수가 음수가 되면서 레벨 N이 거짓이 된다.
+    const home = bootstrapped('gate-recall-floor');
+    const seedCount = discoverConceptDirs(home).reduce((n, dir) =>
+      n + fs.readdirSync(path.join(home, dir)).filter((f) => f.endsWith('.md') && f !== 'index.md').length, 0);
+    const floor = QSET.questions.length + seedCount;
+    ok('gate-recall levels clear the planted-concept floor',
+      Math.min(...QSET.levels) >= floor && reduced.samples.every((s) => s.seedCount === seedCount),
+      `min(levels)=${Math.min(...QSET.levels)} floor=${floor} seedCount=${seedCount} harnessSeedCounts=${JSON.stringify([...new Set(reduced.samples.map((s) => s.seedCount))])}`);
+  }
+
+  // --- 11. 축소 실행의 불변식 ---------------------------------------------
+  {
+    // recall 값 자체는 단언하지 않는다(계획서 표 11행: OS·tmpdir 의존). 대신 (a) 예산 안에서
+    // 조립이 끝났는가(절단 0 / 줄 캡 0), (b) tail이 동결 형상과 같은가, (c) 살아남은 링크가 전부
+    // **우리가 심은 것**인가 — (c)가 깨지면 생존 집계가 게이트가 아닌 무언가를 세고 있다는 뜻이다.
+    // **(d) 생존이 하나라도 있는가.** (c)는 빈 집합에서 공허참이다(`[].every() === true`) —
+    // 하니스의 생존 정규식을 계획서의 `- ` bullet 버전으로 되돌리면 전 샘플 생존 0 / recall 0이
+    // 되는데 (c)만으로는 그대로 통과한다(실측). 값이 아니라 존재를 걸면 자기충족이 아니면서
+    // 그 되돌리기를 즉시 잡는다.
+    const bad = reduced.samples.filter((s) =>
+      s.truncatedBytes !== 0 || s.cappedLines !== 0 || s.tailBytes !== SHAPE.tailBytes
+      || s.survivorsAllPlanted !== true || !(s.survivorCount > 0));
+    ok('reduced recall run stays inside the frozen budget and plants only known concepts',
+      reduced.samples.length === 4 && bad.length === 0,
+      `n=${reduced.samples.length} bad=${JSON.stringify(bad.map((s) => ({ level: s.level, seed: s.seed, truncatedBytes: s.truncatedBytes, cappedLines: s.cappedLines, tailBytes: s.tailBytes, survivorsAllPlanted: s.survivorsAllPlanted, survivorCount: s.survivorCount })))}`);
+  }
+
+  // --- 12·13. 사전등록서와 리포트 -----------------------------------------
+  // 아직 발행 전이다. **"파일이 없으면 통과"로 짜면 영원히 검사되지 않는 죽은 단언이 된다** —
+  // 부재 시에도 각각 검사할 대상이 남도록 짠다: 12는 "사전등록 없이 리포트가 먼저 나올 수 없다"를,
+  // 13은 "리포트가 없으면 산출 JSON이 셀당 n·min–max를 담는가"를 본다. 파일이 생기는 순간
+  // 내용 검사가 자동으로 걸린다.
+  {
+    const PRE_REG = 'pre-registration-2026-07-26-e1.md';
+    const preRegPath = path.join(BENCH_DOCS, PRE_REG);
+    const preRegExists = fs.existsSync(preRegPath);
+    const reportNames = fs.readdirSync(BENCH_DOCS).filter((f) => /^gate-recall-.*e1\.md$/.test(f));
+    const reportTexts = reportNames.map((f) => readIfExists(path.join(BENCH_DOCS, f)));
+
+    const REQUIRED = ['R1', 'R2', 'R3', 'R4', 'R5', 'I2 승인 조건', 'recall(50)', '0.90', '재탕'];
+    const preRegText = readIfExists(preRegPath);
+    const missing = REQUIRED.filter((s) => !preRegText.includes(s));
+    ok(`E1 pre-registration fixes refutation criteria before any report${preRegExists ? '' : ' [아직 미발행 — 리포트가 사전등록보다 먼저 나오지 않았음만 검사]'}`,
+      preRegExists
+        ? missing.length === 0 && reportTexts.every((t) => t.includes(PRE_REG))
+        : reportNames.length === 0,
+      `preRegExists=${preRegExists} missing=${JSON.stringify(missing)} reports=${JSON.stringify(reportNames)}`);
+
+    // 리포트의 recall 셀 행은 `n=`과 min–max(en dash)를 같은 행에 실어야 한다 — "2개짜리 중앙값을
+    // 곡선의 점처럼 보여주던" v2 #2를 기계적으로 막는다(test/bench-report.mjs:14-15).
+    // recall 셀 행 = **첫 칸이 레벨 자체**인 표 행. 행 전체에서 레벨 숫자를 찾으면 R1 행의
+    // `recall(50)`이나 질문별 표의 `N=24` 열까지 딸려 들어와 거짓 실패를 낸다(실측).
+    // 굵게·`N=` 접두는 허용한다 — 서식이지 내용이 아니다.
+    const cellRows = (t) => t.split('\n').filter((l) => /^\s*\|\s*\**\s*(?:N\s*=\s*)?(?:24|50|100|200)\s*\**\s*\|/.test(l));
+    const reportOk = reportNames.length
+      ? reportTexts.every((t) => {
+        const rows = cellRows(t);
+        return rows.length > 0 && rows.every((l) => /n\s*=\s*\d+/.test(l) && /[\d.]+\s*[–]\s*[\d.]+/.test(l));
+      })
+      : reduced.byLevel.every((b) => Number.isInteger(b.n) && b.n > 0
+        && typeof b.recallMin === 'number' && typeof b.recallMax === 'number' && b.recallMin <= b.recallMax);
+    ok(`gate-recall report records n and min–max per recall cell${reportNames.length ? '' : ' [리포트 미발행 — 산출 JSON이 셀당 n·min–max를 담는지로 검사]'}`,
+      reportOk,
+      `reports=${JSON.stringify(reportNames)} byLevel=${JSON.stringify(reduced.byLevel.map((b) => ({ level: b.level, n: b.n, min: b.recallMin, max: b.recallMax })))}`);
+  }
+
+  // --- 14. E2 픽스처 선행성 -----------------------------------------------
+  // E1의 가장 큰 구멍(리포트 §6-b 5번): 질문·distractor·형상 픽스처가 **사전등록 커밋이 아니라
+  // 리포트 커밋에서 처음 git에 등장**했다. 임계만 선행 고정됐고 결과를 실제로 결정한 재료는
+  // 그렇지 않았다는 뜻이다. 12·13번은 문서 두 개의 순서만 보므로 이 구멍을 보지 못한다.
+  //
+  // 여기서 기계로 막는다: **E2 픽스처 3개가 처음 추가된 커밋이 E2 리포트가 처음 추가된 커밋보다
+  // 앞서야 한다.** 사전등록서와 같은 커밋인 것은 허용이고 오히려 목표다 — 위반은 "리포트와
+  // 같은(또는 그보다 뒤인) 커밋에서 픽스처가 처음 등장하는 것"이다. 등호를 왜 통과로 두지
+  // 않는지는 strictlyBefore의 주석을 보라.
+  {
+    const E2_FIXTURES = [
+      'test/fixtures/bench/gate-recall-e2.json',
+      'test/fixtures/bench/gate-recall/live-shape-2026-07-27-e2.json',
+      'test/fixtures/bench/gate-recall/distractors-e2.json',
+    ];
+    // lib/git.mjs의 `git`을 가리지 않도록 이름을 따로 둔다.
+    const gitOut = (args) => {
+      const r = spawnSync('git', args, { cwd: PLUGIN_ROOT, encoding: 'utf8' });
+      return r.status === 0 ? (r.stdout ?? '') : null;
+    };
+    // 파일이 **처음 추가된** 커밋. `git log`는 최신부터 내므로 마지막 줄이 최초 추가다.
+    const firstAddCommit = (rel) => {
+      const out = gitOut(['log', '--diff-filter=A', '--format=%H', '--', rel]);
+      const lines = (out ?? '').trim().split('\n').filter(Boolean);
+      return lines.length ? lines[lines.length - 1] : null;
+    };
+    // a가 b보다 **엄격히** 앞서는가.
+    //
+    // 리포트에 대해서는 "같은 커밋"을 통과로 두면 안 된다. E1이 정확히 그 상태였다 — 픽스처
+    // 3개와 리포트가 전부 커밋 b842c24에 함께 들어왔다(실측). 등호를 허용하면 이 단언은 자기가
+    // 막으려는 바로 그 사고에서 초록이 되어 아무것도 증명하지 못한다. 픽스처가 **사전등록서와**
+    // 같은 커밋인 것은 여전히 허용이고 목표다 — 여기서 비교하는 상대는 리포트뿐이기 때문이다.
+    const strictlyBefore = (a, b) => a !== b
+      && spawnSync('git', ['merge-base', '--is-ancestor', a, b], { cwd: PLUGIN_ROOT }).status === 0;
+
+    const missingFiles = E2_FIXTURES.filter((rel) => !fs.existsSync(path.join(PLUGIN_ROOT, rel)));
+    const reportE2 = fs.readdirSync(BENCH_DOCS).filter((f) => /^gate-recall-.*e2\.md$/.test(f));
+    const fixtureCommits = Object.fromEntries(E2_FIXTURES.map((rel) => [rel, firstAddCommit(rel)]));
+    const reportCommits = Object.fromEntries(reportE2.map((f) => [f, firstAddCommit(`docs/benchmarks/${f}`)]));
+    // 리포트가 커밋되지 않았으면(=아직 발행 전이면) 순서를 판정할 대상이 없다. 그 경우에도
+    // 검사할 사실은 남는다 — 픽스처 파일 3개가 실재하는가.
+    const publishedReports = Object.entries(reportCommits).filter(([, c]) => c !== null);
+    const violations = [];
+    for (const [rel, fc] of Object.entries(fixtureCommits)) {
+      for (const [report, rc] of publishedReports) {
+        if (fc === null || !strictlyBefore(fc, rc)) violations.push(`${rel}(${fc ?? '미커밋'}) !< ${report}(${rc})`);
+      }
+    }
+    ok(`E2 fixtures enter git no later than the E2 report${publishedReports.length ? '' : ' [리포트 미발행 — 픽스처 3종의 실재만 검사]'}`,
+      missingFiles.length === 0 && violations.length === 0,
+      `missing=${JSON.stringify(missingFiles)} fixtureCommits=${JSON.stringify(fixtureCommits)} reports=${JSON.stringify(reportCommits)} violations=${JSON.stringify(violations)}`);
+
+    // --- 15. E3 픽스처 선행성 ---------------------------------------------
+    // E2와 **같은 규율을 같은 기계로** 건다. E3는 형상·distractor를 새로 만들지 않고 E2의 것을
+    // 그대로 읽으므로, 검사 대상은 신규 질문 픽스처 1개 + 승계하는 E2 픽스처 2개다. 승계분까지
+    // 함께 거는 이유는, E3가 실제로 읽는 재료 전부가 리포트보다 앞서야 규율이 성립하기 때문이다
+    // (신규 파일만 걸면 승계분을 리포트 커밋에서 바꿔치기해도 초록이다).
+    const E3_FIXTURES = [
+      'test/fixtures/bench/gate-recall-e3.json',
+      'test/fixtures/bench/gate-recall/live-shape-2026-07-27-e2.json',
+      'test/fixtures/bench/gate-recall/distractors-e2.json',
+    ];
+    const missingE3 = E3_FIXTURES.filter((rel) => !fs.existsSync(path.join(PLUGIN_ROOT, rel)));
+    const reportE3 = fs.readdirSync(BENCH_DOCS).filter((f) => /^gate-recall-.*e3\.md$/.test(f));
+    const fixtureCommitsE3 = Object.fromEntries(E3_FIXTURES.map((rel) => [rel, firstAddCommit(rel)]));
+    const reportCommitsE3 = Object.fromEntries(reportE3.map((f) => [f, firstAddCommit(`docs/benchmarks/${f}`)]));
+    const publishedE3 = Object.entries(reportCommitsE3).filter(([, c]) => c !== null);
+    const violationsE3 = [];
+    for (const [rel, fc] of Object.entries(fixtureCommitsE3)) {
+      for (const [report, rc] of publishedE3) {
+        if (fc === null || !strictlyBefore(fc, rc)) violationsE3.push(`${rel}(${fc ?? '미커밋'}) !< ${report}(${rc})`);
+      }
+    }
+    ok(`E3 fixtures enter git no later than the E3 report${publishedE3.length ? '' : ' [리포트 미발행 — 픽스처 3종의 실재만 검사]'}`,
+      missingE3.length === 0 && violationsE3.length === 0,
+      `missing=${JSON.stringify(missingE3)} fixtureCommits=${JSON.stringify(fixtureCommitsE3)} reports=${JSON.stringify(reportCommitsE3)} violations=${JSON.stringify(violationsE3)}`);
+
+    // --- 15-b. 축 E(효율) 픽스처 선행성 -------------------------------------
+    // 같은 규율을 축 E에도 건다. 다만 **검사 대상에 하니스 자신을 포함한다** — 이 축은 질문
+    // 픽스처보다 전략 정의(=하니스 코드)가 결론을 훨씬 크게 좌우하기 때문이다. 픽스처만 걸면
+    // 리포트 커밋에서 전략을 바꿔치기해도 초록이다.
+    const EFF_FIXTURES = [
+      'test/fixtures/bench/gate-efficiency-queries.json',
+      'test/gate-efficiency.mjs',
+    ];
+    const missingEff = EFF_FIXTURES.filter((rel) => !fs.existsSync(path.join(PLUGIN_ROOT, rel)));
+    const reportEff = fs.readdirSync(BENCH_DOCS).filter((f) => /^gate-efficiency-.*\.md$/.test(f));
+    const fixtureCommitsEff = Object.fromEntries(EFF_FIXTURES.map((rel) => [rel, firstAddCommit(rel)]));
+    const reportCommitsEff = Object.fromEntries(reportEff.map((f) => [f, firstAddCommit(`docs/benchmarks/${f}`)]));
+    const publishedEff = Object.entries(reportCommitsEff).filter(([, c]) => c !== null);
+    const violationsEff = [];
+    for (const [rel, fc] of Object.entries(fixtureCommitsEff)) {
+      for (const [report, rc] of publishedEff) {
+        if (fc === null || !strictlyBefore(fc, rc)) violationsEff.push(`${rel}(${fc ?? '미커밋'}) !< ${report}(${rc})`);
+      }
+    }
+    ok(`axis-E fixtures and harness enter git before the axis-E report${publishedEff.length ? '' : ' [리포트 미발행 — 픽스처·하니스 실재만 검사]'}`,
+      missingEff.length === 0 && violationsEff.length === 0,
+      `missing=${JSON.stringify(missingEff)} fixtureCommits=${JSON.stringify(fixtureCommitsEff)} reports=${JSON.stringify(reportCommitsEff)} violations=${JSON.stringify(violationsEff)}`);
+  }
+
+  // --- 16-b. 축 E 계측 무결성 ---------------------------------------------
+  // 축 E의 결론은 "같은 예산에서 전략을 갈아끼웠다"에 전부 걸려 있다. 그 전제가 코드에서
+  // 실제로 성립하는지를 축소 실행으로 확인한다 — 리포트 문장이 아니라 여기서 지킨다.
+  {
+    const EFF_HARNESS = path.join(PLUGIN_ROOT, 'test', 'gate-efficiency.mjs');
+    const effOut = path.join(sandbox('gate-efficiency-out'), 'reduced-eff.json');
+    let eff = null;
+    let effError = null;
+    try {
+      execFileSync(process.execPath, [EFF_HARNESS, '--levels', '26,50', '--seeds', '3', '--budgets', '4096', '--out', effOut], { encoding: 'utf8' });
+      eff = JSON.parse(fs.readFileSync(effOut, 'utf8'));
+    } catch (err) {
+      effError = String(err?.message ?? err);
+    }
+    ok('axis-E harness completes a reduced run', eff !== null, effError ?? '');
+
+    if (eff) {
+      // 예산 준수. 전략끼리 예산이 다르면 비교 자체가 무의미해진다.
+      ok('every axis-E strategy respects the byte budget',
+        eff.guards.R3_budgetRespected.violations === 0,
+        JSON.stringify(eff.guards.R3_budgetRespected.firstFew));
+
+      // 항등식. 실리지 않은 concept가 1위로 뽑히면 계측이 거짓이다.
+      ok('axis-E sel@1 never exceeds reach',
+        eff.guards.R5_identity.violations === 0,
+        JSON.stringify(eff.guards.R5_identity.firstFew));
+
+      // 유료 0을 **실행으로** 증명한다. 스텁이 없으면 "발동 안 함"은 증거가 아니므로 둘 다 본다.
+      ok('axis-E proves $0 by trap, not by declaration',
+        eff.guards.R2_paidZero.installed === true && eff.guards.R2_paidZero.tripped === false,
+        JSON.stringify(eff.guards.R2_paidZero));
+
+      // **이 단언은 실제 결함을 고정한다.** 첫 등록 실행에서 evaluate가 마크다운 링크 문법으로만
+      // 경로를 뽑아 `paths` 전략의 reach가 12셀 전부 0.000이 나왔고, 하마터면 "경로만으로는 도달
+      // 자체가 안 된다"는 발견으로 발행할 뻔했다. 발견이 아니라 버그였다. conceptPathOf가
+      // 맨 경로를 다시 못 읽게 되면 여기서 FAIL한다.
+      const pathsReach = eff.byCell.map((c) => c.per.paths.reach);
+      ok('axis-E measures reach for bare-path lines (not only markdown links)',
+        pathsReach.every((r) => r > 0),
+        `paths reach per cell = ${JSON.stringify(pathsReach)}`);
+
+      // 전략이 조용히 같은 것으로 무너지지 않았는가. okf와 dump가 바이트까지 같아지면
+      // "round-robin 효과"는 0이 되고 그 0은 발견이 아니라 붕괴다.
+      const distinct = eff.byCell.some((c) => Math.abs(c.per.okf.injectedBytes - c.per.dump.injectedBytes) > 1);
+      ok('axis-E okf and dump are actually different strategies', distinct,
+        JSON.stringify(eff.byCell.map((c) => [c.per.okf.injectedBytes, c.per.dump.injectedBytes])));
+
+      // 천장이 무너지면 전략 비교가 의미를 잃는다(검색기가 무능한지 예산이 좁은지 못 가른다).
+      ok('axis-E retriever ceiling stays above the pre-registered 0.80',
+        eff.guards.R4_ceiling.pass, JSON.stringify(eff.guards.R4_ceiling));
+    }
+
+    // 쿼리가 정말 **기계 생성**인가. 손으로 고친 픽스처는 여기서 잡힌다 — 다시 생성해
+    // 바이트가 달라지면 그 픽스처는 코드가 낸 것이 아니다.
+    {
+      const rel = 'test/fixtures/bench/gate-efficiency-queries.json';
+      const abs = path.join(PLUGIN_ROOT, rel);
+      const before = fs.existsSync(abs) ? fs.readFileSync(abs) : null;
+      let after = null;
+      try {
+        execFileSync(process.execPath, [EFF_HARNESS, '--freeze-queries'], { encoding: 'utf8' });
+        after = fs.readFileSync(abs);
+      } catch { /* after는 null로 남는다 */ }
+      const same = before !== null && after !== null && before.equals(after);
+      if (before !== null && after !== null && !same) fs.writeFileSync(abs, before); // 사본으로 복구
+      ok('axis-E query fixture is reproducible from the generator (not hand-edited)', same,
+        `before=${before?.length ?? 'none'}B after=${after?.length ?? 'none'}B`);
+    }
+  }
+
+  // --- 16. E3 계측: 분해 항등식과 이산 격자 -------------------------------
+  // E3의 설명은 통째로 하나의 항등식 위에 서 있다: 게이트의 생존 조건은 **정확히** `rank < taken`
+  // 이므로 recall은 (rank 벡터, taken 벡터)의 완전한 함수다. 그 항등식이 깨지면 분해도 결론도
+  // 같이 무너지므로, 여기서 축소 실행으로 실측한다 — 리포트의 문장이 아니라 코드가 지킨다.
+  {
+    const e3Out = path.join(sandbox('gate-recall-e3-out'), 'reduced-e3.json');
+    let e3 = null;
+    let e3Error = null;
+    try {
+      execFileSync(process.execPath, [HARNESS, '--e3', '--levels', '50,100', '--seeds', '3', '--out', e3Out], { encoding: 'utf8' });
+      e3 = JSON.parse(fs.readFileSync(e3Out, 'utf8'));
+    } catch (err) {
+      e3Error = err;
+      e3 = { refutation: {}, trends: null, decomposition: null, analysisConfig: null, samples: [] };
+    }
+    ok('gate-recall E3 reduced run completes',
+      e3Error === null,
+      `${e3Error?.message ?? ''} ${e3Error?.stderr ?? ''}`.trim().split('\n').slice(0, 4).join(' | '));
+
+    // 모형 항등식. 불일치가 **한 건이라도** 있으면 R8이 발화하고 분해는 무효다.
+    const mc = e3.refutation?.R8?.basis ?? {};
+    ok('E3 survival identity `rank < taken` matches observed survival on every question of every sample',
+      e3.refutation?.R8?.fired === false && mc.samplesWithMismatch === 0
+        && mc.recallReconstructionMismatches === 0 && mc.totalQuestionChecks > 0,
+      `R8=${JSON.stringify(e3.refutation?.R8?.fired)} basis=${JSON.stringify(mc)}`);
+
+    // **비순환 절.** 위 단언은 measureSlots와 buildInjectedIndex가 **같은 collectConceptLines**를
+    // 쓰므로 `A.indexOf(x) < k ⟺ A.slice(0,k).includes(x)`라는 정의상 참을 확인할 뿐이다.
+    // 독립 검증이 이것을 실행으로 보였다: collectConceptLines 자체를 줄 길이 내림차순으로 바꾸면
+    // 위 단언은 불일치 0으로 **통과하는데** rank의 의미는 완전히 달라진다.
+    // 그래서 concept 파일 frontmatter를 직접 읽어 순서의 의미를 확인하는 절을 R8에 넣었고,
+    // 같은 변이로 그 절이 6/6 발화함을 확인했다(기준선은 0/6).
+    ok('E3 verifies rank means title-sort order from the concept files, not just index-order self-consistency',
+      mc.samplesWithTitleOrderViolation === 0 && typeof mc.samplesWithTitleOrderViolation === 'number'
+        && e3.refutation?.R8?.meaning?.includes('title 정렬 순위'),
+      `titleOrderViolations=${mc.samplesWithTitleOrderViolation} examples=${JSON.stringify(mc.titleOrderViolationExamples ?? []).slice(0, 200)}`);
+
+    // 분해 잔차는 **발화 조건이 아니다** — interaction을 잔차로 정의하므로 구조적으로 0이다.
+    // 진단값으로만 기록하되, 그것이 R8의 판정에 섞여 들어가지 않았음을 여기서 못박는다
+    // (섞이면 "잔차 0이니 분해가 검증됐다"는 거짓 안심을 준다).
+    const worstResidual = Math.max(0, ...(e3.decomposition ?? []).map((d) => Math.abs(d.residual)));
+    ok('E3 records the decomposition residual as structural, and does not let it gate R8',
+      (e3.decomposition ?? []).length > 0 && worstResidual <= 1e-12
+        && mc.decompositionResidualIsStructural === true,
+      `n=${(e3.decomposition ?? []).length} worstResidual=${worstResidual} structural=${mc.decompositionResidualIsStructural}`);
+
+    // **이산 격자 회귀 고정.** recall은 맞은문항수/문항수라 델타는 1/20의 정확한 배수여야 하는데,
+    // 배정도에서는 그렇지 않다: 0.25−0.20 = 0.04999…이고 0.20−0.15 = 0.05000…2다. 양자화를
+    // 지우면 **같은 크기(문항 1개 이동)가 등가한계 0.05의 반대편에 떨어져** 판정이 갈린다.
+    // 실제로 이 하니스에서 200→400의 none과 back이 동일한 CI인데 flat/indeterminate로 갈렸다.
+    // 그래서 (a) 부동소수점이 실제로 그렇게 어긋난다는 사실과 (b) 격자 반올림이 그것을 정확히
+    // 0.05로 되돌린다는 사실을 둘 다 못박는다 — (b)만 걸면 결함이 사라져도 초록이라 무의미하다.
+    const q = e3.analysisConfig?.recallQuantum ?? null;
+    const naiveHigh = 0.20 - 0.15;
+    const naiveLow = 0.25 - 0.20;
+    const roundTrip = (x) => Math.round(x / q) * q;
+    ok('E3 quantizes recall deltas onto the measurement grid (float error must not decide the equivalence verdict)',
+      q === 1 / 20 && e3.analysisConfig?.equivalenceBoundInclusive === true
+        && naiveLow !== 0.05 && naiveHigh !== 0.05
+        && roundTrip(naiveLow) === 0.05 && roundTrip(naiveHigh) === 0.05,
+      `quantum=${q} naive=[${naiveLow}, ${naiveHigh}] rounded=[${q ? roundTrip(naiveLow) : 'n/a'}, ${q ? roundTrip(naiveHigh) : 'n/a'}]`);
+
+    // 방향 판정 네 값은 상호배타·전수적이어야 한다. 예상 밖 문자열이 새면 리포트가 그것을
+    // 조용히 무시하고 나머지만 세게 된다.
+    const DIRECTIONS = new Set(['rising', 'falling', 'flat', 'indeterminate']);
+    const badDirections = (e3.trends ?? []).filter((t) => !DIRECTIONS.has(t.direction));
+    ok('E3 trend verdicts stay inside the four pre-registered categories',
+      (e3.trends ?? []).length > 0 && badDirections.length === 0,
+      `n=${(e3.trends ?? []).length} bad=${JSON.stringify(badDirections.map((t) => t.direction))}`);
+
+    // **YAML 태그 파손 회귀 고정.** E2·E3의 `front` 섭동(`!!! `)은 인용 없는 frontmatter title에
+    // 붙으면 `!!!`가 YAML 태그 지시자라 **파싱을 통째로 깨뜨린다** — type이 사라져 concept가
+    // `# undefined` 섹션으로 가고, 링크 텍스트가 파일명이 되며, **description이 통째로 소실돼
+    // 줄이 ~700B에서 ~30B로 짧아진다.** 동결 질문 20개 중 14개가 인용 없는 title이라 E2가 발행한
+    // "title 4글자로 recall이 두 배"는 정렬이 아니라 이 파손을 상당 부분 잰 것이었다.
+    // 인용 안전 경로(`--quote-safe-perturb`)로 다시 재면 front가 전 레벨 0.400 평탄으로 무너진다.
+    //
+    // 여기서 **두 사실을 다 못박는다**: (a) 인용 없는 값에 접두를 그냥 붙이면 실제로 깨진다,
+    // (b) 이중인용 스칼라 안쪽에 붙이면 안 깨진다. (b)만 걸면 파손이 조용히 고쳐져도 초록이라
+    // 이 회귀 고정의 의미가 사라진다.
+    {
+      const home = bootstrapped('yaml-tag-break');
+      writeConcept(home, 'decisions', 'unq.md', 'decision', '!!! 인용 없는 제목', '설명은 남아야 한다');
+      writeConcept(home, 'decisions', 'qtd.md', 'decision', '"!!! 인용된 제목"', '설명은 남아야 한다');
+      regenerateIndex(home);
+      const idx = fs.readFileSync(path.join(home, 'decisions', 'index.md'), 'utf8');
+      const unquotedBroke = idx.includes('# undefined') && /\* \[unq\]\(unq\.md\)\s*$/m.test(idx);
+      const quotedSurvived = idx.includes('* [!!! 인용된 제목](qtd.md) - 설명은 남아야 한다');
+      ok('prepending `!!! ` to an UNQUOTED frontmatter title breaks parsing (type lost, description dropped)',
+        unquotedBroke, idx);
+      ok('prepending `!!! ` INSIDE a double-quoted title keeps title, type and description',
+        quotedSurvived, idx);
+    }
+
+    // **재지 않은 것을 잰 것처럼 적지 않는다.** E1·E2 픽스처에는 analysis 블록이 없으므로 그
+    // 경로의 산출에는 analysisConfig·trends·decomposition이 전부 null이어야 한다. 빈 배열로
+    // 나오면 "쟀는데 아무것도 없었다"로 읽힌다.
+    ok('E1 path reports E3 analysis fields as null, not as empty results',
+      reduced.analysisConfig === null && reduced.trends === null && reduced.decomposition === null,
+      `analysisConfig=${JSON.stringify(reduced.analysisConfig)} trends=${JSON.stringify(reduced.trends)} decomposition=${JSON.stringify(reduced.decomposition)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3668,13 +4235,43 @@ console.log('\n=== plugin contract and docs ===');
   // 옮긴다. v2의 철회된 수치(누적 곡선 $0.1291→$0.0908, $0.1279→$0.2828)와 "14개 concept을
   // 한 줄로 접었다"는 서사는 v3 절에 존재해서는 안 된다 — 그 주장들은 표본이 못 받쳐 폐기됐다.
   // 어떤 번역본만 옛 절을 덜 지우면 그 언어 독자는 폐기된 결론을 현행으로 읽는다.
+  // 2026-07-26: `14 + concept명사`만 보던 옛 패턴이 **거짓 양성**을 냈다. E3 절이 "동결 질문
+  // 20개 중 14개가 인용 없는 title이다"라고 적는데(YAML 태그 파손, E3 §11) 이는 v2의 폐기된
+  // 서사와 아무 관계가 없다. 숫자 하나로 서사를 식별하려 한 것이 문제였다.
+  //
+  // **완화가 아니라 조준이다**: 막아야 하는 것은 "14개 concept을 **한 줄로 접었다**"는 주장이지
+  // 숫자 14의 등장이 아니다. 그래서 접기 서술과의 **동시 등장**을 요구한다. 좁힌 뒤에 진짜
+  // v2 문장을 여전히 잡는지 아래에서 재구성 문장으로 확인한다 — 안 잡으면 조준이 아니라 완화다.
+  const FOLD_TERM = /(folded|fold(?:s|ing)? +(?:into|to)|into one line|single line|한 ?줄로|접었|접어|畳ん|1行に|一行に|折叠|折成一行|zusammengefasst|in eine Zeile|plegad|en una (?:sola )?línea|repli(?:é|ées|er)|en une (?:seule )?ligne|dobrad|em uma linha|numa linha)/i;
+  const hasV2FoldStory = (text) => {
+    const rx = /14 ?(concepts?|개|個|个|問|概念|Konzepte|conceptos|conceitos)/g;
+    for (const m of text.matchAll(rx)) {
+      // 같은 문단 안에서만 본다 — 문서 어딘가에 '한 줄로'가 있다는 이유로 발화하면 다시 거짓 양성이다.
+      if (FOLD_TERM.test(text.slice(Math.max(0, m.index - 120), m.index + 120))) return true;
+    }
+    return false;
+  };
   ok('no localized README carries withdrawn v2 benchmark content', readmes.length === 8 && readmes.every((name) => {
     const text = fs.readFileSync(path.join(PLUGIN_ROOT, name), 'utf8');
     const hasWithdrawnCurve = text.includes('$0.1291') || text.includes('$0.0908') || text.includes('$0.2828');
-    const hasNestingStory = /14 ?(concepts?|개|概念|Konzepte|conceptos|conceitos)/.test(text);
     const hasOldReportLink = /okf-benchmark-2026-07-16\.md/.test(text); // -v3 없는 옛 리포트 링크
-    return !hasWithdrawnCurve && !hasNestingStory && !hasOldReportLink;
+    return !hasWithdrawnCurve && !hasV2FoldStory(text) && !hasOldReportLink;
   }));
+  // **좁힌 가드가 여전히 무는지 확인한다.** 폐기된 v2 서사를 각 언어로 재구성해 넣어 본다.
+  // 하나라도 통과하면 위 단언은 그 언어에서 무장해제된 것이다.
+  const V2_ZOMBIES = [
+    'the gate folded 14 concepts into one line',
+    '게이트가 14개 concept을 한 줄로 접었다',
+    'ゲートが14個のconceptを1行に畳んだ',
+    '门控把 14 个概念折叠成一行',
+    'das Gate hat 14 Konzepte in eine Zeile zusammengefasst',
+    'la puerta plegó 14 conceptos en una sola línea',
+    'la porte a replié 14 concepts en une seule ligne',
+    'o portão dobrou 14 conceitos em uma linha',
+  ];
+  ok('the v2-zombie guard still bites every language it claims to cover',
+    V2_ZOMBIES.every((s) => hasV2FoldStory(s)),
+    `missed=${JSON.stringify(V2_ZOMBIES.filter((s) => !hasV2FoldStory(s)))}`);
 
   const workflow = path.join(PLUGIN_ROOT, '.github', 'workflows', 'test.yml');
   ok('CI verifies Linux, macOS, and Windows without external dependencies', fs.existsSync(workflow) && ['ubuntu-latest', 'macos-latest', 'windows-latest'].every((osName) => fs.readFileSync(workflow, 'utf8').includes(osName)));

@@ -1,0 +1,252 @@
+{
+  "meta": {
+    "measuredAt": "2026-07-26T11:48:48.511Z",
+    "homeDigest": "f9a45ad372cc7a5d",
+    "config": {
+      "inject_max_bytes": 9000,
+      "inject_max_lines": 120
+    },
+    "privacy": "title·설명·파일명·링크는 산출물에 포함되지 않는다. 첫 글자의 유니코드 분류 개수만 나간다. raw/·_remove_candidate/는 discoverConceptDirs가 배제하므로 열리지 않는다.",
+    "reproducibility": "이 측정은 개인 번들에 의존하므로 제3자가 재현할 수 없다. 재현 가능한 것은 절차뿐이다.",
+    "sortModel": "lib/index-gen.mjs:242-246 renderSections — 섹션 heading은 대소문자 구분 오름차순, 섹션 안은 title.toLowerCase()를 `<`/`>`로 비교(UTF-16 코드유닛 순서, 로케일 정렬 아님). 따라서 ASCII 선두 title(≤U+007A)은 한글 선두(U+AC00~)보다 항상 앞선다."
+  },
+  "totals": {
+    "concepts": 26,
+    "takenByGate": 17,
+    "firstCharClass": {
+      "ascii-symbol": 0,
+      "ascii-digit": 0,
+      "ascii-latin": 17,
+      "latin-extended": 0,
+      "hangul": 9,
+      "kana": 0,
+      "cjk-ideograph": 0,
+      "other": 0
+    },
+    "firstCharClassAmongTaken": {
+      "ascii-symbol": 0,
+      "ascii-digit": 0,
+      "ascii-latin": 12,
+      "latin-extended": 0,
+      "hangul": 5,
+      "kana": 0,
+      "cjk-ideograph": 0,
+      "other": 0
+    },
+    "lift": {
+      "ascii-symbol": null,
+      "ascii-digit": null,
+      "ascii-latin": 1.0795847750865053,
+      "latin-extended": null,
+      "hangul": 0.8496732026143792,
+      "kana": null,
+      "cjk-ideograph": null,
+      "other": null
+    },
+    "asciiLeadingConcepts": 17,
+    "asciiLeadingTakenSlots": 12,
+    "asciiShareOfConcepts": 0.6538461538461539,
+    "asciiShareOfTakenSlots": 0.7058823529411765,
+    "loadRate": 0.6538461538461539
+  },
+  "categories": [
+    {
+      "dir": "decisions",
+      "concepts": 2,
+      "taken": 2,
+      "firstCharClass": {
+        "ascii-symbol": 0,
+        "ascii-digit": 0,
+        "ascii-latin": 2,
+        "latin-extended": 0,
+        "hangul": 0,
+        "kana": 0,
+        "cjk-ideograph": 0,
+        "other": 0
+      },
+      "firstCharClassAmongTaken": {
+        "ascii-symbol": 0,
+        "ascii-digit": 0,
+        "ascii-latin": 2,
+        "latin-extended": 0,
+        "hangul": 0,
+        "kana": 0,
+        "cjk-ideograph": 0,
+        "other": 0
+      },
+      "asciiLeadingConcepts": 2,
+      "asciiLeadingTakenSlots": 2,
+      "firstNonAsciiLeadingRank": -1,
+      "hasNonAsciiLeading": false,
+      "nonAsciiReachesGate": null,
+      "loadRate": 1,
+      "orderingViolationsVsCodeUnitSort": 0,
+      "titlesParsed": 2
+    },
+    {
+      "dir": "patterns",
+      "concepts": 6,
+      "taken": 3,
+      "firstCharClass": {
+        "ascii-symbol": 0,
+        "ascii-digit": 0,
+        "ascii-latin": 3,
+        "latin-extended": 0,
+        "hangul": 3,
+        "kana": 0,
+        "cjk-ideograph": 0,
+        "other": 0
+      },
+      "firstCharClassAmongTaken": {
+        "ascii-symbol": 0,
+        "ascii-digit": 0,
+        "ascii-latin": 2,
+        "latin-extended": 0,
+        "hangul": 1,
+        "kana": 0,
+        "cjk-ideograph": 0,
+        "other": 0
+      },
+      "asciiLeadingConcepts": 3,
+      "asciiLeadingTakenSlots": 2,
+      "firstNonAsciiLeadingRank": 1,
+      "hasNonAsciiLeading": true,
+      "nonAsciiReachesGate": true,
+      "loadRate": 0.5,
+      "orderingViolationsVsCodeUnitSort": 2,
+      "titlesParsed": 6
+    },
+    {
+      "dir": "preferences",
+      "concepts": 4,
+      "taken": 3,
+      "firstCharClass": {
+        "ascii-symbol": 0,
+        "ascii-digit": 0,
+        "ascii-latin": 2,
+        "latin-extended": 0,
+        "hangul": 2,
+        "kana": 0,
+        "cjk-ideograph": 0,
+        "other": 0
+      },
+      "firstCharClassAmongTaken": {
+        "ascii-symbol": 0,
+        "ascii-digit": 0,
+        "ascii-latin": 2,
+        "latin-extended": 0,
+        "hangul": 1,
+        "kana": 0,
+        "cjk-ideograph": 0,
+        "other": 0
+      },
+      "asciiLeadingConcepts": 2,
+      "asciiLeadingTakenSlots": 2,
+      "firstNonAsciiLeadingRank": 2,
+      "hasNonAsciiLeading": true,
+      "nonAsciiReachesGate": true,
+      "loadRate": 0.75,
+      "orderingViolationsVsCodeUnitSort": 0,
+      "titlesParsed": 4
+    },
+    {
+      "dir": "projects",
+      "concepts": 3,
+      "taken": 3,
+      "firstCharClass": {
+        "ascii-symbol": 0,
+        "ascii-digit": 0,
+        "ascii-latin": 2,
+        "latin-extended": 0,
+        "hangul": 1,
+        "kana": 0,
+        "cjk-ideograph": 0,
+        "other": 0
+      },
+      "firstCharClassAmongTaken": {
+        "ascii-symbol": 0,
+        "ascii-digit": 0,
+        "ascii-latin": 2,
+        "latin-extended": 0,
+        "hangul": 1,
+        "kana": 0,
+        "cjk-ideograph": 0,
+        "other": 0
+      },
+      "asciiLeadingConcepts": 2,
+      "asciiLeadingTakenSlots": 2,
+      "firstNonAsciiLeadingRank": 2,
+      "hasNonAsciiLeading": true,
+      "nonAsciiReachesGate": true,
+      "loadRate": 1,
+      "orderingViolationsVsCodeUnitSort": 0,
+      "titlesParsed": 3
+    },
+    {
+      "dir": "references",
+      "concepts": 7,
+      "taken": 3,
+      "firstCharClass": {
+        "ascii-symbol": 0,
+        "ascii-digit": 0,
+        "ascii-latin": 5,
+        "latin-extended": 0,
+        "hangul": 2,
+        "kana": 0,
+        "cjk-ideograph": 0,
+        "other": 0
+      },
+      "firstCharClassAmongTaken": {
+        "ascii-symbol": 0,
+        "ascii-digit": 0,
+        "ascii-latin": 2,
+        "latin-extended": 0,
+        "hangul": 1,
+        "kana": 0,
+        "cjk-ideograph": 0,
+        "other": 0
+      },
+      "asciiLeadingConcepts": 5,
+      "asciiLeadingTakenSlots": 2,
+      "firstNonAsciiLeadingRank": 2,
+      "hasNonAsciiLeading": true,
+      "nonAsciiReachesGate": true,
+      "loadRate": 0.42857142857142855,
+      "orderingViolationsVsCodeUnitSort": 1,
+      "titlesParsed": 7
+    },
+    {
+      "dir": "troubleshooting",
+      "concepts": 4,
+      "taken": 3,
+      "firstCharClass": {
+        "ascii-symbol": 0,
+        "ascii-digit": 0,
+        "ascii-latin": 3,
+        "latin-extended": 0,
+        "hangul": 1,
+        "kana": 0,
+        "cjk-ideograph": 0,
+        "other": 0
+      },
+      "firstCharClassAmongTaken": {
+        "ascii-symbol": 0,
+        "ascii-digit": 0,
+        "ascii-latin": 2,
+        "latin-extended": 0,
+        "hangul": 1,
+        "kana": 0,
+        "cjk-ideograph": 0,
+        "other": 0
+      },
+      "asciiLeadingConcepts": 3,
+      "asciiLeadingTakenSlots": 2,
+      "firstNonAsciiLeadingRank": 2,
+      "hasNonAsciiLeading": true,
+      "nonAsciiReachesGate": true,
+      "loadRate": 0.75,
+      "orderingViolationsVsCodeUnitSort": 1,
+      "titlesParsed": 4
+    }
+  ]
+}

@@ -57,6 +57,252 @@ Pourquoi une base sur l’idle ? Les sessions se terminent rarement de façon ex
 
 ## Benchmark OKF
 
+<!-- okf-benchmark: 2026-07-26-e3 -->
+
+### Gate recall@cap — trois manches préenregistrées, E1 → E3 (2026-07-26)
+
+Les trois manches ont coûté **0,00 $**, et c'est l'exécution qui le prouve plutôt qu'une déclaration :
+le banc d'essai place un stub `claude` en tête de `PATH`, constate que ce stub existe, et le stub n'est
+jamais exécuté (`paidCallTrapInstalled: true`, `paidCallTrapTripped: false`).
+
+Elles mesurent `recall(N)` — avec N concepts dans le bundle, la proportion des 20 questions gelées dont
+le concept de réponse survit jusqu'à l'index que la porte injecte réellement.
+
+> **recall n'est pas un taux de réussite.** Il répond seulement à « la porte a-t-elle chargé la ligne
+> pertinente ». Savoir si le modèle a **utilisé** cette ligne ne peut être vérifié sans appels payants.
+> Les distracteurs synthétiques ne donnent qu'une **borne supérieure**, le recall réel est donc plus bas.
+
+**Conditions** — 3 perturbations × 5 niveaux × 20 graines = 300 échantillons, 28 s. Quatre caractères
+sont ajoutés devant le **`title`** du frontmatter du concept de réponse ; ni le corps, ni le nom de
+fichier, ni le chemin ne changent.
+
+| N | `none` | `front` (`!!! `) **tel que publié** | `front` **sûr avec guillemets** | `back` (`힣힣 `) |
+|---|---|---|---|---|
+| 24 | 0,400 ± 0,000 | 1,000 ± 0,000 | **0,400** | 0,400 ± 0,000 |
+| 50 | 0,277 ± 0,038 | 0,560 ± 0,064 | **0,400** | 0,182 ± 0,044 |
+| 100 | 0,247 ± 0,034 | 0,523 ± 0,030 | **0,400** | 0,170 ± 0,025 |
+| 200 | 0,250 ± 0,040 | 0,528 ± 0,030 | **0,400** | 0,175 ± 0,026 |
+| 400 | 0,262 ± 0,039 | 0,533 ± 0,024 | **0,400** | 0,185 ± 0,024 |
+
+n=20 par cellule. E1 n'a exécuté que `none` avec un budget inférieur de 11 o et a produit
+0,400 / 0,277 / 0,245 / 0,248 — c'est une **condition différente**, ni meilleure ni pire que le tableau
+ci-dessus.
+
+**La colonne `front` telle que publiée est contaminée, et c'est sa propre garde qui l'a détecté.**
+`!!!` est un **indicateur de tag** YAML. Placé devant un `title:` *sans guillemets*, il casse
+entièrement le frontmatter : le type est perdu, le texte du lien retombe sur le nom de fichier, et **la
+description disparaît**, faisant s'effondrer la ligne de ~700 o à ~30 o. **14 des 20 questions gelées
+ont des titres sans guillemets.** Pour ces 14, l'expérience a donc mesuré non pas la position de tri
+mais l'**échec d'analyse** : une ligne courte laisse entrer bien plus de lignes dans le même budget,
+ce qui correspond exactement au `taken` = 24 et à la longueur moyenne de 263 o observés à N=24. Refaite
+avec un préfixe sûr avec guillemets, `front` s'effondre à un **0,400 plat**. `none` et `back` ne bougent
+pas d'un chiffre, ce qui confirme la neutralité du correctif et montre que `힣힣 ` n'a jamais rien cassé.
+
+**Ce qui subsiste et ce qui tombe.** Le tri décide toujours de la survie : à N=400 l'écart sûr avec
+guillemets vaut 0,400 − 0,185 = **0,215**, soit encore **4,3×** le seuil de réfutation de 0,05, et le
+fait que `back` fasse passer le recall de 0,262 à 0,185 est un pur effet d'ordre. **Dans un système sans
+aucun signal de pertinence, c'est le résultat attendu et non la découverte d'un bogue** — ce qui est
+nouveau, c'est l'ampleur. Mais trois ampleurs publiées ne survivent pas : « quatre caractères doublent
+le recall » passe de 2,03× à **1,53×** ; « N=24 passe de 0,400 à 1,000 » devient **aucun changement** ;
+et le bond de `cwdIndependent` d'E1, 0,000 → 0,967, devient **0,000 → 0,333**. À leur place apparaît un
+fait nouveau : **quand les concepts se trient en tête, le recall cesse totalement de dépendre de N**
+(0,400 plat sur une plage de taille de bundle de 17×), car ce qui borne alors la survie est `taken` et
+non N.
+
+**La condition de survie est exactement `rank < taken`** — un concept survit si et seulement si son rang
+de tri par titre à l'intérieur de sa catégorie est inférieur au nombre de lignes que cette catégorie a
+obtenues. Le recall est donc une fonction **complète** des vecteurs rank et `taken` et se décompose sans
+approximation. À N=24→50 la composante rank domine (−0,15 à −0,41) ; à N≥100 elle meurt à ~0, un effet
+plancher : le rang moyen des réponses (26,9) dépasse largement `taken` (10,5), et ajouter du remplissage
+ne change rien aux concepts déjà exclus. Réserve publiée avec le résultat : la décomposition est de la
+**comptabilité, pas de la causalité**, et ses composantes dépendent de la ligne de base.
+
+**Deux corrections d'E3 à E2, et une à elle-même.** E2 rapportait que le recall « monte de façon
+monotone » de N=100 à 400 et laissait l'explication à E3. Avec le n=20 préenregistré, cette montée **ne
+peut pas être établie du tout** : 0 paire adjacente sur 12 est `rising`. Le premier titre publié d'E3 en
+concluait que la montée « n'existe pas » ; **c'était faux**, et une vérification adverse de puissance
+statistique l'a détecté : à n=60, trois paires sont `rising` (p descendant jusqu'à 0,00027), et dans les
+trois la composante `taken` porte 100 % du mouvement tandis que la composante rank vaut exactement 0. La
+montée est réelle mais **non substantielle** (IC de la médiane = [0,000, 0,000]). E3 a aussi remplacé la
+règle `|Δ| ≤ 0,05` d'E2 — qui confond « plat » et « petit mais constant » — par un test des signes exact
+apparié plus un intervalle de confiance de la médiane sans hypothèse de distribution, en publiant la
+direction et l'ampleur comme deux valeurs distinctes.
+
+**L'ancien R3 se déclenchait sur du bruit.** Son libellé disait « décroissance monotone violée →
+*défaut du banc d'essai* → tout jeter », mais son implémentation comparait des moyennes sans aucun
+traitement de l'incertitude, si bien que ±0,005 de bruit de graine le déclenchait aussi bien dans E1 que
+dans E2 — les deux manches ont été publiées dans l'état contradictoire « déclenché, mais rien de jeté ».
+E3 n'a pas assoupli le seuil ; il a repointé le critère vers ce que dit son libellé et a mesuré
+l'intégrité directement. Sur les mêmes 300 échantillons, l'ancien R3 se déclenche et le nouveau R3a non.
+
+**Dans le bundle réel, le biais de tri ne peut pas encore être établi.** Mesuré en lecture seule et
+n'émettant que des décomptes : ni titres, ni descriptions, ni noms de fichiers, ni liens ne sortent de la
+mesure, et `raw/` n'est jamais ouvert. Le tri compare `title.toLowerCase()` avec `<`, c'est-à-dire un
+**ordre d'unités de code UTF-16, pas une collation localisée** ; un titre commençant par de l'ASCII
+précède donc toujours un titre commençant par du hangul. Les concepts à initiale ASCII représentent
+65,4 % du bundle et prennent 70,6 % des places de la porte — mais avec 26 concepts, le test
+hypergéométrique exact contre une hypothèse nulle stratifiée donne **p = 0,667**. Ce n'est pas un
+résultat. Et un faible surcroît ne doit pas se lire « le tri est inoffensif » : la porte charge
+actuellement **65,4 %** de tous les candidats, et là où tout est chargé le tri ne décide de rien (2
+catégories sur 6 ont zéro degré de liberté). Par catégorie, le taux de chargement se sépare déjà :
+`decisions`/`projects` 1,000, `patterns` 0,500, `references` **0,429**. Une version antérieure affirmait
+qu'un taux de chargement décroissant amplifierait l'effet ; **les données mêmes du benchmark la
+réfutent**, cette affirmation a donc été retirée.
+
+**Ce qui prend une place est décidé par l'ordre et la longueur de ligne, pas par la pertinence.** Cinq
+facteurs sont confirmés dans le code : le tri sensible à la casse des noms de section de type, qui fait
+que `# Subdirectories` précède toujours `# reference` (`lib/index-gen.mjs:242`) et tire les concepts
+imbriqués en tête de leur catégorie ; à l'intérieur d'une section, l'ordre alphabétique du **`title`** du
+frontmatter — et non du nom de fichier, qui n'est qu'un repli en cas d'échec d'analyse (`:315`) ;
+`status: deprecated` relégué en fin de section (`:245`) ; l'ordre de parcours des catégories par nom de
+répertoire (`:227`) ; et la **longueur de ligne en octets**, puisqu'une ligne suivante dépassant le
+budget restant arrête cette catégorie (`lib/gate.mjs:122`). La porte ne contient aucune référence au
+cwd, à la fraîcheur ou à la requête.
+
+**Le résultat, c'est la forme, pas le niveau.** Sur les 20 questions, 9 survivent à 0 à tous les niveaux
+et 3 à 1,0 ; les 8 restantes se situent entre les deux — le recall n'est pas binaire. La porte remplit en
+tourniquet jusqu'à épuisement du budget ; une catégorie ne finit à 1–3 lignes que parce qu'une seule
+ligne est grosse (200–1 030 o contre un budget d'index d'environ 6 960 o), si bien que la prise totale
+s'épuise à 8–11 lignes. `references` obtient exactement une ligne à chaque niveau, donc sur les 8
+réponses qui y sont concentrées, une seule au plus peut survivre.
+
+**Profondeur d'imbrication (axe A-2).** 25 concepts fixés, contenus identiques, seuls les chemins
+approfondis :
+
+| Condition | lignes de concept injectées | liens de sous-domaine |
+|---|---:|---:|
+| plat | 28 | 0 |
+| 2 niveaux | 27 | 0 |
+| 3 niveaux | 26 | 0 |
+| 4 niveaux | 25 | 0 |
+
+Chaque condition a été mesurée **une fois** (n=1, sans répétition de graine), et dans cette unique
+mesure une ligne a été perdue par niveau de profondeur. Quatre points ne permettent pas de dire si le
+déclin est linéaire, et les profondeurs au-delà de 4 n'ont pas été mesurées. Rapporté aux concepts
+plantés, 3 niveaux donne 25 → 23, soit **−8,0 %**. La cause est la pression en octets, pas un parcours
+de chaîne défaillant : chaque segment de chemin supplémentaire allonge toutes les lignes jusqu'à ce que
+l'une soit poussée hors du budget.
+
+**R2 se déclenche à chaque manche** (`recall(24)` = 0,400 < 0,60). Selon la règle de traitement
+préenregistrée, **les valeurs absolues de recall ne décident de rien** — les tableaux sont publiés et ne
+pilotent aucune politique.
+
+**Discipline de mesure, et où elle s'est améliorée.** Dans E1, les fixtures sont entrées dans git pour la
+première fois au commit du **rapport** : les seuils étaient fixés à l'avance, mais pas le matériel qui a
+réellement déterminé les chiffres. À partir d'E2, les fixtures sont livrées dans le commit de
+préenregistrement et le smoke impose une inégalité **stricte** via `git log --diff-filter=A` ; pointée
+sur l'ensemble de fichiers d'E1, elle produit 3 violations, elle attrape donc l'accident réel au lieu de
+l'approuver. Chaque manche publie les valeurs déjà connues au moment de la rédaction de son
+préenregistrement, ainsi que toute arithmétique modifiée après la mesure — E3 a quantifié les deltas de
+recall sur la grille de 1/20 parce que `0,25 − 0,20 = 0,04999…` alors que `0,20 − 0,15 = 0,05000…2`,
+plaçant le même mouvement d'une question de part et d'autre de la borne d'équivalence ; ce correctif a
+supprimé le seul verdict `indeterminate` de la manche, il jouait donc **contre** l'argument du rapport
+lui-même, et il est divulgué comme tel. La revue adverse a ensuite montré que la garde de l'identité de
+survie était quasi tautologique (elle rappelait la fonction même qu'elle vérifiait), et le remplacement
+non circulaire **s'est déclenché dès sa première exécution** : c'est ainsi que la contamination de
+`front` ci-dessus a été trouvée. Un défaut ouvert est assumé plutôt que comblé par une conjecture : la
+même garde se déclenche aussi sur 8 échantillons non perturbés sur 100, et la cause n'est pas encore
+identifiée.
+
+```sh
+node test/gate-recall.mjs --e3 --perturb all   # 3 conditions × 5 niveaux × 20 graines, ~28 s
+node test/gate-recall.mjs --e3 --perturb all --quote-safe-perturb   # le préfixe corrigé
+node test/gate-title-distribution.mjs          # distribution des titres du bundle réel (lecture seule)
+node test/gate-recall.mjs --e2 --perturb all   # E2
+node test/gate-recall.mjs                      # E1
+node test/bench-nesting.mjs                    # axe profondeur d'imbrication
+node test/smoke.mjs                            # gardes de régression
+```
+
+[Rapport E3](docs/benchmarks/gate-recall-2026-07-26-e3.md) ·
+[Préenregistrement E3](docs/benchmarks/pre-registration-2026-07-26-e3.md) ·
+[Rapport E2](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
+[Préenregistrement E2](docs/benchmarks/pre-registration-2026-07-26-e2.md) ·
+[Rapport E1](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
+[Préenregistrement E1](docs/benchmarks/pre-registration-2026-07-26-e1.md)
+
+<!-- okf-benchmark: 2026-07-27-efficiency -->
+
+### Efficacité de la porte — le format d'index mérite-t-il ses octets ? (axe E, 2026-07-27)
+
+E1–E3 n'ont jamais perturbé que les entrées d'OKF lui-même ; la question « ce format mérite-t-il ses
+octets ? » ne pouvait donc même pas être posée : il n'existait aucun terme de comparaison. L'axe E en
+construit un : **même paquet, même budget en octets, six stratégies d'index interchangées.** Coût :
+**0,00 $**, là encore non pas déclaré mais prouvé à l'exécution par le piège PATH.
+
+Les questions ne sont plus écrites à la main. Pour chacun des 20 concepts-réponses, la requête est
+générée mécaniquement à partir des 8 termes tf-idf les plus forts de son propre **corps de texte** —
+précisément la partie que l'index ne transporte jamais. Le moteur de recherche est BM25 avec des
+paramètres standard fixés avant la mesure ; sa normalisation par longueur pénalise les lignes longues,
+donc ce choix penche **en défaveur** d'OKF. Le nombre de graines (40) provient d'un calcul de
+puissance effectué avant l'exécution, et non d'un héritage d'une manche précédente.
+
+**Sur cinq hypothèses préenregistrées, deux tiennent et trois sont réfutées.**
+
+| Hypothèse | Verdict | Preuve |
+|---|---|---|
+| titre+description bat les seuls liens de catégorie | **soutenue** | okf gagne 12/12 cellules, toutes à p<1e-4 |
+| les descriptions méritent leurs octets | **réfutée** | les retirer gagne 12/12 cellules à ordre égal |
+| le round-robin mérite son surcoût | **réfutée, sous condition** | −0,050 au plafond 2048 ; +0,017…+0,218 au plafond 9000 |
+| un index trié bat un index aléatoire | soutenue de justesse | okf gagne 7/12 — mais perd les trois cellules à N=26 |
+| les chemins seuls ne suffisent pas | **réfutée** | l'index de chemins seuls gagne 8/12 cellules |
+
+La première ligne clôt un point jamais mesuré. La note d'architecture du paquet en production
+justifie le changement du 2026-07-17 (« seulement les compteurs de catégorie » → « titre +
+description ») par **une seule anecdote** et en chiffre le coût à **n=3**. Il y a désormais un nombre.
+
+**Le format achète de la précision et vend de la capacité.** Une ligne OKF, une fois injectée, est
+presque toujours classée première (précision 0,93–1,00) ; le goulot d'étranglement, c'est que les
+9 000 octets par défaut ne contiennent qu'environ 12 à 14 lignes de concept. Les lignes titre-seul
+tiennent les 26 à N=26 (précision 0,649) ; les lignes chemin-seul également (précision 0,350). **Les
+descriptions représentent environ 82 %** des octets d'une ligne — 733 B par ligne, 133 B sans elles.
+
+**Le signe du round-robin s'inverse avec le budget.** Six catégories préemptent chacune un titre de
+section et un marqueur d'omission ; au plafond 2048, ce coût fixe dévore le bénéfice à toutes les
+tailles (−0,050). Au défaut livré de 9 000, il est rentable, et le gain croît avec le paquet
+(+0,218 à N=200). **Le défaut livré est correct à son propre point de fonctionnement** — et le code
+applique le round-robin quel que soit le budget.
+
+> **Cela ne dit pas « supprimez les descriptions ».** Cette manche mesure le fait de **trouver**, pas
+> celui de **répondre**. La règle 1 de la porte promet : « si le titre et la description contiennent
+> la réponse, cite la ligne sans faire de Read » — et ce chemin meurt sans elles. Savoir si les
+> descriptions remboursent ces 82 % relève de l'**axe payant, qui n'a jamais été exécuté.** Ce que
+> cette manche produit est une étiquette de prix, pas un verdict.
+
+**Paquet en production, lecture seule, uniquement des comptes et des octets.** 26 concepts /
+108 431 B. La porte dépense **8 885 B — 98,7 % de son budget — pour montrer 14 concepts sur 26
+(53,8 %).** La compression est de 12,2× ; 71,6 % des octets injectés sont de la connaissance et
+28,4 % de la structure, dont la seule queue de `log.md` fait 1 341 B (15,1 % de l'injection, soit
+2,6 fois les titres de section et les marqueurs d'omission réunis). Le paquet synthétique a prédit
+cette couverture de 53,8 % à **2,3 points près** — un contrôle externe de la synthèse.
+
+**Cette manche a trouvé un de ses propres défauts avant publication.** Lors de la première exécution
+enregistrée, le taux d'atteinte de la stratégie chemins-seuls était de 0,000 dans les 12 cellules. Lu
+tel quel, cela ressemble à un résultat ; c'était un bug : l'évaluateur n'extrayait les chemins que de
+la syntaxe de lien markdown. Après correction, cette hypothèse est passée de soutenue à réfutée. Les
+neuf nouvelles assertions de fumée ont chacune été testées par mutation, et les six mutations ont tué
+leur garde.
+
+**Ce qui n'a pas été mesuré, publié comme tel** : BM25 est un recouvrement lexical, pas un jugement
+du modèle ; le paquet est synthétique, ceci est donc une borne supérieure ; la liste des
+concepts-réponses reste choisie par moi (seules les requêtes sont mécaniques) ; les scores de `paths`
+dépendent du fait que ce paquet est en prose coréenne avec des slugs anglais ; n=40 détecte avec une
+puissance de 0,981 un effet cohérent sur 80 % des graines, mais seulement 0,703 à 70 % — donc ici
+« pas de différence » signifie « non établi » ; l'échantillon en production est le paquet d'un seul
+auteur ; le nombre de tokens n'a pas été mesuré faute de tokeniseur hors ligne ; et aucune lentille
+adverse indépendante n'a tourné — la vérification a été faite par moi-même.
+
+```sh
+node test/gate-efficiency.mjs                    # 4 tailles × 3 budgets × 40 graines, ~30 s
+node test/gate-efficiency.mjs --determinism-check
+node test/gate-live-efficiency.mjs               # paquet en production, lecture seule
+```
+
+[Rapport axe E](docs/benchmarks/gate-efficiency-2026-07-27.md) ·
+[Préenregistrement axe E](docs/benchmarks/pre-registration-2026-07-27-efficiency.md)
+
+### Exécution payante de bout en bout (v3, 2026-07-16)
+
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
 **OKF est un surcoût pour presque tout ce que le code peut résoudre, et là où le code n’a aucune

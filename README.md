@@ -71,6 +71,230 @@ Claude Code permits one `statusLine`. OKF does not install or overwrite it. Poin
 
 ## OKF benchmark
 
+<!-- okf-benchmark: 2026-07-26-e3 -->
+
+### Gate recall@cap — three pre-registered rounds, E1 → E3 (2026-07-26)
+
+All three rounds cost **$0.00**, proven by the run rather than declared: the harness puts a stub
+`claude` at the front of `PATH`, records that the stub exists, and the stub is never executed
+(`paidCallTrapInstalled: true`, `paidCallTrapTripped: false`).
+
+They measure `recall(N)` — with N concepts in the bundle, the fraction of 20 frozen questions whose
+answer concept survives into the index the gate actually injects.
+
+> **recall is not an accuracy rate.** It only answers "did the gate load the relevant line". Whether
+> the model *used* that line cannot be verified without paid calls. Synthetic distractors give only
+> an **upper bound**, so real-world recall is lower.
+
+**Conditions** — 3 perturbations × 5 levels × 20 seeds = 300 samples, 28 s. Four characters are
+prepended to the answer concept's frontmatter **`title`**; no body, filename, or path changes.
+
+| N | `none` | `front` (`!!! `) **as published** | `front` **quote-safe** | `back` (`힣힣 `) |
+|---|---|---|---|---|
+| 24 | 0.400 ± 0.000 | 1.000 ± 0.000 | **0.400** | 0.400 ± 0.000 |
+| 50 | 0.277 ± 0.038 | 0.560 ± 0.064 | **0.400** | 0.182 ± 0.044 |
+| 100 | 0.247 ± 0.034 | 0.523 ± 0.030 | **0.400** | 0.170 ± 0.025 |
+| 200 | 0.250 ± 0.040 | 0.528 ± 0.030 | **0.400** | 0.175 ± 0.026 |
+| 400 | 0.262 ± 0.039 | 0.533 ± 0.024 | **0.400** | 0.185 ± 0.024 |
+
+n=20 per cell. E1 ran `none` alone at a budget 11 B smaller and produced 0.400 / 0.277 / 0.245 /
+0.248 — a **different condition**, not better or worse than the above.
+
+**The `front` column as published is contaminated, and its own guard caught it.** `!!!` is a YAML
+tag indicator. Prepended to an *unquoted* `title:`, it breaks the frontmatter outright: the type is
+lost, the link text falls back to the filename, and **the description disappears**, collapsing the
+line from ~700 B to ~30 B. **14 of the 20 frozen questions have unquoted titles.** So for those, the
+experiment measured parse failure, not sort position — a short line lets the gate fit far more
+lines, which is exactly the `taken` = 24 and 263 B mean line length observed at N=24. Re-run with a
+quote-safe prefix, `front` collapses to a flat **0.400**. `none` and `back` do not move by a single
+digit, which both validates the fix as neutral and shows `힣힣 ` never broke anything.
+
+**What survives, and what does not.** Sorting still decides survival: at N=400 the quote-safe spread
+is 0.400 − 0.185 = **0.215**, still **4.3×** the refutation threshold of 0.05, and `back` pushing
+recall from 0.262 down to 0.185 is a pure ordering effect. **In a system with zero relevance signals
+that is expected, not a bug discovery** — what is new is the size. But three published magnitudes do
+not survive: "four characters double recall" is 2.03× → **1.53×**; "N=24 goes 0.400 → 1.000" becomes
+**no change**; and E1's `cwdIndependent` flip of 0.000 → 0.967 becomes **0.000 → 0.333**. A new fact
+appears in its place: **when concepts sort to the front, recall stops depending on N at all** (flat
+0.400 across a 17× range of bundle size) because survival is then capped by `taken`, not by N.
+
+**Survival is exactly `rank < taken`** — a concept survives iff its title-sort rank inside its
+category is below the number of lines that category got. recall is therefore a *complete* function
+of the rank and `taken` vectors and decomposes with no approximation. At N=24→50 the rank component
+dominates (−0.15 to −0.41); at N≥100 it dies to ~0, a floor effect: mean answer rank (26.9) is far
+past `taken` (10.5), so more filler cannot change concepts already excluded. Caveat published with
+it: the decomposition is **accounting, not causation**, and its components are baseline-dependent.
+
+**Two corrections E3 made to E2, and one it made to itself.** E2 reported that recall "rises
+monotonically" from N=100 to 400 and asked E3 to explain it. At the pre-registered n=20 that rise
+cannot be established at all — 0 of 12 adjacent pairs are `rising`. E3's first published headline
+said the rise therefore "does not exist"; **that was wrong**, and an adversarial power check caught
+it: at n=60 three pairs are `rising` (p as low as 0.00027), and in all three the `taken` component
+carries 100% of the movement while the rank component is exactly 0. The rise is real but *not
+substantive* (median CI = [0.000, 0.000]). E3 also replaced E2's `|Δ| ≤ 0.05` rule — which conflates
+"flat" with "small but consistent" — with an exact paired sign test plus a distribution-free median
+confidence interval, reporting direction and magnitude as two separate values.
+
+**The old R3 was firing on noise.** Its wording was "monotonic decrease violated → *harness defect* →
+discard everything", but it compared means with no uncertainty treatment, so ±0.005 of seed noise
+tripped it in E1 and E2 alike — both rounds shipped in the self-contradictory state of "fired, but
+nothing discarded". E3 did not loosen the threshold; it pointed the criterion back at what the
+wording says and measured integrity directly. On the same 300 samples the old R3 fires and the new
+R3a does not.
+
+**In the live bundle the sort bias cannot yet be established.** Measured read-only, emitting counts
+only — no titles, descriptions, filenames, or links leave the measurement, and `raw/` is never
+opened. Sorting compares `title.toLowerCase()` with `<`, i.e. **UTF-16 code-unit order, not locale
+collation**, so an ASCII-leading title always precedes a Hangul-leading one. ASCII-leading concepts
+are 65.4% of the bundle and take 70.6% of the gate's slots — but with 26 concepts the exact
+hypergeometric test gives **p = 0.667** against a stratified null. That is not a result. Nor should
+a small lift be read as "sorting is harmless": the gate currently loads **65.4%** of all candidates,
+and where everything loads, sorting decides nothing (2 of 6 categories have zero degrees of freedom).
+Per category the load rate already splits — `decisions`/`projects` 1.000, `patterns` 0.500,
+`references` **0.429**. An earlier draft claimed falling load rate would amplify the effect; the
+benchmark's own data refutes that, so the claim was withdrawn.
+
+**What takes a slot is decided by ordering and line length, not relevance.** Five factors are
+confirmed in code: case-sensitive sorting of type section names, so `# Subdirectories` always
+precedes `# reference` (`lib/index-gen.mjs:242`), pulling nested concepts to the front of their
+category; within a section, alphabetical order of the frontmatter **`title`** — not the filename,
+which is only a fallback when parsing fails (`:315`); `status: deprecated` demoted (`:245`);
+category walk order by directory name (`:227`); and **line byte length**, since a next line
+exceeding the remaining budget stops that category (`lib/gate.mjs:122`). The gate contains zero
+references to cwd, recency, or the query.
+
+**The shape is the finding, not the level.** Of the 20 questions, 9 survive at 0 across every level
+and 3 at 1.0; the remaining 8 land in between — recall is not binary. The gate fills round-robin
+until the budget runs dry; a category ends with 1–3 lines only because a single line is large
+(200–1,030 B against a ~6,960 B index budget), so the whole take is exhausted at 8–11 lines.
+`references` gets exactly one line at every level, so of the 8 answers concentrated there at most
+one can survive.
+
+**Nesting depth (axis A-2).** 25 concepts held fixed, contents identical, only paths made deeper:
+
+| Condition | concept lines injected | sub-domain links |
+|---|---:|---:|
+| flat | 28 | 0 |
+| 2 levels | 27 | 0 |
+| 3 levels | 26 | 0 |
+| 4 levels | 25 | 0 |
+
+Measured **once** per condition (n=1, no seed repetition); one line was lost per level of depth.
+Four points cannot show whether the decline is linear, and depths past 4 were not measured. Against
+planted concepts, 3 levels is 25 → 23, **−8.0%**. The cause is byte pressure, not a failed chain
+walk: each extra path segment lengthens every line until one is pushed out.
+
+**R2 fires in every round** (`recall(24)` = 0.400 < 0.60). Under the pre-registered handling rule
+the **absolute recall values decide nothing** — the tables are published and drive no policy.
+
+**Measurement discipline, and where it improved.** In E1 the fixtures first entered git in the
+**report** commit — thresholds were fixed in advance but the materials that determined the numbers
+were not. From E2 on, fixtures ship inside the pre-registration commit and smoke enforces a
+**strict** inequality via `git log --diff-filter=A`; aimed at E1's file set it produces 3 violations,
+so it catches the real accident rather than approving it. Each round publishes the values already
+known when its pre-registration was written, and any arithmetic changed after measurement — E3
+quantized recall deltas onto the 1/20 grid because `0.25 − 0.20 = 0.04999…` while
+`0.20 − 0.15 = 0.05000…2` put the same one-question move on opposite sides of the equivalence bound;
+that fix removed the round's only `indeterminate` verdict, i.e. it cut *against* the report's own
+argument, and is disclosed as such. Adversarial review then showed the survival-identity guard was
+near-tautological (it re-used the very function it was checking), and the non-circular replacement
+fired on its first run — that is how the `front` contamination above was found. One open defect is
+carried rather than guessed at: the same guard also fires on 8 of 100 unperturbed samples, cause not
+yet identified.
+
+```sh
+node test/gate-recall.mjs --e3 --perturb all   # 3 conditions × 5 levels × 20 seeds, ~28 s
+node test/gate-recall.mjs --e3 --perturb all --quote-safe-perturb   # the corrected prefix
+node test/gate-title-distribution.mjs          # live-bundle title distribution (read-only)
+node test/gate-recall.mjs --e2 --perturb all   # E2
+node test/gate-recall.mjs                      # E1
+node test/bench-nesting.mjs                    # nesting-depth axis
+node test/smoke.mjs                            # regression guards
+```
+
+[E3 report](docs/benchmarks/gate-recall-2026-07-26-e3.md) ·
+[E3 pre-registration](docs/benchmarks/pre-registration-2026-07-26-e3.md) ·
+[E2 report](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
+[E2 pre-registration](docs/benchmarks/pre-registration-2026-07-26-e2.md) ·
+[E1 report](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
+[E1 pre-registration](docs/benchmarks/pre-registration-2026-07-26-e1.md)
+
+<!-- okf-benchmark: 2026-07-27-efficiency -->
+
+### Gate efficiency — does the index format earn its bytes? (axis E, 2026-07-27)
+
+E1–E3 only ever perturbed OKF's own inputs, so "does the format earn its bytes" could not be asked —
+there was no comparison. Axis E builds one: **same bundle, same byte budget, six index strategies
+swapped in.** It costs **$0.00**, again proven by the PATH trap rather than declared.
+
+Queries are no longer hand-written. Each of the 20 answer concepts gets a query built mechanically
+from the top-8 tf-idf terms of its own *body* — the part the index never carries. The retriever is
+BM25 with standard parameters fixed before measuring; its length normalisation penalises long lines,
+so the choice is stacked **against** OKF. The seed count (40) came from a power calculation done
+before the run, not inherited from an earlier round.
+
+**Of five pre-registered hypotheses, two survive and three are refuted.**
+
+| Hypothesis | Verdict | Evidence |
+|---|---|---|
+| title+description beats category-links-only | **supported** | okf wins 12/12 cells, all p<1e-4 |
+| descriptions earn their bytes | **refuted** | stripping them wins 12/12 cells at matched ordering |
+| round-robin earns its overhead | **refuted, conditionally** | −0.050 at cap 2048; +0.017…+0.218 at cap 9000 |
+| an ordered index beats a random one | supported, narrowly | okf wins 7/12 — but loses all three cells at N=26 |
+| paths alone are not enough | **refuted** | path-only wins 8/12 cells |
+
+The first row settles something that had never been measured. The live bundle's own architecture
+note justifies the 2026-07-17 switch from "category counts only" to "title + description" with a
+single anecdote, and prices it at n=3. It now has a number.
+
+**The format buys precision and sells capacity.** An OKF line, once injected, is almost always
+ranked first (precision 0.93–1.00); the bottleneck is that only ~12–14 concept lines fit in the
+9,000-byte default. Title-only lines fit all 26 at N=26 (precision 0.649); path-only lines fit all
+26 at precision 0.350. Descriptions are **~82%** of a line's bytes — 733 B per line, 133 B without
+them.
+
+**Round-robin's sign flips with the budget.** Six categories each pre-charge a heading and an
+omission marker, so at cap 2048 that fixed cost outweighs the benefit at every bundle size
+(−0.050 across all four); at the shipped default of 9,000 it pays, and the payoff grows with the
+bundle (+0.218 at N=200). **The shipped default is right at its own operating point** — and the
+code applies round-robin regardless of budget.
+
+> **This does not say "drop descriptions."** The round measures *finding*, not *answering*. Gate
+> rule 1 promises "if the title and description contain the answer, cite the line without a Read",
+> and that path dies without them. Whether descriptions repay their 82% is the **paid axis, which
+> has never been run.** What this round produced is a price tag, not a verdict.
+
+**Live bundle, read-only, counts and bytes only.** 26 concepts / 108,431 B. The gate spends
+**8,885 B — 98.7% of its budget — to show 14 of 26 concepts (53.8%)**. Compression is 12.2×; 71.6%
+of the injected bytes are knowledge and 28.4% structure, of which the `log.md` tail alone is
+1,341 B (15.1% of the injection, 2.6× headings and omission markers combined). The synthetic bundle
+predicted that 53.8% coverage to within **2.3 points** — an external check on the synthesis.
+
+**The round caught one of its own defects before publishing.** The first registered run scored
+path-only reach at 0.000 in all 12 cells, which reads as a finding and was a bug: the scorer
+extracted paths only from markdown link syntax. Fixing it flipped that hypothesis from supported to
+refuted. Nine new smoke assertions were each mutation-tested, and all six mutations killed their
+guard.
+
+**Not measured, and published as such**: BM25 is lexical overlap, not model judgement; the bundle is
+synthetic, so this is an upper bound; the answer-concept list is still hand-picked (only the queries
+are mechanical); the `paths` scores depend on this bundle being Korean prose with English slugs;
+n=40 detects an effect consistent across 80% of seeds with power 0.981 but only 0.703 at 70%, so
+"no difference" here means "not established"; the live sample is one author's bundle; token counts
+were not measured because no offline tokenizer was available; and no independent adversarial lens
+ran — the verification was self-run.
+
+```sh
+node test/gate-efficiency.mjs                    # 4 levels × 3 budgets × 40 seeds, ~30 s
+node test/gate-efficiency.mjs --determinism-check
+node test/gate-live-efficiency.mjs               # live bundle, read-only
+```
+
+[Axis E report](docs/benchmarks/gate-efficiency-2026-07-27.md) ·
+[Axis E pre-registration](docs/benchmarks/pre-registration-2026-07-27-efficiency.md)
+
+### End-to-end paid run (v3, 2026-07-16)
+
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
 **OKF is overhead on almost everything code can answer, and where code has no answer at all, a

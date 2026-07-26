@@ -57,6 +57,246 @@ Por que baseado em ociosidade? Sessões raramente terminam de forma explícita �
 
 ## Benchmark do OKF
 
+<!-- okf-benchmark: 2026-07-26-e3 -->
+
+### Gate recall@cap — três rodadas pré-registradas, E1 → E3 (2026-07-26)
+
+As três rodadas custaram **US$ 0,00**, e isso é provado pela execução em vez de declarado: o arcabouço
+coloca um stub `claude` no início do `PATH`, verifica que esse stub existe, e o stub nunca é executado
+(`paidCallTrapInstalled: true`, `paidCallTrapTripped: false`).
+
+Elas medem `recall(N)` — com N concepts no bundle, a fração das 20 perguntas congeladas cujo concept de
+resposta sobrevive até o índice que o portão de fato injeta.
+
+> **recall não é taxa de acerto.** Ele só responde «o portão carregou a linha relevante?». Se o modelo
+> **usou** aquela linha não há como verificar sem chamadas pagas. Distratores sintéticos dão apenas um
+> **limite superior**, então o recall real é menor.
+
+**Condições** — 3 perturbações × 5 níveis × 20 sementes = 300 amostras, 28 s. Quatro caracteres são
+acrescentados antes do **`title`** do frontmatter do concept de resposta; corpo, nome de arquivo e
+caminho não mudam.
+
+| N | `none` | `front` (`!!! `) **como publicado** | `front` **seguro com aspas** | `back` (`힣힣 `) |
+|---|---|---|---|---|
+| 24 | 0,400 ± 0,000 | 1,000 ± 0,000 | **0,400** | 0,400 ± 0,000 |
+| 50 | 0,277 ± 0,038 | 0,560 ± 0,064 | **0,400** | 0,182 ± 0,044 |
+| 100 | 0,247 ± 0,034 | 0,523 ± 0,030 | **0,400** | 0,170 ± 0,025 |
+| 200 | 0,250 ± 0,040 | 0,528 ± 0,030 | **0,400** | 0,175 ± 0,026 |
+| 400 | 0,262 ± 0,039 | 0,533 ± 0,024 | **0,400** | 0,185 ± 0,024 |
+
+n=20 por célula. O E1 rodou só `none` com um orçamento 11 B menor e produziu
+0,400 / 0,277 / 0,245 / 0,248 — uma **condição diferente**, nem melhor nem pior que a tabela acima.
+
+**A coluna `front` como publicada está contaminada, e quem detectou isso foi a guarda dela própria.**
+`!!!` é um **indicador de tag** do YAML. Colocado antes de um `title:` *sem aspas*, ele quebra o
+frontmatter por completo: o tipo se perde, o texto do link cai para o nome do arquivo e **a descrição
+desaparece**, fazendo a linha colapsar de ~700 B para ~30 B. **14 das 20 perguntas congeladas têm
+títulos sem aspas.** Ou seja, nessas 14 o experimento mediu não a posição de ordenação, mas a **falha de
+parsing** — linha curta deixa entrar muito mais linhas no mesmo orçamento, que é exatamente o
+`taken` = 24 e os 263 B de comprimento médio observados em N=24. Refeito com um prefixo seguro com
+aspas, `front` colapsa para um **0,400 plano**. `none` e `back` não se movem um dígito sequer, o que
+confirma que a correção é neutra e ao mesmo tempo mostra que `힣힣 ` nunca quebrou nada.
+
+**O que sobrevive e o que cai.** Que a ordenação decide a sobrevivência continua de pé: em N=400 o
+spread seguro com aspas é 0,400 − 0,185 = **0,215**, ainda **4,3×** o limiar de refutação de 0,05, e o
+`back` empurrar o recall de 0,262 para 0,185 é um efeito puro de ordem. **Num sistema com zero sinais de
+relevância isso é o resultado esperado, não a descoberta de um bug** — o que é novo é a magnitude. Mas
+três magnitudes publicadas não sobrevivem: «quatro caracteres dobram o recall» passa de 2,03× para
+**1,53×**; «N=24 vai de 0,400 a 1,000» vira **nenhuma mudança**; e o salto de `cwdIndependent` do E1,
+0,000 → 0,967, vira **0,000 → 0,333**. No lugar delas surge um fato novo: **quando os concepts ordenam
+para a frente, o recall deixa de depender de N por completo** (0,400 plano numa faixa de 17× no tamanho
+do bundle), porque então o que limita a sobrevivência é `taken`, não N.
+
+**A condição de sobrevivência é exatamente `rank < taken`** — um concept sobrevive se e somente se seu
+posto de ordenação por título dentro da categoria for menor que o número de linhas que aquela categoria
+recebeu. Portanto o recall é uma função **completa** dos vetores rank e `taken` e se decompõe sem
+aproximação. Em N=24→50 a componente rank domina (−0,15 a −0,41); em N≥100 ela morre para ~0, um efeito
+de piso: o posto médio das respostas (26,9) está muito além de `taken` (10,5), e mais preenchimento não
+muda concepts já excluídos. Ressalva publicada junto: a decomposição é **contabilidade, não
+causalidade**, e suas componentes dependem da linha de base.
+
+**Duas correções do E3 ao E2 e uma a si mesmo.** O E2 relatou que o recall «sobe monotonicamente» de
+N=100 a 400 e deixou a explicação para o E3. Com o n=20 pré-registrado essa subida **não pode ser
+estabelecida de forma alguma** — 0 de 12 pares adjacentes são `rising`. A primeira manchete publicada do
+E3 concluiu daí que a subida «não existe»; **isso estava errado**, e uma verificação adversarial de
+poder estatístico pegou: em n=60 há três pares `rising` (p chegando a 0,00027), e nos três a componente
+`taken` carrega 100 % do movimento enquanto a componente rank é exatamente 0. A subida é real, mas **não
+substantiva** (IC da mediana = [0,000, 0,000]). O E3 também substituiu a regra `|Δ| ≤ 0,05` do E2 — que
+confunde «plano» com «pequeno mas consistente» — por um teste de sinais exato pareado mais um intervalo
+de confiança da mediana livre de distribuição, publicando direção e magnitude como dois valores
+separados.
+
+**O antigo R3 estava disparando com ruído.** Sua redação era «decrescimento monótono violado → *defeito
+do arcabouço* → descartar tudo», mas a implementação comparava médias sem qualquer tratamento de
+incerteza, de modo que ±0,005 de ruído de semente o disparava tanto no E1 quanto no E2 — as duas rodadas
+saíram no estado autocontraditório de «disparou, mas nada foi descartado». O E3 não afrouxou o limiar;
+apontou o critério de volta para o que sua redação diz e mediu integridade diretamente. Nas mesmas 300
+amostras o antigo R3 dispara e o novo R3a não.
+
+**No bundle real o viés de ordenação ainda não pode ser estabelecido.** Medido somente em leitura e
+emitindo apenas contagens — títulos, descrições, nomes de arquivo e links não saem da medição, e `raw/`
+nunca é aberto. A ordenação compara `title.toLowerCase()` com `<`, isto é, **ordem de unidades de código
+UTF-16, não colação por localidade**, então um título iniciado em ASCII sempre precede um iniciado em
+hangul. Concepts com início ASCII são 65,4 % do bundle e ocupam 70,6 % das vagas do portão — mas com 26
+concepts o teste hipergeométrico exato contra uma hipótese nula estratificada dá **p = 0,667**. Isso não
+é um resultado. E um lift pequeno também não deve ser lido como «ordenar é inofensivo»: o portão carrega
+atualmente **65,4 %** de todos os candidatos, e onde tudo é carregado a ordenação não decide nada (2 de
+6 categorias têm zero graus de liberdade). Por categoria a taxa de carga já se separa —
+`decisions`/`projects` 1,000, `patterns` 0,500, `references` **0,429**. Um rascunho anterior afirmava
+que uma taxa de carga decrescente amplificaria o efeito; **os próprios dados do benchmark refutam
+isso**, então a afirmação foi retirada.
+
+**O que ocupa uma vaga é decidido pela ordem e pelo comprimento da linha, não pela relevância.** Cinco
+fatores estão confirmados no código: a ordenação sensível a maiúsculas dos nomes de seção de tipo, que
+faz `# Subdirectories` sempre preceder `# reference` (`lib/index-gen.mjs:242`) e puxa concepts aninhados
+para a frente de sua categoria; dentro de uma seção, a ordem alfabética do **`title`** do frontmatter —
+não do nome do arquivo, que é apenas um recurso de reserva quando o parsing falha (`:315`);
+`status: deprecated` rebaixado (`:245`); a ordem de percurso das categorias por nome de diretório
+(`:227`); e o **comprimento da linha em bytes**, já que uma próxima linha que exceda o orçamento restante
+interrompe aquela categoria (`lib/gate.mjs:122`). O portão não contém nenhuma referência a cwd,
+atualidade ou à consulta.
+
+**A descoberta é a forma, não o nível.** Das 20 perguntas, 9 sobrevivem com 0 em todos os níveis e 3 com
+1,0; as 8 restantes ficam no meio — recall não é binário. O portão preenche em revezamento até o
+orçamento acabar; uma categoria termina com 1–3 linhas só porque uma única linha é grande (200–1.030 B
+contra um orçamento de índice de ~6.960 B), de modo que toda a carga se esgota em 8–11 linhas.
+`references` recebe exatamente uma linha em todos os níveis, então das 8 respostas concentradas ali no
+máximo uma pode sobreviver.
+
+**Profundidade de aninhamento (eixo A-2).** 25 concepts fixos, conteúdos idênticos, apenas caminhos mais
+profundos:
+
+| Condição | linhas de concept injetadas | links de subdomínio |
+|---|---:|---:|
+| plano | 28 | 0 |
+| 2 níveis | 27 | 0 |
+| 3 níveis | 26 | 0 |
+| 4 níveis | 25 | 0 |
+
+Cada condição foi medida **uma vez** (n=1, sem repetição de sementes), e nessa única medição perdeu-se
+uma linha por nível de profundidade. Quatro pontos não permitem distinguir se o declínio é linear, e
+profundidades além de 4 não foram medidas. Contado contra os concepts plantados, 3 níveis é 25 → 23,
+**−8,0 %**. A causa é pressão de bytes, não uma travessia de cadeia que falhou: cada segmento de caminho
+a mais alonga todas as linhas até que uma seja empurrada para fora do orçamento.
+
+**R2 dispara em todas as rodadas** (`recall(24)` = 0,400 < 0,60). Pela regra de tratamento
+pré-registrada, **os valores absolutos de recall não decidem nada** — as tabelas são publicadas e não
+movem política alguma.
+
+**Disciplina de medição, e onde ela melhorou.** No E1 os fixtures entraram no git pela primeira vez no
+commit do **relatório** — os limiares estavam fixados de antemão, mas o material que de fato determinou
+os números não. A partir do E2 os fixtures vão dentro do commit de pré-registro e o smoke impõe uma
+desigualdade **estrita** via `git log --diff-filter=A`; apontada ao conjunto de arquivos do E1 ela
+produz 3 violações, ou seja, pega o acidente real em vez de aprová-lo. Cada rodada publica os valores já
+conhecidos quando seu pré-registro foi escrito, e qualquer aritmética alterada após a medição — o E3
+quantizou os deltas de recall na grade de 1/20 porque `0,25 − 0,20 = 0,04999…` enquanto
+`0,20 − 0,15 = 0,05000…2` colocava o mesmo movimento de uma pergunta em lados opostos do limite de
+equivalência; essa correção eliminou o único veredito `indeterminate` da rodada, ou seja, jogou
+**contra** o próprio argumento do relatório, e é divulgada como tal. Em seguida a revisão adversarial
+mostrou que a guarda da identidade de sobrevivência era quase tautológica (ela rechamava a mesma função
+que estava verificando), e a substituta não circular **disparou em sua primeira execução** — foi assim
+que a contaminação de `front` acima foi encontrada. Um defeito em aberto é assumido em vez de preenchido
+com suposição: a mesma guarda também dispara em 8 de 100 amostras não perturbadas, e a causa ainda não
+foi identificada.
+
+```sh
+node test/gate-recall.mjs --e3 --perturb all   # 3 condições × 5 níveis × 20 sementes, ~28 s
+node test/gate-recall.mjs --e3 --perturb all --quote-safe-perturb   # o prefixo corrigido
+node test/gate-title-distribution.mjs          # distribuição de títulos do bundle real (somente leitura)
+node test/gate-recall.mjs --e2 --perturb all   # E2
+node test/gate-recall.mjs                      # E1
+node test/bench-nesting.mjs                    # eixo de profundidade de aninhamento
+node test/smoke.mjs                            # guardas de regressão
+```
+
+[Relatório E3](docs/benchmarks/gate-recall-2026-07-26-e3.md) ·
+[Pré-registro E3](docs/benchmarks/pre-registration-2026-07-26-e3.md) ·
+[Relatório E2](docs/benchmarks/gate-recall-2026-07-26-e2.md) ·
+[Pré-registro E2](docs/benchmarks/pre-registration-2026-07-26-e2.md) ·
+[Relatório E1](docs/benchmarks/gate-recall-2026-07-26-e1.md) ·
+[Pré-registro E1](docs/benchmarks/pre-registration-2026-07-26-e1.md)
+
+<!-- okf-benchmark: 2026-07-27-efficiency -->
+
+### Eficiência do portão — o formato de índice paga pelos bytes que ocupa? (eixo E, 2026-07-27)
+
+E1–E3 só perturbaram as próprias entradas do OKF, de modo que «o formato paga pelos seus bytes?» nem
+podia ser perguntado — não havia termo de comparação. O eixo E constrói um: **o mesmo pacote, o mesmo
+orçamento em bytes, seis estratégias de índice trocadas.** Custa **US$ 0,00** e, de novo, isso não é
+declarado: é provado em execução pela armadilha de PATH.
+
+As perguntas não são mais escritas à mão. Para cada um dos 20 conceitos-resposta, a consulta é gerada
+mecanicamente a partir dos 8 termos tf-idf mais fortes do seu próprio **corpo de texto** — justamente
+a parte que o índice nunca carrega. O buscador é BM25 com parâmetros padrão fixados antes da medição;
+sua normalização por comprimento penaliza linhas longas, ou seja, a escolha pende **contra** o OKF. O
+número de sementes (40) veio de um cálculo de poder feito antes da execução, não herdado de uma
+rodada anterior.
+
+**De cinco hipóteses pré-registradas, duas se sustentam e três são refutadas.**
+
+| Hipótese | Veredicto | Evidência |
+|---|---|---|
+| título+descrição supera apenas links de categoria | **sustentada** | okf vence 12/12 células, todas com p<1e-4 |
+| descrições pagam pelos seus bytes | **refutada** | removê-las vence 12/12 células com a ordem igualada |
+| o round-robin paga pelo seu custo fixo | **refutada, com ressalva** | −0,050 no teto 2048; +0,017…+0,218 no teto 9000 |
+| um índice ordenado supera um aleatório | sustentada por pouco | okf vence 7/12 — mas perde as três células em N=26 |
+| caminhos sozinhos não bastam | **refutada** | o índice só de caminhos vence 8/12 células |
+
+A primeira linha encerra algo que nunca havia sido medido. A própria nota de arquitetura do pacote em
+produção justifica a mudança de 2026-07-17 («só contagens de categoria» → «título + descrição») com
+**um único caso** e estima o custo em **n=3**. Agora existe um número.
+
+**O formato compra precisão e vende capacidade.** Uma linha do OKF, uma vez injetada, quase sempre
+fica em primeiro lugar (precisão 0,93–1,00); o gargalo é que nos 9.000 bytes padrão cabem apenas
+cerca de 12 a 14 linhas de conceito. Linhas só com título cabem todas as 26 em N=26 (precisão 0,649);
+linhas só com caminho também cabem todas as 26 (precisão 0,350). **As descrições são cerca de 82 %**
+dos bytes de uma linha — 733 B por linha, 133 B sem elas.
+
+**O sinal do round-robin se inverte com o orçamento.** Seis categorias descontam antecipadamente um
+cabeçalho e um marcador de omissão cada, então no teto 2048 esse custo fixo devora o benefício em
+todos os quatro tamanhos (−0,050); no padrão de fábrica de 9.000 ele compensa, e o ganho cresce com o
+pacote (+0,218 em N=200). **O padrão de fábrica está certo no seu próprio ponto de operação** — e o
+código aplica round-robin independentemente do orçamento.
+
+> **Isso não quer dizer «removam as descrições».** Esta rodada mede **encontrar**, não **responder**.
+> A regra 1 do portão promete «se o título e a descrição contiverem a resposta, cite a linha sem
+> fazer Read», e esse caminho morre sem elas. Se as descrições devolvem esses 82 % é assunto do
+> **eixo pago, que nunca foi executado.** O que esta rodada produziu é uma etiqueta de preço, não um
+> veredicto.
+
+**Pacote em produção, somente leitura, apenas contagens e bytes.** 26 conceitos / 108.431 B. O portão
+gasta **8.885 B — 98,7 % do seu orçamento — para mostrar 14 de 26 conceitos (53,8 %).** A compressão
+é de 12,2×; 71,6 % dos bytes injetados são conhecimento e 28,4 % são estrutura, e dentro dela a cauda
+do `log.md` sozinha ocupa 1.341 B (15,1 % da injeção, 2,6 vezes os cabeçalhos mais os marcadores de
+omissão somados). O pacote sintético previu essa cobertura de 53,8 % com margem de **2,3 pontos** —
+uma verificação externa do desenho sintético.
+
+**A rodada encontrou um defeito próprio antes de publicar.** Na primeira execução registrada, o
+alcance da estratégia só-caminhos foi 0,000 nas 12 células. Lido ao pé da letra parece um achado, mas
+era um bug: o avaliador extraía caminhos apenas da sintaxe de link markdown. Corrigido, aquela
+hipótese virou de sustentada para refutada. As nove novas asserções de fumaça passaram uma a uma por
+teste de mutação, e as seis mutações mataram sua respectiva guarda.
+
+**O que não foi medido, publicado como tal**: BM25 é sobreposição lexical, não julgamento do modelo;
+o pacote é sintético, portanto isto é um limite superior; a lista de conceitos-resposta continua
+sendo escolha minha (mecânicas são apenas as consultas); os resultados de `paths` dependem de este
+pacote ser prosa em coreano com slugs em inglês; n=40 detecta com poder 0,981 um efeito consistente
+em 80 % das sementes, mas apenas 0,703 a 70 %, de modo que aqui «sem diferença» significa «não
+estabelecido»; a amostra em produção é o pacote de um único autor; a contagem de tokens não foi
+medida por falta de tokenizador offline; e nenhuma lente adversarial independente rodou — a
+verificação foi feita por mim mesmo.
+
+```sh
+node test/gate-efficiency.mjs                    # 4 tamanhos × 3 orçamentos × 40 sementes, ~30 s
+node test/gate-efficiency.mjs --determinism-check
+node test/gate-live-efficiency.mjs               # pacote em produção, somente leitura
+```
+
+[Relatório do eixo E](docs/benchmarks/gate-efficiency-2026-07-27.md) ·
+[Pré-registro do eixo E](docs/benchmarks/pre-registration-2026-07-27-efficiency.md)
+
+### Execução paga de ponta a ponta (v3, 2026-07-16)
+
 <!-- okf-benchmark: 2026-07-16-v3 -->
 
 **O OKF é sobrecarga em quase tudo que o código consegue responder, e onde o código não tem resposta alguma, um simples CLAUDE.md também o supera — a única vantagem do OKF é fazer isso de forma mais barata. Um teste direto de sua promessa central (conhecimento acumulado compensa ao longo do tempo) foi executado e refutado.**

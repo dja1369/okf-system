@@ -1,0 +1,49 @@
+{
+  "meta": {
+    "round": "E-eff (라이브 측정)",
+    "generatedAt": "2026-07-26T15:14:08.645Z",
+    "commit": "e028443",
+    "home": "(경로 비공개 — 사용자 홈)",
+    "config": {
+      "inject_max_lines": 120,
+      "inject_max_bytes": 9000
+    },
+    "note": "title·description·파일명·링크는 산출물에 싣지 않는다. 개수·바이트·비율만."
+  },
+  "bundle": {
+    "categories": 6,
+    "conceptFiles": 26,
+    "conceptFileBytes": 108431,
+    "meanConceptFileBytes": 4170
+  },
+  "gate": {
+    "injectedBytes": 8885,
+    "injectedLines": 55,
+    "conceptLinesInjected": 14,
+    "conceptLinesTotal": 26,
+    "coverage": 0.5384615384615384,
+    "budgetUsed": 0.9872222222222222,
+    "truncatedBytes": 0,
+    "starvationEvents": 7,
+    "leftoverBytes": 110
+  },
+  "overhead": {
+    "headBytes": 675,
+    "tailBytes": 1341,
+    "headingBytes": 232,
+    "markerBytes": 276,
+    "structureBytes": 2524,
+    "payloadBytes": 6361,
+    "payloadShare": 0.7159257175014069
+  },
+  "compression": {
+    "bundleBytesPerInjectedByte": 12.20382667416995,
+    "injectedBytesPerConceptShown": 634.6428571428571
+  },
+  "truncationLeak": {
+    "plainScalarsScanned": 41,
+    "plainScalarsTruncated": 0,
+    "bytesKept": 6987,
+    "bytesLostToComment": 0
+  }
+}
