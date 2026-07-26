@@ -6,8 +6,10 @@
 // 기준선이고, I2(라우터)를 착수할지 말지를 R1~R5가 기계로 판정한다.
 //
 // **유료 호출 0.** 이 하니스는 LLM을 부르지 않는다. 그것을 주장이 아니라 증거로 남기려고
-// PATH 트랩(아래 plantPathTrap)을 깐다 — 훅 서브프로세스가 어떤 경로로든 CLI를 부르면
-// TRIPPED 파일이 생기고 산출 JSON의 meta.paidCallTrapTripped가 true가 된다.
+// PATH 트랩(아래 plantPathTrap)을 깐다 — 트랩은 **하니스 프로세스 자신의 PATH**에 걸리고 모든
+// 자식이 그걸 상속하므로, 하니스든 훅 서브프로세스든 어떤 경로로든 CLI를 부르면 TRIPPED 파일이
+// 생기고 산출 JSON의 meta.paidCallTrapTripped가 true가 된다. 스텁 존재 여부도 실측해
+// meta.paidCallTrapInstalled로 남긴다(스텁이 없으면 "발동 안 함"은 증거가 아니다).
 //
 // CLI:
 //   node test/gate-recall.mjs [--levels 24,50,100,200] [--seeds 20] [--out <경로>]
@@ -243,13 +245,28 @@ function measure(home) {
   const stats = {};
   const text = buildContext({ okfHome: home, latestLog, injectMaxLines, injectMaxBytes }, stats);
 
-  // 예산 동형 검사. stats.budgetBytes/budgetLines는 heading 선차감 **이후** 값이므로
-  // (lib/gate.mjs:92-98) 그대로 비교하면 카테고리 수·자릿수에 따라 흔들린다 — 선차감을
-  // 되돌려 index에 실제로 주어진 원 예산을 복원해 비교한다.
-  const rawBudgetBytes = stats.budgetBytes + stats.headingBytes;
-  const rawBudgetLines = stats.budgetLines + stats.cats.length * 2;
-  if (rawBudgetBytes !== SHAPE.indexBudgetBytes || rawBudgetLines !== SHAPE.indexBudgetLines) {
-    throw new Error(`shape drift: index budget ${rawBudgetBytes}B/${rawBudgetLines}L vs frozen ${SHAPE.indexBudgetBytes}B/${SHAPE.indexBudgetLines}L (head ${probe.headBytes}B/${probe.headLines}L, tail ${probe.tailBytes}B/${probe.tailLines}L)`);
+  // 예산 동형 검사.
+  //
+  // **`stats.budgetBytes + stats.headingBytes === SHAPE.indexBudgetBytes`를 검사하면 안 된다.**
+  // 바로 위에서 injectMaxBytes를 `indexBudget + 실측head + 실측tail`로 역산했으므로 그 등식은
+  // 항진명제다 — throw를 지워도, 게이트 head에 규칙을 한 줄 더 실어 **라이브 예산이 실제로
+  // 줄어들어도** 통과한다(하니스가 cap을 같이 늘려버리니까). 잡아야 하는 것은 그게 아니라
+  // **라이브 예산이 움직였는가**다.
+  //
+  // head는 `전역 지식 번들: ${okfHome}`로 경로를 그대로 싣는다 — 즉 head = 상수 + 경로바이트다.
+  // 그래서 샌드박스 head에서 경로 길이 차이만 빼면 라이브 head가 정확히 복원된다. 이 복원값이
+  // 동결값과 다르면 head 리터럴이 바뀐 것이고, cap 9000B는 그대로이므로 index에 남는 예산도
+  // 그만큼 바뀌었다는 뜻이다(픽스처 note 참조).
+  const impliedFrozenHeadBytes = probe.headBytes - B(home) + SHAPE.frozenHomePathBytes;
+  if (impliedFrozenHeadBytes !== SHAPE.frozenHeadBytes || probe.headLines !== SHAPE.frozenHeadLines) {
+    throw new Error(`shape drift: head implies live ${impliedFrozenHeadBytes}B/${probe.headLines}L vs frozen ${SHAPE.frozenHeadBytes}B/${SHAPE.frozenHeadLines}L (sandbox head ${probe.headBytes}B, home ${B(home)}B, frozen home ${SHAPE.frozenHomePathBytes}B)`);
+  }
+  // 픽스처 내부 정합. 동결된 index 예산은 라이브 cap에서 head/tail을 뺀 값이어야 한다 —
+  // 셋 중 하나만 손대면 하니스가 라이브와 다른 예산에서 재게 된다(G3-0b).
+  const fixtureIndexBudgetBytes = SHAPE.config.inject_max_bytes - SHAPE.frozenHeadBytes - SHAPE.tailBytes;
+  const fixtureIndexBudgetLines = SHAPE.config.inject_max_lines - SHAPE.frozenHeadLines - SHAPE.tailLines;
+  if (SHAPE.indexBudgetBytes !== fixtureIndexBudgetBytes || SHAPE.indexBudgetLines !== fixtureIndexBudgetLines) {
+    throw new Error(`shape drift: fixture index budget ${SHAPE.indexBudgetBytes}B/${SHAPE.indexBudgetLines}L but cap−head−tail gives ${fixtureIndexBudgetBytes}B/${fixtureIndexBudgetLines}L`);
   }
   if (probe.tailBytes !== SHAPE.tailBytes || probe.tailLines !== SHAPE.tailLines) {
     throw new Error(`shape drift: tail ${probe.tailBytes}B/${probe.tailLines}L vs frozen ${SHAPE.tailBytes}B/${SHAPE.tailLines}L`);
@@ -288,8 +305,8 @@ function calibrate(root) {
     taken: stats.taken,
     total: stats.total,
     indexBytes: B(indexSection(text).replace(/\n$/, '')),
-    assembledBytes: stats.assembledBytes - probe.headBytes + SHAPE.liveHeadBytes,
-    finalBytes: stats.finalBytes - probe.headBytes + SHAPE.liveHeadBytes,
+    assembledBytes: stats.assembledBytes - probe.headBytes + SHAPE.frozenHeadBytes,
+    finalBytes: stats.finalBytes - probe.headBytes + SHAPE.frozenHeadBytes,
     truncatedBytes: stats.truncatedBytes,
     leftoverBytes: stats.leftoverBytes,
     cappedLines: stats.cappedLines,
@@ -302,20 +319,25 @@ function calibrate(root) {
 }
 
 // ---------------------------------------------------------------------------
-// 유료 0 증명. 훅 서브프로세스의 PATH 맨 앞에 스텁을 깐다 — 어떤 경로로든 CLI가 실행되면
-// TRIPPED 파일이 남는다. `meta.paidCalls: 0` 같은 상수 선언은 증거가 아니다.
+// 유료 0 증명. **하니스 프로세스 자신의** PATH 맨 앞에 스텁을 깐다 — 훅 서브프로세스만
+// 덮으면 하니스 본체(또는 훅이 아닌 다른 spawn)가 CLI를 부를 때 실제 PATH로 새 나간다.
+// process.env.PATH를 덮으면 이후의 모든 자식이 그걸 상속하므로 경로가 하나로 모인다.
+// 어떤 경로로든 CLI가 실행되면 TRIPPED 파일이 남는다.
+// `meta.paidCalls: 0` 같은 상수 선언은 증거가 아니다 — 그리고 **스텁이 없으면 "발동 안 함"도
+// 증거가 아니다**. 그래서 스텁 경로를 함께 돌려주고 산출 JSON에 존재 여부를 실측해 남긴다.
 function plantPathTrap(root) {
   const trapDir = path.join(root, 'path-trap');
   fs.mkdirSync(trapDir, { recursive: true });
   const tripped = path.join(trapDir, 'TRIPPED');
+  const stub = path.join(trapDir, process.platform === 'win32' ? 'claude.cmd' : 'claude');
   if (process.platform === 'win32') {
-    fs.writeFileSync(path.join(trapDir, 'claude.cmd'), `@echo off\r\n>"${tripped}" echo tripped\r\nexit /b 1\r\n`);
+    fs.writeFileSync(stub, `@echo off\r\n>"${tripped}" echo tripped\r\nexit /b 1\r\n`);
   } else {
-    const stub = path.join(trapDir, 'claude');
     fs.writeFileSync(stub, `#!/bin/sh\necho tripped > "${tripped}"\nexit 1\n`);
     fs.chmodSync(stub, 0o755);
   }
-  return { trapDir, tripped };
+  process.env.PATH = `${trapDir}${path.delimiter}${process.env.PATH ?? ''}`;
+  return { trapDir, tripped, stub };
 }
 
 // 훅 교차검증. 훅은 **자기 config(9000/120)**로 돌고 하니스는 예산 동형을 위해 역산한 cap
@@ -330,7 +352,7 @@ function plantPathTrap(root) {
 // 대해 단조가 아니다 — 바이트가 46B 더 많은 하니스가 긴 줄 하나를 먼저 담아 짧은 줄 둘을 놓칠
 // 수 있다. 레벨 200에서 실제로 관측했다(훅 11줄 vs 하니스 10줄). 그건 결함이 아니라 예산이
 // 다르다는 사실 그 자체이므로, 포함관계는 숫자로 남기기만 한다.
-function crossCheckWithHook(home, trap, harnessSurvivors, latestLog) {
+function crossCheckWithHook(home, harnessSurvivors, latestLog) {
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'okf-bench-fakehome-'));
   const lockPath = okfPaths(home).lock;
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
@@ -342,9 +364,10 @@ function crossCheckWithHook(home, trap, harnessSurvivors, latestLog) {
     const res = spawnSync(process.execPath, hookArgs, {
       input: '{}',
       encoding: 'utf8',
+      // PATH는 따로 덮지 않는다 — plantPathTrap이 하니스 프로세스의 PATH를 이미 트랩 우선으로
+      // 바꿔놨고 여기서 그걸 상속한다. 여기서만 덮으면 하니스 본체가 트랩 밖에 남는다.
       env: {
         ...process.env,
-        PATH: `${trap.trapDir}${path.delimiter}${process.env.PATH}`,
         OKF_HOME: home,
         HOME: fakeHome,
         USERPROFILE: fakeHome,
@@ -479,7 +502,7 @@ function main() {
       for (let seed = 1; seed <= args.seeds; seed++) {
         const r = runSample(root, level, seed);
         if (seed === 1) {
-          crossChecks.push({ level, seed, ...crossCheckWithHook(r.home, trap, r.survivors, r.latestLog) });
+          crossChecks.push({ level, seed, ...crossCheckWithHook(r.home, r.survivors, r.latestLog) });
         }
         samples.push(r.sample);
         // **측정 직후 삭제.** 스모크의 sandbox 미정리 관례에 대한 의도적 예외다 —
@@ -555,11 +578,15 @@ function main() {
         questionSet: 'test/fixtures/bench/gate-recall.json',
         questionSetFrozenAt: QUESTIONS_FILE.frozenAt,
         shapeFixture: SHAPE_REL,
-        // PATH 트랩이 발동했는가. 상수가 아니라 파일시스템 실측이다.
+        // PATH 트랩이 **깔려 있었는가**, 그리고 **발동했는가**. 둘 다 상수 선언이 아니라
+        // 파일시스템 실측이다 — 스텁이 없으면 tripped=false는 아무것도 증명하지 않으므로
+        // 소비자(test/smoke.mjs 단언 8)는 installed=true를 AND로 요구한다. 실행이 다 끝난
+        // 뒤에 재는 값이라 "중간에 스텁이 사라졌다"도 함께 잡는다.
+        paidCallTrapInstalled: fs.existsSync(trap.stub),
         paidCallTrapTripped: fs.existsSync(trap.tripped),
         actualHeadBytes: samples[0]?.headBytes ?? null,
         actualTailBytes: samples[0]?.tailBytes ?? null,
-        liveHeadBytes: SHAPE.liveHeadBytes,
+        frozenHeadBytes: SHAPE.frozenHeadBytes,
         indexBudgetBytes: SHAPE.indexBudgetBytes,
         indexBudgetLines: SHAPE.indexBudgetLines,
         // 계획서 I6-5의 `- [` 정규식으로 센 생존 수(전 샘플 합). 0이면 사양이 신 포맷(`* `)과
@@ -584,7 +611,7 @@ function main() {
     }
     console.log(`calibration mismatches: ${calibration.mismatches.length}`);
     console.log(`R1..R5 fired: ${Object.entries(refutation).filter(([, v]) => v.fired).map(([k]) => k).join(',') || 'none'}`);
-    console.log(`paidCallTrapTripped: ${out.meta.paidCallTrapTripped}`);
+    console.log(`paidCallTrap: installed=${out.meta.paidCallTrapInstalled} tripped=${out.meta.paidCallTrapTripped}`);
     console.log(`hook cross-check byte-identical at hook config: ${crossChecks.filter((c) => c.byteIdenticalAtHookConfig).length}/${crossChecks.length}`);
     console.log(`plan-regex (\`- [\`) survivors across all samples: ${out.meta.planRegexSurvivorTotal}`);
     console.log(`out: ${outPath}`);

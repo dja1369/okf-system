@@ -92,13 +92,26 @@ mantiene aunque el delta infractor sea 1/16 de la desviación típica entre semi
 porque la preinscripción fijó de antemano que un delta pequeño no cancela un disparo. La tabla se
 publica; no decide nada.
 
-**El hallazgo es la forma, no el nivel.** De las 20 preguntas, 8 sobreviven con 0 en todos los
-niveles y 3 sobreviven con 1.0 en todos los niveles: aquí el recall es casi binario en vez de un
-dial continuo. La puerta rellena por turnos, una línea por categoría, así que la categoría
-`references`, que concentra 8 de las respuestas, descarta **estructuralmente** 7 de ellas, al margen
-de la calidad del conocimiento o de la dificultad de la pregunta. Y la única señal que decide qué 1–2
-líneas ocupan esos huecos es el **orden alfabético del nombre de archivo**: la puerta actual no
-contiene ninguna referencia a cwd, a la novedad ni a la consulta.
+**El hallazgo es la forma, no el nivel.** De las 20 preguntas, 9 sobreviven con 0 en todos los
+niveles (q03, q07, q10, q13–q17, q20) y 3 sobreviven con 1.0 en todos los niveles (q02, q12, q18);
+las 8 restantes quedan en valores intermedios. Por celda (20 preguntas × 4 niveles = 80) son 48
+ceros, 19 unos y 13 valores intermedios: el recall no es binario. Tres de las preguntas intermedias
+incluso suben al crecer N (q06: 0 → 0,60 → 0,65 → 0,70), y esa subida es el origen aritmético de R3.
+La puerta rellena por turnos, pero **recorre las categorías repetidamente** hasta agotar el
+presupuesto, no toma una línea por categoría y para; que una categoría se quede en 1–3 líneas se debe
+solo a que una sola línea es grande: las líneas de concepto miden 200–1.030 B frente a un
+presupuesto de índice de 6.956 B, así que el total tomado se agota en 8–11 líneas. De `references` se
+toma exactamente una línea en todos los niveles (1 de 57 líneas con N=200), así que de las 8
+respuestas concentradas ahí sobrevive como mucho una. Lo que ocupa esos huecos no lo decide la
+relevancia, sino el orden en el momento de generación y la longitud de línea, y hay al menos cinco
+factores confirmados: la ordenación de los nombres de sección de tipo **distinguiendo mayúsculas**,
+por lo que `# Subdirectories` siempre precede a `# reference` (`lib/index-gen.mjs:242`); dentro de
+una sección, el orden alfabético del **`title`** del frontmatter (`:315`), no del nombre de archivo,
+que solo es un recurso de reserva si falla el parseo del frontmatter; `status: deprecated` relegado
+dentro de su sección (`:245`); el orden de recorrido de categorías por nombre de directorio (`:227`);
+y la **longitud en bytes de la línea**: si la siguiente línea supera el presupuesto restante, esa
+categoría se detiene ahí (`lib/gate.mjs:122`), de modo que la longitud de la description cambia la
+supervivencia. La puerta actual no contiene ninguna referencia a cwd, a la novedad ni a la consulta.
 
 **Profundidad de anidamiento (eje A-2).** 25 conceptos fijos, contenidos idénticos, solo las rutas
 más profundas:
@@ -110,8 +123,11 @@ más profundas:
 | 3 niveles | 26 | 0 |
 | 4 niveles | 25 | 0 |
 
-Se pierde exactamente una línea por nivel de profundidad — lineal, sin colapso (-7,1 % con 3 niveles
-frente al plano). La causa es la presión de bytes, no un recorrido de cadena fallido: cada segmento
+Cada condición se midió **una sola vez** (n=1, sin repetición de semillas), y en esa única medición
+se perdió una línea por cada nivel de profundidad. Con cuatro puntos no se puede distinguir si ese
+descenso es lineal, y no se midieron profundidades más allá de 4 niveles. Contado sobre los conceptos
+plantados, 3 niveles son 25 → 23, **-8,0 %**. La causa es la presión de bytes, no un recorrido de
+cadena fallido: cada segmento
 extra de ruta alarga todas las líneas hasta que una queda fuera del presupuesto. (28 y no 25 porque
 `ensureBootstrap` planta los mismos conceptos semilla en todas las condiciones; no afecta a la
 comparación entre condiciones.)

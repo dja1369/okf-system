@@ -92,13 +92,26 @@ Diese Regel gilt, obwohl das verletzende Delta nur 1/16 der Seed-Standardabweich
 beträgt — die Vorregistrierung hat vorab festgeschrieben, dass ein kleines Delta ein Auslösen nicht
 aufhebt. Die Tabelle wird veröffentlicht; entschieden wird damit nichts.
 
-**Der Befund ist die Form, nicht das Niveau.** Von den 20 Fragen überleben 8 auf allen Ebenen mit 0
-und 3 auf allen Ebenen mit 1.0 — recall ist hier nahezu binär statt ein kontinuierlicher Regler. Das
-Gate füllt im Round-Robin je eine Zeile pro Kategorie, deshalb fallen in der Kategorie `references`,
-die 8 der Antworten enthält, **strukturell** 7 davon heraus — unabhängig von Wissensqualität oder
-Schwierigkeit der Frage. Und das einzige Signal, das entscheidet, welche 1–2 Zeilen diese Plätze
-belegen, ist die **alphabetische Reihenfolge der Dateinamen**: Das aktuelle Gate enthält null
-Referenzen auf cwd, Aktualität oder die Anfrage.
+**Der Befund ist die Form, nicht das Niveau.** Von den 20 Fragen überleben 9 auf allen Ebenen mit 0
+(q03, q07, q10, q13–q17, q20) und 3 auf allen Ebenen mit 1.0 (q02, q12, q18); die übrigen 8 liegen
+dazwischen. Pro Zelle (20 Fragen × 4 Ebenen = 80) sind das 48 Nullen, 19 Einsen und 13 Zwischenwerte
+— recall ist nicht binär. Drei der Zwischenfragen steigen mit wachsendem N sogar an (q06: 0 → 0,60 →
+0,65 → 0,70), und dieser Anstieg ist die arithmetische Quelle von R3. Das Gate füllt im Round-Robin,
+läuft die Kategorien aber **wiederholt** durch, bis das Budget erschöpft ist, statt eine Zeile pro
+Kategorie zu nehmen und aufzuhören; dass eine Kategorie bei 1–3 Zeilen endet, liegt allein daran,
+dass eine einzelne Zeile groß ist — Konzept-Zeilen umfassen 200–1.030 B bei einem Index-Budget von
+6.956 B, sodass die gesamte Auswahl nach 8–11 Zeilen aufgebraucht ist. Aus `references` wird auf
+jeder Ebene genau eine Zeile übernommen (bei N=200: 1 von 57 Zeilen), von den 8 dort gebündelten
+Antworten überlebt also höchstens eine. Was diese Plätze belegt, entscheiden nicht Relevanz, sondern
+Sortierung zum Erzeugungszeitpunkt und Zeilenlänge; mindestens fünf Faktoren sind bestätigt:
+**Groß-/Kleinschreibung beachtende** Sortierung der Typ-Abschnittsnamen, sodass `# Subdirectories`
+immer vor `# reference` steht (`lib/index-gen.mjs:242`); innerhalb eines Abschnitts die alphabetische
+Reihenfolge des Frontmatter-**`title`** (`:315`) — nicht des Dateinamens, der nur als Fallback dient,
+wenn das Frontmatter-Parsing fehlschlägt; `status: deprecated` wird im Abschnitt nach hinten gereiht
+(`:245`); die Kategorie-Durchlaufreihenfolge nach Verzeichnisnamen (`:227`); und die **Byte-Länge der
+Zeile** — überschreitet die nächste Zeile das Restbudget, endet diese Kategorie dort
+(`lib/gate.mjs:122`), die Länge der description verändert also das Überleben. Das aktuelle Gate
+enthält null Referenzen auf cwd, Aktualität oder die Anfrage.
 
 **Verschachtelungstiefe (Achse A-2).** 25 Konzepte fest, Inhalte identisch, nur die Pfade tiefer:
 
@@ -109,8 +122,11 @@ Referenzen auf cwd, Aktualität oder die Anfrage.
 | 3 Ebenen | 26 | 0 |
 | 4 Ebenen | 25 | 0 |
 
-Pro Tiefenstufe geht genau eine Zeile verloren — linear, ohne Zusammenbruch (-7,1 % bei 3 Ebenen
-gegenüber flach). Ursache ist Byte-Druck, kein gescheitertes Auflösen der Kette: Jedes zusätzliche
+Jede Bedingung wurde **einmal** gemessen (n=1, keine Seed-Wiederholung); in dieser einen Messung ging
+pro Tiefenstufe eine Zeile verloren. Vier Punkte können nicht unterscheiden, ob dieser Rückgang
+linear ist, und Tiefen jenseits von 4 Ebenen wurden nicht gemessen. Gemessen an den gepflanzten
+Konzepten sind 3 Ebenen 25 → 23, **-8,0 %**. Ursache ist Byte-Druck, kein gescheitertes Auflösen der
+Kette: Jedes zusätzliche
 Pfadsegment verlängert jede Zeile, bis eine aus dem Budget gedrängt wird. (28 statt 25, weil
 `ensureBootstrap` in jeder Bedingung dieselben Seed-Konzepte anlegt; der Vergleich zwischen den
 Bedingungen bleibt davon unberührt.)

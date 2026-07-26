@@ -1,14 +1,16 @@
 {
   "measuredAt": "2026-07-26",
-  "source": "카테고리별 index.md 줄의 바이트 길이만. 제목·설명 원문 미포함(프라이버시).",
+  "source": "카테고리별 index.md 줄의 바이트 길이만. 제목·설명 원문 미포함(프라이버시). lineBytes 벡터는 재측정이 아니라 test/fixtures/live-shape-2026-07-25.json에서 **승계**했다(바이트 동일). 2026-07-26에 재측정한 것은 expected 8개 값뿐이다.",
   "supersedes": "test/fixtures/live-shape-2026-07-25.json (수정 전 버그 상태를 기록한 값)",
-  "note": "expected는 라이브 head(686B)를 대입해 정규화한 값이다 — 실제 head는 okfHome 경로 길이에 비례하므로 샌드박스에서 재현할 수 없다. cap - head 는 경로와 무관하므로 정규화가 성립한다: assembledBytes = liveHeadBytes + indexBytes + 1 + tailBytes.",
+  "note": "expected는 frozenHeadBytes(686B)를 대입해 정규화한 값이다 — 실제 head는 okfHome 경로 길이에 비례하므로 샌드박스에서 재현할 수 없다. cap - head 는 경로와 무관하므로 정규화가 성립한다: assembledBytes = frozenHeadBytes + indexBytes + 1 + tailBytes. head가 `전역 지식 번들: ${okfHome}`로 경로를 그대로 싣기 때문에 head = (경로 제외 상수 650B) + 경로바이트이고, 따라서 샌드박스 head에서 경로 길이 차이를 빼면 동결 시점 head를 복원할 수 있다: impliedFrozenHead = 실측headBytes − B(샌드박스home) + frozenHomePathBytes. 이 값이 frozenHeadBytes와 어긋나면 게이트 head 리터럴(650B 상수)이 움직였다는 뜻이므로 하니스는 측정을 중단한다.",
+  "knownDrift": "frozenHeadBytes 686 = 650(상수) + 36(경로)이다. 그런데 기본 라이브 경로 ~/.claude/okf 는 **25B**이므로 오늘 기준 실제 라이브 head는 675B이고, 라이브 index 예산은 6967B다. 즉 이 하니스는 라이브보다 11B(0.16%) **작은** 예산에서 잰다 — recall을 과대평가하지 않는 방향(보수적)이다. head 리터럴은 동결 커밋 ba961c5와 바이트 동일하므로 이 11B는 head 문구 변경 때문이 아니라, 2026-07-25 동결 측정이 36B 길이의 다른 OKF_HOME에서 이뤄졌기 때문이다. 예산을 6967로 고치는 것은 발행된 수치를 사후에 바꾸는 일이므로 이번 회차에서 하지 않고 다음 회차 사전등록 대상으로 넘긴다.",
   "config": {
     "inject_max_bytes": 9000,
     "inject_max_lines": 120
   },
-  "liveHeadBytes": 686,
-  "liveHeadLines": 10,
+  "frozenHeadBytes": 686,
+  "frozenHomePathBytes": 36,
+  "frozenHeadLines": 10,
   "tailBytes": 1358,
   "tailLines": 18,
   "indexBudgetBytes": 6956,

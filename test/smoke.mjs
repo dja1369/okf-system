@@ -686,8 +686,22 @@ console.log('\n=== gate module + recall harness ===');
   // okfPaths(home).lock을 선주입한다(test/gate-recall.mjs:339, test/smoke.mjs:96-101 관용구).
   // 그게 빠지면 훅 끝의 maybeSpawnBatch가 detached 실배치를 띄우고 개발 머신에서 과금된다.
   const reducedOut = path.join(sandbox('gate-recall-out'), 'reduced.json');
-  execFileSync(process.execPath, [HARNESS, '--levels', '24,50', '--seeds', '2', '--out', reducedOut], { encoding: 'utf8' });
-  const reduced = JSON.parse(fs.readFileSync(reducedOut, 'utf8'));
+  // **하니스가 죽으면 여기서 스모크가 통째로 크래시한다** — 그러면 남은 단언이 실행조차 되지
+  // 않아 산출이 `0 failed`(조기 종료)로 나오고, 초록과 구별하기 어려워진다. 하니스 사망은
+  // 그 자체로 단언 하나로 만들고, 뒤 단언들이 빈 산출 위에서 정상적으로 FAIL하도록 둔다.
+  let reduced = null;
+  let harnessError = null;
+  try {
+    execFileSync(process.execPath, [HARNESS, '--levels', '24,50', '--seeds', '2', '--out', reducedOut], { encoding: 'utf8' });
+    reduced = JSON.parse(fs.readFileSync(reducedOut, 'utf8'));
+  } catch (err) {
+    harnessError = err;
+    // 빈 산출. 아래 단언들은 이 값에서 자기가 요구하는 사실을 못 찾고 FAIL한다.
+    reduced = { calibration: { observed: {}, mismatches: [] }, meta: {}, samples: [], byLevel: [] };
+  }
+  ok('gate-recall reduced run completes (no shape drift, no harness crash)',
+    harnessError === null,
+    `${harnessError?.message ?? ''} ${harnessError?.stderr ?? ''}`.trim().split('\n').slice(0, 4).join(' | '));
 
   // --- 1. drift 0 --------------------------------------------------------
   {
@@ -720,7 +734,9 @@ console.log('\n=== gate module + recall harness ===');
     // 계획서 I6-5는 `/^- \[[^\]]*\]\((\/[^)\s]+)\)/`로 생존을 세라고 적었다. 그러나 주입 줄의
     // bullet 문자는 `*`다(OKF 공식 번들 규범) — 이 정규식은 **한 건도** 매치하지 않는다. 하니스는
     // 실제 포맷(`* [..](..)`)으로 세고, 계획서 정규식 결과는 산출 JSON에 증거로만 남긴다.
-    // 누가 하니스를 계획서 문구대로 되돌리면 recall이 전 레벨에서 0으로 무너지므로 여기서 잡는다.
+    // **이 단언은 "되돌리기"를 잡지 못한다.** 여기서 보는 것은 포맷 사실(`* `는 매치하고 `- `는
+    // 0건)뿐이고, 하니스의 생존 정규식을 계획서 문구대로 되돌려도 이 세 값은 그대로다. 되돌리면
+    // 전 샘플의 survivorCount가 0이 되므로, 그건 아래 11("축소 실행의 불변식")이 잡는다.
     const home = bootstrapped('gate-survivor-regex');
     writeConcept(home, 'decisions', 'a.md', 'decision', '생존 정규식 확인', '실제 bullet 문자는 별표다');
     regenerateIndex(home);
@@ -767,11 +783,20 @@ console.log('\n=== gate module + recall harness ===');
   {
     // 하니스의 --determinism-check가 같은 (level 24, seed 7)로 10회 재조립해 index 구간 sha256과
     // 생존 집합을 대조한다. 10/10이 아니면 measure 이전 단계(filler 명명·정렬)가 흔들린 것이다.
-    const raw = execFileSync(process.execPath, [HARNESS, '--determinism-check'], { encoding: 'utf8' });
-    const det = JSON.parse(raw);
+    // 위 축소 실행과 같은 이유로 감싼다 — 하니스가 죽으면 스모크가 통째로 크래시해서 남은
+    // 단언이 실행되지 않고, 그 조기 종료가 `0 failed`로 보인다.
+    let det = null;
+    let detError = null;
+    try {
+      det = JSON.parse(execFileSync(process.execPath, [HARNESS, '--determinism-check'], { encoding: 'utf8' }));
+    } catch (err) {
+      detError = err;
+    }
     ok('gate-recall harness is deterministic for a fixed (level, seed)',
-      det.pass === true && det.identicalDigests === '10/10' && det.identicalSurvivorSets === '10/10',
-      `digests=${det.identicalDigests} survivors=${det.identicalSurvivorSets}`);
+      detError === null && det.pass === true && det.identicalDigests === '10/10' && det.identicalSurvivorSets === '10/10',
+      detError
+        ? `harness failed: ${`${detError.message} ${detError.stderr ?? ''}`.trim().split('\n').slice(0, 4).join(' | ')}`
+        : `digests=${det.identicalDigests} survivors=${det.identicalSurvivorSets}`);
   }
 
   // --- 6. head 길이 독립성 ------------------------------------------------
@@ -808,9 +833,12 @@ console.log('\n=== gate module + recall harness ===');
   // --- 8. 유료 0(PATH 트랩 실측) ------------------------------------------
   {
     // `meta.paidCalls: 0` 같은 상수 선언은 증거가 아니다. 트랩 파일의 존재 여부(파일시스템 실측)다.
-    ok('gate-recall harness trips no paid claude invocation',
-      reduced.meta.paidCallTrapTripped === false,
-      `tripped=${reduced.meta.paidCallTrapTripped}`);
+    // **`tripped === false`만 보면 안 된다** — 스텁 설치 코드를 지워도 false가 나오고, 스텁이
+    // 없는 false는 "안 불렀다"가 아니라 "재지 않았다"이다. 트랩이 실제로 깔려 있었다는 실측
+    // (meta.paidCallTrapInstalled = fs.existsSync(스텁))을 AND로 요구한다.
+    ok('gate-recall harness trips no paid claude invocation (with the trap actually installed)',
+      reduced.meta.paidCallTrapInstalled === true && reduced.meta.paidCallTrapTripped === false,
+      `installed=${reduced.meta.paidCallTrapInstalled} tripped=${reduced.meta.paidCallTrapTripped}`);
   }
 
   // --- 9. 동결 질문 세트의 자기 구성 규칙 ---------------------------------
@@ -853,11 +881,16 @@ console.log('\n=== gate module + recall harness ===');
     // recall 값 자체는 단언하지 않는다(계획서 표 11행: OS·tmpdir 의존). 대신 (a) 예산 안에서
     // 조립이 끝났는가(절단 0 / 줄 캡 0), (b) tail이 동결 형상과 같은가, (c) 살아남은 링크가 전부
     // **우리가 심은 것**인가 — (c)가 깨지면 생존 집계가 게이트가 아닌 무언가를 세고 있다는 뜻이다.
+    // **(d) 생존이 하나라도 있는가.** (c)는 빈 집합에서 공허참이다(`[].every() === true`) —
+    // 하니스의 생존 정규식을 계획서의 `- ` bullet 버전으로 되돌리면 전 샘플 생존 0 / recall 0이
+    // 되는데 (c)만으로는 그대로 통과한다(실측). 값이 아니라 존재를 걸면 자기충족이 아니면서
+    // 그 되돌리기를 즉시 잡는다.
     const bad = reduced.samples.filter((s) =>
-      s.truncatedBytes !== 0 || s.cappedLines !== 0 || s.tailBytes !== SHAPE.tailBytes || s.survivorsAllPlanted !== true);
+      s.truncatedBytes !== 0 || s.cappedLines !== 0 || s.tailBytes !== SHAPE.tailBytes
+      || s.survivorsAllPlanted !== true || !(s.survivorCount > 0));
     ok('reduced recall run stays inside the frozen budget and plants only known concepts',
       reduced.samples.length === 4 && bad.length === 0,
-      `n=${reduced.samples.length} bad=${JSON.stringify(bad.map((s) => ({ level: s.level, seed: s.seed, truncatedBytes: s.truncatedBytes, cappedLines: s.cappedLines, tailBytes: s.tailBytes, survivorsAllPlanted: s.survivorsAllPlanted })))}`);
+      `n=${reduced.samples.length} bad=${JSON.stringify(bad.map((s) => ({ level: s.level, seed: s.seed, truncatedBytes: s.truncatedBytes, cappedLines: s.cappedLines, tailBytes: s.tailBytes, survivorsAllPlanted: s.survivorsAllPlanted, survivorCount: s.survivorCount })))}`);
   }
 
   // --- 12·13. 사전등록서와 리포트 -----------------------------------------

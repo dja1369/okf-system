@@ -103,12 +103,24 @@ are therefore not used as grounds for any policy decision.** That rule holds eve
 violating delta is 1/16 of that level's seed-to-seed stdev, because the pre-registration fixed in
 advance that a small delta does not cancel a firing. The table is published; it decides nothing.
 
-**The shape is the finding, not the level.** Of the 20 questions, 8 survive at 0 across every level
-and 3 survive at 1.0 across every level — recall here is close to binary rather than a continuous
-dial. The gate fills round-robin, one line per category, so the `references` category, which holds 8
-of the answers, structurally drops 7 of them — independent of knowledge quality or question
-difficulty. And the only signal deciding which 1–2 lines take those slots is **alphabetical filename
-order**: the current gate contains zero references to cwd, recency, or the query.
+**The shape is the finding, not the level.** Of the 20 questions, 9 survive at 0 across every level
+(q03, q07, q10, q13–q17, q20) and 3 survive at 1.0 across every level (q02, q12, q18); the remaining
+8 land in between. Per cell (20 questions × 4 levels = 80) that is 48 zeros, 19 ones and 13
+intermediate values — recall is not binary. Three of the intermediate questions even rise as N grows
+(q06: 0 → 0.60 → 0.65 → 0.70), and that rise is the arithmetic source of R3. The gate fills
+round-robin, cycling over the categories until the budget runs dry rather than taking one line per
+category and stopping; a category ends up with 1–3 lines only because a single line is large —
+concept lines run 200–1,030 B against a 6,956 B index budget, so the whole take is exhausted at 8–11
+lines. `references` has exactly one line taken at every level (1 of 57 lines at N=200), so of the 8
+answers concentrated there at most one can survive. What takes those slots is decided by
+generation-time ordering and line length, not relevance, and at least five factors are confirmed:
+case-sensitive sorting of type section names, so `# Subdirectories` always precedes `# reference`
+(`lib/index-gen.mjs:242`); within a section, alphabetical order of the frontmatter **`title`** — not
+the filename, which is only a fallback when frontmatter parsing fails (`:315`); `status: deprecated`
+demoted inside its section (`:245`); category walk order by directory name (`:227`); and **line byte
+length**, since a next line that exceeds the remaining budget stops that category there
+(`lib/gate.mjs:122`), so description length changes survival. The current gate contains zero
+references to cwd, recency, or the query.
 
 **Nesting depth (axis A-2).** 25 concepts held fixed, contents identical, only the paths made deeper:
 
@@ -119,10 +131,12 @@ order**: the current gate contains zero references to cwd, recency, or the query
 | 3 levels | 26 | 0 |
 | 4 levels | 25 | 0 |
 
-Exactly one line is lost per level of depth — linear, with no collapse (-7.1% at 3 levels against
-flat). The cause is byte pressure, not a failed chain walk: each extra path segment lengthens every
-line until one is pushed out of the budget. (28 rather than 25 because `ensureBootstrap` plants the
-same seed concepts in every condition; it does not affect the comparison between conditions.)
+Each condition was measured **once** (n=1, no seed repetition), and in that single measurement one
+line was lost per level of depth. Four points cannot distinguish whether that decline is linear, and
+depths beyond 4 levels were not measured. Counted against the planted concepts, 3 levels is 25 → 23,
+**-8.0%**. The cause is byte pressure, not a failed chain walk: each extra path segment lengthens
+every line until one is pushed out of the budget. (28 rather than 25 because `ensureBootstrap` plants
+the same seed concepts in every condition; it does not affect the comparison between conditions.)
 
 ```sh
 node test/gate-recall.mjs     # 4 levels × 20 seeds, ~6 s, no paid calls

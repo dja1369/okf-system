@@ -91,13 +91,27 @@ politique.** Cette règle tient bien que le delta fautif ne vaille qu’un 1/16 
 graines de ce niveau, car le pré-enregistrement avait fixé d’avance qu’un petit delta n’annule pas un
 déclenchement. Le tableau est publié ; il ne décide de rien.
 
-**Le résultat, c’est la forme et non le niveau.** Sur les 20 questions, 8 survivent à 0 à tous les
-niveaux et 3 survivent à 1.0 à tous les niveaux — ici le recall est quasi binaire plutôt qu’un
-curseur continu. La porte remplit en round-robin, une ligne par catégorie ; la catégorie
-`references`, qui concentre 8 des réponses, en écarte donc **structurellement** 7 — indépendamment de
-la qualité du savoir ou de la difficulté de la question. Et le seul signal qui décide quelles 1–2
-lignes occupent ces places est **l’ordre alphabétique du nom de fichier** : la porte actuelle ne
-contient aucune référence au cwd, à la fraîcheur ou à la requête.
+**Le résultat, c’est la forme et non le niveau.** Sur les 20 questions, 9 survivent à 0 à tous les
+niveaux (q03, q07, q10, q13–q17, q20) et 3 survivent à 1.0 à tous les niveaux (q02, q12, q18) ; les 8
+restantes prennent des valeurs intermédiaires. Par cellule (20 questions × 4 niveaux = 80), cela fait
+48 zéros, 19 uns et 13 valeurs intermédiaires — le recall n’est pas binaire. Trois des questions
+intermédiaires montent même quand N grandit (q06 : 0 → 0,60 → 0,65 → 0,70), et cette montée est la
+source arithmétique de R3. La porte remplit en round-robin, mais elle **parcourt les catégories en
+boucle** jusqu’à épuisement du budget, au lieu de prendre une ligne par catégorie et de s’arrêter ; si
+une catégorie se limite à 1–3 lignes, c’est uniquement parce qu’une seule ligne est grosse — les
+lignes de concept font 200–1 030 o pour un budget d’index de 6 956 o, si bien que l’ensemble du
+prélèvement s’épuise en 8–11 lignes. Dans `references`, une seule ligne est prise à chaque niveau (1
+ligne sur 57 à N=200) : des 8 réponses concentrées là, une au plus survit. Ce qui occupe ces places
+n’est pas décidé par la pertinence mais par le tri au moment de la génération et par la longueur de
+ligne, et au moins cinq facteurs sont confirmés : le tri **sensible à la casse** des noms de section
+de type, si bien que `# Subdirectories` précède toujours `# reference` (`lib/index-gen.mjs:242`) ; à
+l’intérieur d’une section, l’ordre alphabétique du **`title`** du frontmatter (`:315`) — et non du
+nom de fichier, qui n’est qu’un repli en cas d’échec de l’analyse du frontmatter ; `status:
+deprecated` rétrogradé dans sa section (`:245`) ; l’ordre de parcours des catégories par nom de
+répertoire (`:227`) ; et la **longueur en octets de la ligne** — si la ligne suivante dépasse le
+budget restant, cette catégorie s’arrête là (`lib/gate.mjs:122`), la longueur de la description
+change donc la survie. La porte actuelle ne contient aucune référence au cwd, à la fraîcheur ou à la
+requête.
 
 **Profondeur d’imbrication (axe A-2).** 25 concepts fixés, contenus identiques, seuls les chemins
 rendus plus profonds :
@@ -109,8 +123,11 @@ rendus plus profonds :
 | 3 niveaux | 26 | 0 |
 | 4 niveaux | 25 | 0 |
 
-Exactement une ligne perdue par niveau de profondeur — linéaire, sans effondrement (-7,1 % à 3
-niveaux face au plat). La cause est la pression en octets, pas un déroulé de chaîne défaillant :
+Chaque condition a été mesurée **une seule fois** (n=1, sans répétition de graines), et dans cette
+mesure unique une ligne a été perdue par niveau de profondeur. Quatre points ne permettent pas de
+distinguer si cette baisse est linéaire, et les profondeurs au-delà de 4 niveaux n’ont pas été
+mesurées. Rapporté aux concepts plantés, 3 niveaux donnent 25 → 23, soit **-8,0 %**. La cause est la
+pression en octets, pas un déroulé de chaîne défaillant :
 chaque segment de chemin supplémentaire allonge toutes les lignes jusqu’à en pousser une hors du
 budget. (28 et non 25 parce qu’`ensureBootstrap` plante les mêmes concepts d’amorçage dans chaque
 condition ; cela n’affecte pas la comparaison entre conditions.)
