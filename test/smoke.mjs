@@ -1323,8 +1323,13 @@ if (process.platform !== 'win32' && process.getuid?.() !== 0) {
     reserved.every((f) => !readIfExists(path.join(home, f)).includes(STAMPED_BY))
     && reserved.filter((f) => f !== 'SCHEMA.md').every((f) => !readIfExists(path.join(home, f)).includes('generated:')),
     reserved.filter((f) => readIfExists(path.join(home, f)).includes(STAMPED_BY)).join(','));
+  // 버전 리터럴을 여기 또 박으면 릴리스마다 사람이 기억해야 하는 동기화 지점이 하나 더 는다.
+  // 단언의 의도는 "**플러그인 릴리스**가 생산자다"이지 특정 번호가 아니므로 매니페스트에서 읽는다.
+  const shippedVersion = JSON.parse(
+    fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8')).version;
   ok('success: the SCHEMA template keeps the plugin release as its producer, not the batch model',
-    readIfExists(path.join(home, 'SCHEMA.md')).includes('  by: "okf-system/0.2.1"'));
+    readIfExists(path.join(home, 'SCHEMA.md')).includes(`  by: "okf-system/${shippedVersion}"`),
+    shippedVersion);
   ok('success: stamping leaves lint clean and adds no warnings',
     runLint(home).errors.length === 0
     && runLint(home).warnings.filter((w) => w.file === 'decisions/fake-test-concept.md').length === 0,
@@ -3599,10 +3604,11 @@ console.log('\n=== plugin contract and docs ===');
   const pluginManifest = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
   ok('command docs never suggest bare /okf-status', !/\/okf-status\b/.test(batchCommand + configCommand));
   ok('status command explains idle-based collection (수집은 sweep 소관)', statusCommand.includes('sweep_min_idle_minutes'));
-  // 릴리스 통합: 이 브랜치는 릴리스 1(0.2.0 신뢰성)과 릴리스 2(0.2.1 OKF 스펙 v0.2 대응)를
-  // 하나의 PR로 싣는다. 별도 통합 커밋이 존재하지 않으므로 이 줄과 plugin.json은 같은
-  // 커밋에서만 함께 움직인다 — 개별 작업패키지는 둘 중 어느 것도 건드리지 않는다.
-  ok('behavior changes advance the distributable plugin version', pluginManifest.version === '0.2.1');
+  // **캐시는 버전 디렉토리로 갈린다**(`plugins/cache/<market>/okf/<version>/`). 동작을 바꾸고
+  // 버전을 그대로 두면 `/plugin` 갱신이 같은 번호를 보고 아무것도 내려받지 않아, 고친 코드가
+  // 영원히 사용자에게 닿지 않는다. 이 줄이 그 실수를 잡는 자리다.
+  // 0.2.2 = restructure 경로 검증 수정(문자열이 아니라 실제 rename 경로로 검증).
+  ok('behavior changes advance the distributable plugin version', pluginManifest.version === '0.2.2');
 
   const readmes = fs.readdirSync(PLUGIN_ROOT).filter((name) => /^README(?:\.[^.]+)?\.md$/.test(name));
   ok('all localized READMEs document the safe 9000-byte gate default', readmes.length === 8 && readmes.every((name) => {
@@ -5230,6 +5236,148 @@ function runRestructure(okfHome, mapping, extraArgs = []) {
   ok('--dry-run은 계획만 내고 파일을 건드리지 않는다',
     dry.status === 0 && dry.stdout.includes('→') && fs.existsSync(path.join(home, 'patterns', 'git-x-extra.md')),
     dry.stdout);
+
+  // --- 검증은 문자열이 아니라 **실제로 rename될 경로**에 대해 해야 한다 ---
+  // 아래 넷은 전부 "문자열은 규칙을 지키는데 파일시스템이 다른 곳을 가리키는" 입력이다.
+  // 매핑은 사람이나 모델이 쓰므로 이런 철자는 입력 분포 안에 있다.
+  const esc = bootstrapped('restructure-escape');
+  const E = (rel) => fs.writeFileSync(path.join(esc, rel),
+    `---\ntype: pattern\ntitle: "${path.basename(rel, '.md')}"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n본문\n`);
+  fs.mkdirSync(path.join(esc, 'patterns'), { recursive: true });
+  E('patterns/alpha.md'); E('patterns/beta.md');
+  commitAll(esc, 'seed');
+
+  // `./` 하나로 중복 판정을 우회하면 두 번째 rename이 첫 번째 concept를 덮어써 **영구 소실**된다.
+  const dotDup = runRestructure(esc, {
+    'patterns/alpha.md': 'patterns/g/c.md',
+    'patterns/beta.md': 'patterns/./g/c.md',
+  });
+  ok('`./` 철자로 중복 대상 검사를 우회할 수 없다',
+    dotDup.status === 4 && fs.existsSync(path.join(esc, 'patterns', 'alpha.md')), dotDup.stderr);
+
+  // macOS 기본 파일시스템은 대소문자를 구분하지 않는다 — 두 대상이 같은 파일이 된다.
+  const caseDup = runRestructure(esc, {
+    'patterns/alpha.md': 'patterns/g/Note.md',
+    'patterns/beta.md': 'patterns/g/note.md',
+  });
+  ok('대소문자만 다른 두 대상은 충돌로 거부한다',
+    caseDup.status === 4 && fs.existsSync(path.join(esc, 'patterns', 'alpha.md')), caseDup.stderr);
+
+  // `..`는 첫 조각 비교를 통과하면서 실제로는 gitignore된 디렉토리(raw/·.okf/)로 나간다.
+  // 거기로 옮겨지면 rollback(`clean -fd`, `-x` 없음)이 영원히 되돌리지 못한다.
+  const escape = runRestructure(esc, { 'patterns/alpha.md': 'patterns/../raw/alpha.md' });
+  ok('`..`로 택소노미 밖(gitignore 영역)으로 나갈 수 없다',
+    escape.status === 4 && fs.existsSync(path.join(esc, 'patterns', 'alpha.md'))
+    && !fs.existsSync(path.join(esc, 'raw', 'alpha.md')), escape.stderr);
+
+  // 같은 수법으로 다른 택소노미로 건너뛰면 lint W3가 뜨고 그 경고가 유료 repair로 흘러간다.
+  const crossVia = runRestructure(esc, { 'patterns/alpha.md': 'patterns/../decisions/alpha.md' });
+  ok('`..`로 택소노미 디렉토리를 갈아탈 수 없다',
+    crossVia.status === 4 && !fs.existsSync(path.join(esc, 'decisions', 'alpha.md')), crossVia.stderr);
+
+  // 정규식 메타문자가 든 이름. 이스케이프가 없으면 `|`는 대안 분기가 되어 무관한 산문까지
+  // 재작성하고, `.`는 와일드카드로 남아 **다른 concept의 링크를 조용히 갈아치운다**.
+  const meta = bootstrapped('restructure-meta');
+  fs.mkdirSync(path.join(meta, 'patterns'), { recursive: true });
+  const M = (rel, body) => fs.writeFileSync(path.join(meta, rel),
+    `---\ntype: pattern\ntitle: "${path.basename(rel, '.md')}"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n${body}\n`);
+  // `|`는 이스케이프가 없으면 **최상위 대안 분기**가 되어, 오른쪽 가지(`cd.md`)가 경계 단언도
+  // 없이 번들 전체의 무관한 산문에 걸린다. `.`도 이스케이프가 없으면 와일드카드로 남는다.
+  M('patterns/ci|cd.md', '본문');
+  M('patterns/a.b.md', '본문');
+  M('patterns/axb.md', '본문');
+  M('patterns/ref2.md', '옮길 것: [a](/patterns/ci|cd.md)\n'
+    + '무관한 산문: 배포는 cd.md 문서를 보라\n'
+    + '남의 것: [b](/patterns/axb.md)');
+  commitAll(meta, 'seed');
+  const metaRun = runRestructure(meta, {
+    'patterns/ci|cd.md': 'patterns/ops/cicd.md',
+    'patterns/a.b.md': 'patterns/ops/ab.md',
+  });
+  const ref2 = readIfExists(path.join(meta, 'patterns', 'ref2.md'));
+  ok('정규식 메타문자를 이스케이프한다(`|` 분기가 무관한 산문을 갈아치우지 않는다)',
+    metaRun.status === 0 && ref2.includes('배포는 cd.md 문서를 보라'), `${metaRun.stderr}\n${ref2}`);
+  ok('`.`을 와일드카드로 두지 않는다(다른 concept의 링크를 갈아치우지 않는다)',
+    metaRun.status === 0 && ref2.includes('[b](/patterns/axb.md)'), `${metaRun.stderr}\n${ref2}`);
+
+  // 깨진 링크는 lint에서 **경고(W1)**다. 에러만 보고 원복을 판단하면 이 도구가 방금 만든
+  // 죽은 링크를 그대로 커밋한다. 이동 대상이 아닌 concept를 가리키는 죽은 링크를 심어 두고,
+  // 재배치가 W1을 **늘리지 않는지**를 본다.
+  const w1 = bootstrapped('restructure-w1');
+  fs.mkdirSync(path.join(w1, 'patterns'), { recursive: true });
+  const Wl = (rel, body) => fs.writeFileSync(path.join(w1, rel),
+    `---\ntype: pattern\ntitle: "${path.basename(rel, '.md')}"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n${body}\n`);
+  Wl('patterns/keep.md', '이미 깨진 링크: [x](/patterns/gone.md)');
+  Wl('patterns/movable.md', '본문');
+  commitAll(w1, 'seed');
+  const w1Before = runLint(w1).warnings.filter((x) => x.rule === 'W1').length;
+  const w1Run = runRestructure(w1, { 'patterns/movable.md': 'patterns/sub/movable.md' });
+  const w1After = runLint(w1).warnings.filter((x) => x.rule === 'W1').length;
+  ok('기존에 있던 W1은 재배치를 막지 않는다(새로 늘지만 않으면 된다)',
+    w1Run.status === 0 && w1Before === 1 && w1After === 1, `${w1Run.stderr} ${w1Before}→${w1After}`);
+
+  // 상대 링크는 옮기면 가리키는 대상이 조용히 바뀌는데 lint W1은 `/`로 시작하지 않는 링크를
+  // 아예 검사하지 않는다. 고칠 수 없으니 **옮히기를 거부**해야 한다.
+  const rel = bootstrapped('restructure-relative');
+  fs.mkdirSync(path.join(rel, 'patterns'), { recursive: true });
+  fs.writeFileSync(path.join(rel, 'patterns', 'has-rel.md'),
+    '---\ntype: pattern\ntitle: "has-rel"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n[형제](./sibling.md)\n');
+  fs.writeFileSync(path.join(rel, 'patterns', 'sibling.md'),
+    '---\ntype: pattern\ntitle: "sibling"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n본문\n');
+  commitAll(rel, 'seed');
+  const relRun = runRestructure(rel, { 'patterns/has-rel.md': 'patterns/sub/has-rel.md' });
+  ok('상대 링크를 가진 concept는 옮기지 않고 시끄럽게 멈춘다',
+    relRun.status === 4 && relRun.stderr.includes('./sibling.md')
+    && fs.existsSync(path.join(rel, 'patterns', 'has-rel.md')), relRun.stderr);
+
+  // 비워진 하위 디렉토리를 남기면 부모 index가 빈 도메인 링크를 영원히 광고한다.
+  const prune = bootstrapped('restructure-prune');
+  fs.mkdirSync(path.join(prune, 'patterns', 'old'), { recursive: true });
+  fs.writeFileSync(path.join(prune, 'patterns', 'old', 'only.md'),
+    '---\ntype: pattern\ntitle: "only"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n본문\n');
+  regenerateIndex(prune);
+  commitAll(prune, 'seed');
+  const pruneRun = runRestructure(prune, { 'patterns/old/only.md': 'patterns/new/only.md' });
+  ok('비워진 하위 디렉토리는 index와 함께 정리된다',
+    pruneRun.status === 0 && !fs.existsSync(path.join(prune, 'patterns', 'old'))
+    && !readIfExists(path.join(prune, 'patterns', 'index.md')).includes('(old/index.md)'),
+    `${pruneRun.stderr}\n${readIfExists(path.join(prune, 'patterns', 'index.md'))}`);
+
+  // 락은 존중해야 한다 — 배치가 도는 중에 파일을 옮기면 배치의 원복이 이 이동을 삼킨다.
+  const locked = bootstrapped('restructure-locked');
+  fs.mkdirSync(path.join(locked, 'patterns'), { recursive: true });
+  fs.writeFileSync(path.join(locked, 'patterns', 'a.md'),
+    '---\ntype: pattern\ntitle: "a"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n본문\n');
+  commitAll(locked, 'seed');
+  const held = acquireLock(locked, 'test-holder');
+  const lockRun = runRestructure(locked, { 'patterns/a.md': 'patterns/sub/a.md' });
+  releaseLock(locked, held.token);
+  ok('다른 홀더가 락을 쥐고 있으면 아무것도 옮기지 않는다',
+    lockRun.status === 2 && fs.existsSync(path.join(locked, 'patterns', 'a.md')), lockRun.stderr);
+
+  // 심볼릭 링크된 디렉토리는 문자열 비교(`startsWith`)를 통과하면서 실제 rename은 번들 밖에
+  // 쓴다. 경로를 realpath로 펴야만 잡힌다.
+  const sym = bootstrapped('restructure-symlink');
+  const outside = sandbox('restructure-outside');
+  fs.mkdirSync(path.join(sym, 'patterns'), { recursive: true });
+  fs.writeFileSync(path.join(sym, 'patterns', 'a.md'),
+    '---\ntype: pattern\ntitle: "a"\ndescription: "설명"\ntimestamp: 2026-07-15\n---\n본문\n');
+  fs.symlinkSync(outside, path.join(sym, 'patterns', 'out'), 'dir');
+  commitAll(sym, 'seed');
+  const symRun = runRestructure(sym, { 'patterns/a.md': 'patterns/out/a.md' });
+  ok('심볼릭 링크를 통해 번들 밖으로 concept를 내보낼 수 없다',
+    symRun.status === 4 && fs.existsSync(path.join(sym, 'patterns', 'a.md'))
+    && !fs.existsSync(path.join(outside, 'a.md')), symRun.stderr);
+
+  // 택소노미 밖 디렉토리(`.okf/`·`raw/`)는 gitignore 대상이라, 거기로 옮겨진 파일은
+  // rollback(`clean -fd`, `-x` 없음)이 영원히 되돌리지 못한다. 첫 조각이 서로 같아서
+  // "택소노미를 바꿀 수 없다" 검사로는 안 걸린다 — 화이트리스트가 있어야 막힌다.
+  const opsDir = bootstrapped('restructure-ops');
+  const cfg = okfPaths(opsDir).config;
+  const cfgBefore = readIfExists(cfg);
+  const opsRun = runRestructure(opsDir, { '.okf/config.md': '.okf/gone.md' });
+  ok('gitignore된 운영 디렉토리의 파일은 옮길 수 없다(원복 불가 영역)',
+    opsRun.status === 4 && readIfExists(cfg) === cfgBefore && cfgBefore !== '', opsRun.stderr);
 }
 
 // ---------------------------------------------------------------------------

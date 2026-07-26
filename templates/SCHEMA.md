@@ -4,7 +4,7 @@ schema_version: 2
 title: OKF 번들 작성 규정
 description: 배치 에이전트가 준수해야 하는 절대 규칙과 택소노미
 generated:
-  by: "okf-system/0.2.1"
+  by: "okf-system/0.2.2"
   at: "2026-07-25"
 ---
 # 절대 규칙 (위반 시 lint가 커밋을 거부한다)
