@@ -70,6 +70,12 @@ commit, push, PR, destructive Git 명령은 실행하지 않았다.
 부수: `backupDirtyTree`·`localDateString`은 소비자가 둘이 되어 `lib/backup.mjs`·`lib/time.mjs`로
 옮겼다(batch.mjs의 "한 곳으로 통일한다" 주석이 이미 요구하던 바다).
 
+**배포 버전을 `0.2.2`로 올렸다.** 플러그인 캐시는 버전 디렉토리(`plugins/cache/<market>/okf/<ver>/`)로
+갈리므로, 동작을 바꾸고 번호를 그대로 두면 `/plugin` 갱신이 같은 번호를 보고 아무것도 내려받지
+않는다 — 고친 코드가 사용자에게 영원히 닿지 않는다. 이 실수는 기존 테스트 두 개
+(`behavior changes advance the distributable plugin version`, SCHEMA 템플릿의 `generated.by`)가
+바로 잡아냈다. 세 번째 지점이 되려던 SCHEMA 단언은 리터럴 대신 매니페스트에서 읽도록 바꿨다.
+
 **OKF 스펙 v0.2 대응 — 릴리스 1(`0.2.0` 신뢰성) + 릴리스 2(`0.2.1` 스펙 대응) 구현 완료.**
 계획서는 [`docs/0-2_develop_plan.md`](docs/0-2_develop_plan.md), 근거 조사는
 `docs/okf-v0.2-2026-07-25-*.md` 3종이다. 브랜치 `feature/okf-v0.2-conformance`.

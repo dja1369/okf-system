@@ -1323,8 +1323,13 @@ if (process.platform !== 'win32' && process.getuid?.() !== 0) {
     reserved.every((f) => !readIfExists(path.join(home, f)).includes(STAMPED_BY))
     && reserved.filter((f) => f !== 'SCHEMA.md').every((f) => !readIfExists(path.join(home, f)).includes('generated:')),
     reserved.filter((f) => readIfExists(path.join(home, f)).includes(STAMPED_BY)).join(','));
+  // 버전 리터럴을 여기 또 박으면 릴리스마다 사람이 기억해야 하는 동기화 지점이 하나 더 는다.
+  // 단언의 의도는 "**플러그인 릴리스**가 생산자다"이지 특정 번호가 아니므로 매니페스트에서 읽는다.
+  const shippedVersion = JSON.parse(
+    fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8')).version;
   ok('success: the SCHEMA template keeps the plugin release as its producer, not the batch model',
-    readIfExists(path.join(home, 'SCHEMA.md')).includes('  by: "okf-system/0.2.1"'));
+    readIfExists(path.join(home, 'SCHEMA.md')).includes(`  by: "okf-system/${shippedVersion}"`),
+    shippedVersion);
   ok('success: stamping leaves lint clean and adds no warnings',
     runLint(home).errors.length === 0
     && runLint(home).warnings.filter((w) => w.file === 'decisions/fake-test-concept.md').length === 0,
@@ -3599,10 +3604,11 @@ console.log('\n=== plugin contract and docs ===');
   const pluginManifest = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
   ok('command docs never suggest bare /okf-status', !/\/okf-status\b/.test(batchCommand + configCommand));
   ok('status command explains idle-based collection (수집은 sweep 소관)', statusCommand.includes('sweep_min_idle_minutes'));
-  // 릴리스 통합: 이 브랜치는 릴리스 1(0.2.0 신뢰성)과 릴리스 2(0.2.1 OKF 스펙 v0.2 대응)를
-  // 하나의 PR로 싣는다. 별도 통합 커밋이 존재하지 않으므로 이 줄과 plugin.json은 같은
-  // 커밋에서만 함께 움직인다 — 개별 작업패키지는 둘 중 어느 것도 건드리지 않는다.
-  ok('behavior changes advance the distributable plugin version', pluginManifest.version === '0.2.1');
+  // **캐시는 버전 디렉토리로 갈린다**(`plugins/cache/<market>/okf/<version>/`). 동작을 바꾸고
+  // 버전을 그대로 두면 `/plugin` 갱신이 같은 번호를 보고 아무것도 내려받지 않아, 고친 코드가
+  // 영원히 사용자에게 닿지 않는다. 이 줄이 그 실수를 잡는 자리다.
+  // 0.2.2 = restructure 경로 검증 수정(문자열이 아니라 실제 rename 경로로 검증).
+  ok('behavior changes advance the distributable plugin version', pluginManifest.version === '0.2.2');
 
   const readmes = fs.readdirSync(PLUGIN_ROOT).filter((name) => /^README(?:\.[^.]+)?\.md$/.test(name));
   ok('all localized READMEs document the safe 9000-byte gate default', readmes.length === 8 && readmes.every((name) => {
