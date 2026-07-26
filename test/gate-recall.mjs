@@ -22,6 +22,16 @@
 // `--perturb`는 **정답 concept의 frontmatter title 앞에만** 접두를 붙인다(파일명·경로·본문 불변).
 // E1 §4가 "슬롯을 title 정렬이 정한다"고 진단했으므로, 그 진단의 순수 검정이 된다 — 세 조건의
 // 레벨별 recall이 갈리지 않으면(R6) 진단이 반증된다.
+//
+// **E3(--e3)**: E2가 남긴 것을 닫는 회차다. **조건은 하나도 바꾸지 않는다** — 질문·레벨·섭동·
+// distractor·형상 전부 E2에서 승계하고(그래서 byLevel이 E2와 바이트 단위로 재현돼야 한다),
+// 늘어나는 것은 **계측**뿐이다.
+//   node test/gate-recall.mjs --e3 --perturb all
+// 게이트의 생존 조건은 정확히 `rank < taken`이다(rank = 카테고리 내 title 정렬 순위,
+// taken = 그 카테고리가 실제로 실은 줄 수). 그래서 recall은 (rank 벡터, taken 벡터)의 **완전한**
+// 함수이고, E2가 설명하지 않고 넘긴 "N이 커지는데 recall이 오른다"를 두 성분의 반사실 조합으로
+// 정확 분해할 수 있다(근사가 아니다). 분해 모형이 맞는지는 R8이 매 샘플 실측으로 검사한다.
+// 방향 판정은 E2의 `|Δ| ≤ 0.05`를 버리고 부호검정 + 분포무관 중앙값 신뢰구간으로 다시 세운다.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,7 +41,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ensureBootstrap } from '../lib/bootstrap.mjs';
 import { regenerateIndex } from '../lib/index-gen.mjs';
-import { buildContext, extractLatestLogSection } from '../lib/gate.mjs';
+import { buildContext, extractLatestLogSection, collectConceptLines } from '../lib/gate.mjs';
 import { okfPaths, SCAN_EXCLUDE_DIRS, NON_CONCEPT_BASENAMES } from '../lib/paths.mjs';
 import { readConfig } from '../lib/config.mjs';
 
@@ -55,7 +65,7 @@ function mulberry32(a) {
 
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const out = { levels: null, seeds: 20, outPath: null, determinismCheck: false, e2: false, perturb: null };
+  const out = { levels: null, seeds: 20, outPath: null, determinismCheck: false, e2: false, e3: false, perturb: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--levels') out.levels = argv[++i].split(',').map((s) => Number(s.trim()));
@@ -63,9 +73,11 @@ function parseArgs(argv) {
     else if (a === '--out') out.outPath = argv[++i];
     else if (a === '--determinism-check') out.determinismCheck = true;
     else if (a === '--e2') out.e2 = true;
+    else if (a === '--e3') out.e3 = true;
     else if (a === '--perturb') out.perturb = argv[++i];
     else throw new Error(`unknown flag: ${a}`);
   }
+  if (out.e2 && out.e3) throw new Error('--e2 와 --e3 는 함께 쓸 수 없다 — 어느 회차의 픽스처를 읽을지가 갈린다');
   return out;
 }
 
@@ -76,13 +88,19 @@ function readJson(p) {
 // 인자를 **모듈 로드 시점에** 한 번 판독한다 — 어느 픽스처 세트를 읽을지가 여기서 갈리기 때문이다.
 // E1 경로(플래그 없음)에서는 아래 세 상수가 E1과 정확히 같은 파일을 가리킨다.
 const ARGS = parseArgs(process.argv.slice(2));
-const SHAPE_REL = ARGS.e2
+// E3는 **형상과 distractor를 E2에서 그대로 승계한다**(파일을 복사하지 않고 같은 파일을 읽는다).
+// 조건이 한 바이트라도 다르면 "E2 재현"이 회귀 가드로 성립하지 않는다. 승계 대상 두 파일은
+// E2 사전등록 커밋에 이미 들어 있으므로 픽스처 선행성 규율(스모크 §14)도 그대로 만족한다.
+const SHAPE_REL = (ARGS.e2 || ARGS.e3)
   ? 'test/fixtures/bench/gate-recall/live-shape-2026-07-27-e2.json'
   : 'test/fixtures/bench/gate-recall/live-shape-2026-07-26.json';
-const QUESTIONS_REL = ARGS.e2
-  ? 'test/fixtures/bench/gate-recall-e2.json'
-  : 'test/fixtures/bench/gate-recall.json';
-const DISTRACTORS_REL = ARGS.e2 ? 'distractors-e2.json' : 'distractors.json';
+const QUESTIONS_REL = ARGS.e3
+  ? 'test/fixtures/bench/gate-recall-e3.json'
+  : ARGS.e2
+    ? 'test/fixtures/bench/gate-recall-e2.json'
+    : 'test/fixtures/bench/gate-recall.json';
+const DISTRACTORS_REL = (ARGS.e2 || ARGS.e3) ? 'distractors-e2.json' : 'distractors.json';
+const ROUND = ARGS.e3 ? 'E3' : ARGS.e2 ? 'E2' : 'E1';
 
 const SHAPE = readJson(path.join(PLUGIN_ROOT, SHAPE_REL));
 const QUESTIONS_FILE = readJson(path.join(PLUGIN_ROOT, QUESTIONS_REL));
@@ -503,6 +521,134 @@ function stdev(xs) {
   return Math.sqrt(xs.reduce((s, x) => s + (x - m) ** 2, 0) / (xs.length - 1));
 }
 
+// ---------------------------------------------------------------------------
+// E3 계측 — recall을 (rank, taken) 두 성분으로 **정확 분해**하기 위한 관측.
+//
+// buildInjectedIndex는 카테고리마다 `collectConceptLines(home, dir)`의 **앞에서부터** taken개를
+// 싣는다. 그러므로 정답 concept의 생존 조건은 정확히 `rank < taken`이다 — 근사가 아니라 항등이다.
+// 이 항등이 실제로 성립하는지는 R8이 매 샘플에서 실측 생존과 대조해 검사한다(어긋나면 분해
+// 분석 전체가 무효다).
+//
+// **readCategoryLines가 아니라 collectConceptLines를 쓴다.** 전자는 하위 디렉토리를 펼치지 않아
+// `decisions/partner-settlement/emitter-wiring.md` 같은 중첩 concept의 rank를 통째로 놓친다
+// (동결 질문 20개 중 다수가 중첩이다).
+const QUESTION_DIRS = QUESTIONS.map((q) => q.answerConcept.split('/')[0]);
+const LINK_OF_LINE = (l) => LINK_RE.exec(l)?.[1] ?? null;
+
+function measureSlots(home, stats, survivors) {
+  const takenByDir = {};
+  const totalByDir = {};
+  for (const c of stats.cats ?? []) { takenByDir[c.dir] = c.taken; totalByDir[c.dir] = c.total; }
+  const cache = new Map();
+  const ranks = [];
+  const modelMismatches = [];
+  QUESTIONS.forEach((q, i) => {
+    const dir = QUESTION_DIRS[i];
+    if (!cache.has(dir)) cache.set(dir, collectConceptLines(home, dir).map(LINK_OF_LINE));
+    const rank = cache.get(dir).indexOf(`/${q.answerConcept}`);
+    ranks.push(rank);
+    const predicted = rank >= 0 && rank < (takenByDir[dir] ?? 0);
+    if (predicted !== survivors.has(`/${q.answerConcept}`)) {
+      modelMismatches.push({ id: q.id, dir, rank, taken: takenByDir[dir] ?? 0, predicted, observed: survivors.has(`/${q.answerConcept}`) });
+    }
+  });
+  // 실린 줄들의 평균 바이트. `taken`이 레벨에 따라 왜 움직이는지를 **추정이 아니라 관측**으로
+  // 말하기 위한 값이다 — 예산은 고정이므로 같은 예산에 더 많은 줄이 들어갔다면 줄이 짧아진 것이다.
+  const allTakenLineBytes = (stats.cats ?? []).flatMap((c) => c.lineBytes);
+  return {
+    ranks, takenByDir, totalByDir, modelMismatches,
+    rankMissing: ranks.filter((r) => r < 0).length,
+    takenLineBytesMean: allTakenLineBytes.length ? allTakenLineBytes.reduce((s, x) => s + x, 0) / allTakenLineBytes.length : null,
+  };
+}
+
+// 반사실 recall. 어느 rank 벡터와 어느 taken 벡터를 짝지어도 계산된다 — 그래서 성분 분해가 된다.
+function recallFrom(ranks, takenByDir) {
+  let hit = 0;
+  for (let i = 0; i < ranks.length; i++) {
+    if (ranks[i] >= 0 && ranks[i] < (takenByDir[QUESTION_DIRS[i]] ?? 0)) hit += 1;
+  }
+  return hit / ranks.length;
+}
+
+// ---------------------------------------------------------------------------
+// 부호검정과 분포무관 중앙값 신뢰구간. 외부 의존 0(CI에 npm install이 없다).
+//
+// **왜 이걸로 바꾸는가**: E2의 P3는 "|평균Δ| ≤ 0.05면 평탄"이었는데, 그 정의는 20개 시드 전부에서
+// 같은 방향으로 0.0125씩 움직이는 것(= 명백한 상승)과 방향 없이 흔들리는 것(= 진짜 평탄)을
+// 구별하지 못한다. 방향은 **부호의 일관성**이 정하고, 크기는 **구간추정**이 정한다. 두 질문을
+// 한 임계에 욱여넣은 것이 E2 결함의 정체다.
+function choose(n, k) {
+  let r = 1;
+  for (let i = 1; i <= k; i++) r = (r * (n - k + i)) / i;
+  return r;
+}
+// P(X <= k), X ~ Bin(n, 0.5). n=20이면 2^20이라 배정도에서 정확하다.
+function binomCdfHalf(k, n) {
+  if (k < 0) return 0;
+  if (k >= n) return 1;
+  let s = 0;
+  for (let i = 0; i <= k; i++) s += choose(n, i);
+  return s / 2 ** n;
+}
+
+// **측정 격자에 맞춘 양자화.** recall은 항상 `맞은문항수 / QUESTIONS.length`이므로 두 recall의
+// 차이는 1/N의 **정확한 배수**다. 그런데 배정도에서 `0.25 - 0.20 = 0.04999999999999999`이고
+// `0.20 - 0.15 = 0.05000000000000002`다 — 같은 크기(문항 1개 이동)가 표현 오차만으로 등가한계
+// 0.05의 반대편에 떨어진다. 실제로 이 하니스에서 200→400의 `none`과 `back`이 **동일한 CI인데
+// 판정이 갈렸다**(flat vs indeterminate). 임계를 느슨하게 하는 것이 아니라, 측정이 애초에
+// 이산이라는 사실을 산술에 반영하는 것이다.
+const RECALL_QUANTUM = 1 / QUESTIONS.length;
+function quantize(d) { return Math.round(d / RECALL_QUANTUM) * RECALL_QUANTUM; }
+
+function signTest(deltas) {
+  const nPlus = deltas.filter((d) => d > 0).length;
+  const nMinus = deltas.filter((d) => d < 0).length;
+  const m = nPlus + nMinus;
+  // 양측 정확검정. 동점(Δ=0)은 관례대로 제외한다 — 방향에 대한 정보가 없기 때문이다.
+  const p = m === 0 ? 1 : Math.min(1, 2 * binomCdfHalf(Math.min(nPlus, nMinus), m));
+  return { nPlus, nMinus, nTies: deltas.length - m, p };
+}
+
+// 부호검정을 뒤집어 얻는 중앙값 신뢰구간. 순서통계량 [d_(k), d_(n+1-k)]이고, k는
+// P(X <= k-1) <= alpha/2 를 만족하는 최대값이다. 정규근사도 t분포표도 필요 없다.
+function medianCI(deltas, alpha) {
+  const n = deltas.length;
+  const s = [...deltas].sort((a, b) => a - b);
+  let k = 0;
+  for (let cand = 1; cand <= Math.floor(n / 2); cand++) {
+    if (binomCdfHalf(cand - 1, n) <= alpha / 2) k = cand; else break;
+  }
+  if (k === 0) return { low: s[0], high: s[n - 1], coverage: null, orderStat: null, exact: false };
+  return { low: s[k - 1], high: s[n - k], coverage: 1 - 2 * binomCdfHalf(k - 1, n), orderStat: k, exact: true };
+}
+
+// 방향과 크기를 **두 값으로 나눠** 낸다. 네 방향 판정은 상호배타적이고 전수적이다.
+// legacy 필드는 E2의 옛 기준을 같은 데이터에 그대로 적용한 결과다 — 새 기준이 무엇을 바꾸는지
+// 리포트가 주장이 아니라 나란한 두 값으로 보이게 하려고 남긴다.
+function trendVerdict(deltas, eq, alpha) {
+  const st = signTest(deltas);
+  const ci = medianCI(deltas, alpha);
+  const m = mean(deltas);
+  let direction;
+  if (st.p < alpha && st.nPlus > st.nMinus) direction = 'rising';
+  else if (st.p < alpha && st.nMinus > st.nPlus) direction = 'falling';
+  else if (ci.low >= -eq && ci.high <= eq) direction = 'flat';
+  else direction = 'indeterminate';
+  return {
+    ...st,
+    meanDelta: m,
+    medianCI: ci,
+    direction,
+    // 방향과 별개의 질문: 그 움직임이 등가한계를 **완전히** 벗어나는가.
+    substantive: ci.low > eq || ci.high < -eq,
+    legacyP3: {
+      rule: '|meanDelta| <= equivalenceBound → flat (E2 §3이 결함으로 기록한 기준)',
+      verdict: Math.abs(m) <= eq ? 'flat' : 'not-flat',
+    },
+  };
+}
+
 function runSample(root, level, seed, perturb = { id: 'none', prefix: '' }) {
   const built = buildBundle(root, level, seed, perturb);
   const { text, stats, probe, latestLog, injectMaxBytes, injectMaxLines } = measure(built.home);
@@ -510,6 +656,8 @@ function runSample(root, level, seed, perturb = { id: 'none', prefix: '' }) {
   const planSurvivors = extractSurvivors(text, PLAN_LINK_RE);
   const hit = QUESTIONS.filter((q) => survivors.has(`/${q.answerConcept}`)).map((q) => q.id);
   const maxFillerTitleDuplicate = Math.max(0, ...Object.values(built.fillerTitleStats).map((s) => s.maxDuplicate));
+  // **번들을 지우기 전에** 잰다 — runSample의 소비자가 측정 직후 home을 rmSync한다.
+  const slots = measureSlots(built.home, stats, survivors);
   return {
     home: built.home,
     planted: built.planted,
@@ -541,6 +689,8 @@ function runSample(root, level, seed, perturb = { id: 'none', prefix: '' }) {
       survivorsAllPlanted: [...survivors].every((rel) => built.planted.has(rel)),
       fillerTitleStats: built.fillerTitleStats,
       maxFillerTitleDuplicate,
+      // E3 계측. 배열 순서는 QUESTIONS 순서다(질문 dir은 픽스처에서 유도되므로 중복 저장하지 않는다).
+      slots,
     },
   };
 }
@@ -618,6 +768,8 @@ function main() {
         const rows = samples.filter((s) => s.perturb === perturb.id && s.level === level);
         const rs = rows.map((s) => s.recall);
         const cwdRs = rows.map((s) => s.hitIds.filter((id) => cwdIds.has(id)).length / cwdIds.size);
+        // E3 해석용 중간변수. recall = f(rank, taken)이므로 이 둘의 레벨별 이동이 곧 설명이다.
+        const answerRanks = rows.flatMap((s) => s.slots.ranks.filter((r) => r >= 0));
         byLevel.push({
           perturb: perturb.id,
           level,
@@ -629,6 +781,13 @@ function main() {
           cwdIndependentRecallMean: mean(cwdRs),
           cwdIndependentRecallStdev: stdev(cwdRs),
           cwdIndependentN: cwdIds.size,
+          gateTakenMean: mean(rows.map((s) => s.taken)),
+          gateTotalMean: mean(rows.map((s) => s.total)),
+          takenLineBytesMean: mean(rows.map((s) => s.slots.takenLineBytesMean)),
+          // 카테고리가 통째로 소진되면 생략 마커 비용이 환급된다(lib/gate.mjs:127-129).
+          // N=24처럼 후보가 적을 때 taken이 커지는 이유를 이 값이 직접 보인다.
+          fullyExhaustedCategoriesMean: mean(rows.map((s) => Object.keys(s.slots.takenByDir).filter((d) => s.slots.takenByDir[d] === s.slots.totalByDir[d]).length)),
+          answerRankMean: answerRanks.length ? mean(answerRanks) : null,
         });
       }
     }
@@ -680,6 +839,103 @@ function main() {
     const dupSamples = samples.filter((s) => s.maxFillerTitleDuplicate > 1);
     const worstDup = dupSamples.reduce((a, s) => (a === null || s.maxFillerTitleDuplicate > a.maxFillerTitleDuplicate ? s : a), null);
 
+    // -----------------------------------------------------------------------
+    // E3 — 추세 판정 + (rank, taken) 정확 분해.
+    //
+    // 임계는 **픽스처가 정한다**(사전등록 커밋에 데이터로 박혀 있다). E1/E2 픽스처에는 이 블록이
+    // 없으므로 그 경로에서는 analysis가 통째로 null이 되고 R3a/R3b/R8/R9는 계산하지 않는다 —
+    // 재지 않은 것을 false로 적으면 잰 것처럼 보인다.
+    const ANALYSIS = QUESTIONS_FILE.analysis ?? null;
+    const byKey = new Map(samples.map((s) => [`${s.perturb}|${s.level}|${s.seed}`, s]));
+    const adjacentPairs = levels.slice(1).map((lv, i) => [levels[i], lv]);
+
+    let trends = null;
+    let decomposition = null;
+    let modelCheck = null;
+    let integrity = null;
+    if (ANALYSIS) {
+      const EQ = ANALYSIS.equivalenceBound;
+      const ALPHA = ANALYSIS.signTestAlpha;
+      trends = [];
+      decomposition = [];
+      for (const perturb of perturbations) {
+        for (const [n1, n2] of adjacentPairs) {
+          const deltas = [];
+          const rankEffects = [];
+          const takenEffects = [];
+          const interactions = [];
+          for (let seed = 1; seed <= args.seeds; seed++) {
+            const s1 = byKey.get(`${perturb.id}|${n1}|${seed}`);
+            const s2 = byKey.get(`${perturb.id}|${n2}|${seed}`);
+            if (!s1 || !s2) continue;
+            deltas.push(quantize(s2.recall - s1.recall));
+            // 반사실 두 개. recall이 (rank, taken)의 완전한 함수라서 이 분해에 잔차가 없다 —
+            // 남는 것은 상호작용항뿐이고 그것도 항등식으로 정확히 떨어진다.
+            const a1 = recallFrom(s1.slots.ranks, s1.slots.takenByDir);
+            const a2 = recallFrom(s2.slots.ranks, s2.slots.takenByDir);
+            const rankOnly = recallFrom(s2.slots.ranks, s1.slots.takenByDir);
+            const takenOnly = recallFrom(s1.slots.ranks, s2.slots.takenByDir);
+            // 반사실 recall도 같은 격자 위의 값이므로 같은 양자화를 건다.
+            const re = quantize(rankOnly - a1);
+            const te = quantize(takenOnly - a1);
+            rankEffects.push(re);
+            takenEffects.push(te);
+            interactions.push(quantize(quantize(a2 - a1) - re - te));
+          }
+          trends.push({ perturb: perturb.id, from: n1, to: n2, n: deltas.length, ...trendVerdict(deltas, EQ, ALPHA) });
+          decomposition.push({
+            perturb: perturb.id, from: n1, to: n2, n: rankEffects.length,
+            observedDelta: mean(deltas),
+            rankEffect: mean(rankEffects),
+            takenEffect: mean(takenEffects),
+            interaction: mean(interactions),
+            // 항등식 검증: 세 성분의 합이 관측 Δ와 같아야 한다. 어긋나면 분해 코드가 틀린 것이다.
+            residual: mean(deltas) - (mean(rankEffects) + mean(takenEffects) + mean(interactions)),
+          });
+        }
+      }
+
+      // R8 — 분해 모형(`rank < taken`)이 실제 생존과 일치하는가. 매 샘플 × 20문항 실측이다.
+      const mismatchSamples = samples.filter((s) => s.slots.modelMismatches.length > 0);
+      const recallMismatch = samples.filter((s) => Math.abs(recallFrom(s.slots.ranks, s.slots.takenByDir) - s.recall) > 1e-12);
+      const residualMax = Math.max(0, ...decomposition.map((d) => Math.abs(d.residual)));
+      modelCheck = {
+        samplesWithMismatch: mismatchSamples.length,
+        totalSamples: samples.length,
+        totalQuestionChecks: samples.length * QUESTIONS.length,
+        mismatchExamples: mismatchSamples.slice(0, 5).map((s) => ({ level: s.level, seed: s.seed, perturb: s.perturb, mismatches: s.slots.modelMismatches })),
+        recallReconstructionMismatches: recallMismatch.length,
+        decompositionResidualMax: residualMax,
+      };
+
+      // R3a — 원래 R3이 잡으려던 것("하니스 결함") 자체를 직접 검사한다. 단조 감소는 하니스
+      // 결함의 지표가 아니었다(E1·E2 연속 발화가 그 증거다) — 무결성은 무결성으로 잰다.
+      const unplanted = samples.filter((s) => !s.survivorsAllPlanted);
+      const rankMissing = samples.filter((s) => s.slots.rankMissing > 0);
+      const wrongComposition = samples.filter((s) => QUESTIONS.length + s.seedCount + s.fillerCount !== s.level);
+      const totalRegressions = [];
+      for (const perturb of perturbations) {
+        const seq = byLevel.filter((b) => b.perturb === perturb.id);
+        for (let i = 1; i < seq.length; i++) {
+          if (seq[i].gateTotalMean < seq[i - 1].gateTotalMean) {
+            totalRegressions.push({ perturb: perturb.id, from: seq[i - 1].level, to: seq[i].level, means: [seq[i - 1].gateTotalMean, seq[i].gateTotalMean] });
+          }
+        }
+      }
+      integrity = {
+        samplesWithUnplantedSurvivor: unplanted.length,
+        samplesWithMissingAnswerRank: rankMissing.length,
+        samplesWithWrongComposition: wrongComposition.length,
+        indexCandidateCountRegressions: totalRegressions,
+      };
+    }
+
+    const risingPairs = (trends ?? []).filter((t) => t.direction === 'rising');
+    const risingWithoutTakenEffect = risingPairs
+      .map((t) => ({ t, d: decomposition.find((x) => x.perturb === t.perturb && x.from === t.from && x.to === t.to) }))
+      .filter(({ d }) => d && d.takenEffect <= 0)
+      .map(({ t, d }) => ({ perturb: t.perturb, from: t.from, to: t.to, takenEffect: d.takenEffect, rankEffect: d.rankEffect }));
+
     const refutation = {
       R1: { fired: at(50) !== null && at(50) >= 0.90, basis: { 'recall(50)': at(50), threshold: 0.90 }, meaning: '라우팅은 병목이 아니다 → I2를 v0.3에서도 착수하지 않는다' },
       R2: { fired: at(24) !== null && at(24) < 0.60, basis: { 'recall(24)': at(24), threshold: 0.60 }, meaning: '실사용 규모에서 이미 실패 중' },
@@ -716,6 +972,44 @@ function main() {
         },
         meaning: 'filler title이 중복 생성됐다 — 중복은 정렬상 인접해 한 카테고리의 두 슬롯을 같은 title 두 벌이 먹는다(실번들에 없는 인공물)',
       },
+      // --- E3 신규. E1/E2 픽스처에는 analysis 블록이 없으므로 그 경로에서는 전부 null이다. ---
+      R3a: {
+        fired: integrity
+          ? integrity.samplesWithUnplantedSurvivor > 0 || integrity.samplesWithMissingAnswerRank > 0
+            || integrity.samplesWithWrongComposition > 0 || integrity.indexCandidateCountRegressions.length > 0
+          : null,
+        computable: integrity !== null,
+        basis: integrity ?? { notComputableBecause: '이 픽스처에는 analysis 블록이 없다(E1·E2 경로)' },
+        meaning: '하니스 무결성 위반 — 심지 않은 concept가 생존하거나, 정답이 카테고리 목록에서 사라지거나, 레벨 구성이 어긋나거나, 후보 concept 수가 레벨과 함께 줄었다. 이것이 옛 R3이 잡으려던 것이다',
+      },
+      R3b: {
+        fired: trends ? risingPairs.some((t) => t.substantive) : null,
+        computable: trends !== null,
+        basis: {
+          rule: '인접 레벨 쌍의 방향이 rising이고 동시에 substantive(중앙값 CI가 등가한계 밖에 완전히 놓임)일 때만 발화',
+          equivalenceBound: ANALYSIS?.equivalenceBound ?? null,
+          risingPairs: risingPairs.map((t) => ({ perturb: t.perturb, from: t.from, to: t.to, meanDelta: t.meanDelta, medianCI: t.medianCI, substantive: t.substantive })),
+        },
+        meaning: '설명 불가능한 크기의 상승 — N을 늘렸는데 recall이 등가한계를 넘어 오르면 그건 게이트의 성질이 아니라 하니스 결함이다',
+      },
+      R8: {
+        fired: modelCheck
+          ? modelCheck.samplesWithMismatch > 0 || modelCheck.recallReconstructionMismatches > 0 || modelCheck.decompositionResidualMax > 1e-12
+          : null,
+        computable: modelCheck !== null,
+        basis: modelCheck ?? { notComputableBecause: '이 픽스처에는 analysis 블록이 없다(E1·E2 경로)' },
+        meaning: '생존 조건 `rank < taken`이 실측과 어긋난다 → (rank, taken) 분해 전체가 무효다. E3의 설명은 이 항등식 위에만 서 있다',
+      },
+      R9: {
+        fired: trends ? (risingPairs.length > 0 ? risingWithoutTakenEffect.length > 0 : null) : null,
+        computable: trends !== null && risingPairs.length > 0,
+        basis: {
+          risingPairCount: risingPairs.length,
+          offenders: risingWithoutTakenEffect,
+          ...(trends && risingPairs.length === 0 ? { notComputableBecause: 'rising으로 판정된 인접 쌍이 없다 — 설명할 상승 자체가 없으므로 H3은 검정 대상이 아니다' } : {}),
+        },
+        meaning: 'H3(상승은 taken 성분이 만든다) 반증 — 오르는 구간인데 taken 성분이 0 이하라면 상승의 원인은 다른 데 있다',
+      },
     };
 
     const pluginVersion = readJson(path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json')).version;
@@ -731,7 +1025,7 @@ function main() {
         commit,
         levels,
         seeds: args.seeds,
-        round: args.e2 ? 'E2' : 'E1',
+        round: ROUND,
         perturbations: perturbations.map((p) => ({ id: p.id, prefix: p.prefix })),
         questionSet: QUESTIONS_REL,
         questionSetFrozenAt: QUESTIONS_FILE.frozenAt,
@@ -756,19 +1050,44 @@ function main() {
       calibration,
       refutation,
       byLevel,
+      // E3. analysis 블록이 없는 픽스처(E1·E2)에서는 null이다 — 빈 배열로 적으면 "쟀는데 없었다"로
+      // 읽히지만 실제로는 재지 않은 것이다.
+      analysisConfig: ANALYSIS
+        ? {
+          ...ANALYSIS,
+          adjacentPairsRun: adjacentPairs,
+          adjacentPairsMatchPreregistered: JSON.stringify(adjacentPairs) === JSON.stringify(ANALYSIS.adjacentPairs),
+          recallQuantum: RECALL_QUANTUM,
+          quantizationNote: 'recall = 맞은문항수/문항수 이므로 delta는 1/문항수의 정확한 배수다. 배정도 표현 오차(0.25-0.20=0.04999…, 0.20-0.15=0.05000…2)가 등가한계 판정을 가르는 것을 막으려고 델타와 반사실 효과를 이 격자에 맞춰 반올림한다.',
+          equivalenceBoundInclusive: true,
+        }
+        : null,
+      trends,
+      decomposition,
       perQuestion,
       crossChecks,
       samples,
     };
 
     const iso = startedAt.toISOString().replace(/[:.]/g, '-');
-    const outPath = args.outPath ?? path.join(PLUGIN_ROOT, 'docs', 'benchmarks', 'raw', `gate-recall-${iso}.json`);
+    const outPath = args.outPath ?? path.join(PLUGIN_ROOT, 'docs', 'benchmarks', 'raw', `gate-recall-${ROUND === 'E1' ? '' : `${ROUND.toLowerCase()}-`}${iso}.json`);
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
     fs.writeFileSync(outPath, `${JSON.stringify(out, null, 2)}\n`);
 
     for (const b of byLevel) {
       const tag = perturbations.length > 1 ? `[${b.perturb}] ` : '';
       console.log(`${tag}N=${b.level}  recall ${b.recallMean.toFixed(3)} ± ${b.recallStdev.toFixed(3)}  (n=${b.n}, ${b.recallMin.toFixed(2)}–${b.recallMax.toFixed(2)})  cwdIndep ${b.cwdIndependentRecallMean.toFixed(3)}`);
+    }
+    if (trends) {
+      console.log('--- 추세 판정 (부호검정 + 중앙값 CI) ---');
+      for (const t of trends) {
+        console.log(`[${t.perturb}] ${t.from}→${t.to}  ${t.direction}${t.substantive ? ' (substantive)' : ''}  meanΔ=${t.meanDelta.toFixed(4)}  n+/n-=${t.nPlus}/${t.nMinus}  p=${t.p.toFixed(4)}  CI=[${t.medianCI.low.toFixed(3)}, ${t.medianCI.high.toFixed(3)}]  구기준=${t.legacyP3.verdict}`);
+      }
+      console.log('--- (rank, taken) 분해 ---');
+      for (const d of decomposition) {
+        console.log(`[${d.perturb}] ${d.from}→${d.to}  관측Δ=${d.observedDelta.toFixed(4)} = rank ${d.rankEffect.toFixed(4)} + taken ${d.takenEffect.toFixed(4)} + 상호작용 ${d.interaction.toFixed(4)}  (잔차 ${d.residual.toExponential(1)})`);
+      }
+      console.log(`모형 일치(rank<taken): 불일치 샘플 ${modelCheck.samplesWithMismatch}/${modelCheck.totalSamples}, 문항검사 ${modelCheck.totalQuestionChecks}건, recall 재구성 불일치 ${modelCheck.recallReconstructionMismatches}`);
     }
     console.log(`calibration mismatches: ${calibration.mismatches.length}`);
     console.log(`R1..R7 fired: ${Object.entries(refutation).filter(([, v]) => v.fired === true).map(([k]) => k).join(',') || 'none'}${refutation.R6.fired === null ? '  (R6 계산 불가 — 조건 1개)' : ''}`);

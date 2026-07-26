@@ -983,6 +983,95 @@ console.log('\n=== gate module + recall harness ===');
     ok(`E2 fixtures enter git no later than the E2 report${publishedReports.length ? '' : ' [리포트 미발행 — 픽스처 3종의 실재만 검사]'}`,
       missingFiles.length === 0 && violations.length === 0,
       `missing=${JSON.stringify(missingFiles)} fixtureCommits=${JSON.stringify(fixtureCommits)} reports=${JSON.stringify(reportCommits)} violations=${JSON.stringify(violations)}`);
+
+    // --- 15. E3 픽스처 선행성 ---------------------------------------------
+    // E2와 **같은 규율을 같은 기계로** 건다. E3는 형상·distractor를 새로 만들지 않고 E2의 것을
+    // 그대로 읽으므로, 검사 대상은 신규 질문 픽스처 1개 + 승계하는 E2 픽스처 2개다. 승계분까지
+    // 함께 거는 이유는, E3가 실제로 읽는 재료 전부가 리포트보다 앞서야 규율이 성립하기 때문이다
+    // (신규 파일만 걸면 승계분을 리포트 커밋에서 바꿔치기해도 초록이다).
+    const E3_FIXTURES = [
+      'test/fixtures/bench/gate-recall-e3.json',
+      'test/fixtures/bench/gate-recall/live-shape-2026-07-27-e2.json',
+      'test/fixtures/bench/gate-recall/distractors-e2.json',
+    ];
+    const missingE3 = E3_FIXTURES.filter((rel) => !fs.existsSync(path.join(PLUGIN_ROOT, rel)));
+    const reportE3 = fs.readdirSync(BENCH_DOCS).filter((f) => /^gate-recall-.*e3\.md$/.test(f));
+    const fixtureCommitsE3 = Object.fromEntries(E3_FIXTURES.map((rel) => [rel, firstAddCommit(rel)]));
+    const reportCommitsE3 = Object.fromEntries(reportE3.map((f) => [f, firstAddCommit(`docs/benchmarks/${f}`)]));
+    const publishedE3 = Object.entries(reportCommitsE3).filter(([, c]) => c !== null);
+    const violationsE3 = [];
+    for (const [rel, fc] of Object.entries(fixtureCommitsE3)) {
+      for (const [report, rc] of publishedE3) {
+        if (fc === null || !strictlyBefore(fc, rc)) violationsE3.push(`${rel}(${fc ?? '미커밋'}) !< ${report}(${rc})`);
+      }
+    }
+    ok(`E3 fixtures enter git no later than the E3 report${publishedE3.length ? '' : ' [리포트 미발행 — 픽스처 3종의 실재만 검사]'}`,
+      missingE3.length === 0 && violationsE3.length === 0,
+      `missing=${JSON.stringify(missingE3)} fixtureCommits=${JSON.stringify(fixtureCommitsE3)} reports=${JSON.stringify(reportCommitsE3)} violations=${JSON.stringify(violationsE3)}`);
+  }
+
+  // --- 16. E3 계측: 분해 항등식과 이산 격자 -------------------------------
+  // E3의 설명은 통째로 하나의 항등식 위에 서 있다: 게이트의 생존 조건은 **정확히** `rank < taken`
+  // 이므로 recall은 (rank 벡터, taken 벡터)의 완전한 함수다. 그 항등식이 깨지면 분해도 결론도
+  // 같이 무너지므로, 여기서 축소 실행으로 실측한다 — 리포트의 문장이 아니라 코드가 지킨다.
+  {
+    const e3Out = path.join(sandbox('gate-recall-e3-out'), 'reduced-e3.json');
+    let e3 = null;
+    let e3Error = null;
+    try {
+      execFileSync(process.execPath, [HARNESS, '--e3', '--levels', '50,100', '--seeds', '3', '--out', e3Out], { encoding: 'utf8' });
+      e3 = JSON.parse(fs.readFileSync(e3Out, 'utf8'));
+    } catch (err) {
+      e3Error = err;
+      e3 = { refutation: {}, trends: null, decomposition: null, analysisConfig: null, samples: [] };
+    }
+    ok('gate-recall E3 reduced run completes',
+      e3Error === null,
+      `${e3Error?.message ?? ''} ${e3Error?.stderr ?? ''}`.trim().split('\n').slice(0, 4).join(' | '));
+
+    // 모형 항등식. 불일치가 **한 건이라도** 있으면 R8이 발화하고 분해는 무효다.
+    const mc = e3.refutation?.R8?.basis ?? {};
+    ok('E3 survival identity `rank < taken` matches observed survival on every question of every sample',
+      e3.refutation?.R8?.fired === false && mc.samplesWithMismatch === 0
+        && mc.recallReconstructionMismatches === 0 && mc.totalQuestionChecks > 0,
+      `R8=${JSON.stringify(e3.refutation?.R8?.fired)} basis=${JSON.stringify(mc)}`);
+
+    // 분해 잔차. 성분 셋의 합이 관측 Δ와 어긋나면 반사실 배선이 틀린 것이다.
+    const worstResidual = Math.max(0, ...(e3.decomposition ?? []).map((d) => Math.abs(d.residual)));
+    ok('E3 (rank, taken) decomposition closes exactly (residual ≈ 0)',
+      (e3.decomposition ?? []).length > 0 && worstResidual <= 1e-12,
+      `n=${(e3.decomposition ?? []).length} worstResidual=${worstResidual}`);
+
+    // **이산 격자 회귀 고정.** recall은 맞은문항수/문항수라 델타는 1/20의 정확한 배수여야 하는데,
+    // 배정도에서는 그렇지 않다: 0.25−0.20 = 0.04999…이고 0.20−0.15 = 0.05000…2다. 양자화를
+    // 지우면 **같은 크기(문항 1개 이동)가 등가한계 0.05의 반대편에 떨어져** 판정이 갈린다.
+    // 실제로 이 하니스에서 200→400의 none과 back이 동일한 CI인데 flat/indeterminate로 갈렸다.
+    // 그래서 (a) 부동소수점이 실제로 그렇게 어긋난다는 사실과 (b) 격자 반올림이 그것을 정확히
+    // 0.05로 되돌린다는 사실을 둘 다 못박는다 — (b)만 걸면 결함이 사라져도 초록이라 무의미하다.
+    const q = e3.analysisConfig?.recallQuantum ?? null;
+    const naiveHigh = 0.20 - 0.15;
+    const naiveLow = 0.25 - 0.20;
+    const roundTrip = (x) => Math.round(x / q) * q;
+    ok('E3 quantizes recall deltas onto the measurement grid (float error must not decide the equivalence verdict)',
+      q === 1 / 20 && e3.analysisConfig?.equivalenceBoundInclusive === true
+        && naiveLow !== 0.05 && naiveHigh !== 0.05
+        && roundTrip(naiveLow) === 0.05 && roundTrip(naiveHigh) === 0.05,
+      `quantum=${q} naive=[${naiveLow}, ${naiveHigh}] rounded=[${q ? roundTrip(naiveLow) : 'n/a'}, ${q ? roundTrip(naiveHigh) : 'n/a'}]`);
+
+    // 방향 판정 네 값은 상호배타·전수적이어야 한다. 예상 밖 문자열이 새면 리포트가 그것을
+    // 조용히 무시하고 나머지만 세게 된다.
+    const DIRECTIONS = new Set(['rising', 'falling', 'flat', 'indeterminate']);
+    const badDirections = (e3.trends ?? []).filter((t) => !DIRECTIONS.has(t.direction));
+    ok('E3 trend verdicts stay inside the four pre-registered categories',
+      (e3.trends ?? []).length > 0 && badDirections.length === 0,
+      `n=${(e3.trends ?? []).length} bad=${JSON.stringify(badDirections.map((t) => t.direction))}`);
+
+    // **재지 않은 것을 잰 것처럼 적지 않는다.** E1·E2 픽스처에는 analysis 블록이 없으므로 그
+    // 경로의 산출에는 analysisConfig·trends·decomposition이 전부 null이어야 한다. 빈 배열로
+    // 나오면 "쟀는데 아무것도 없었다"로 읽힌다.
+    ok('E1 path reports E3 analysis fields as null, not as empty results',
+      reduced.analysisConfig === null && reduced.trends === null && reduced.decomposition === null,
+      `analysisConfig=${JSON.stringify(reduced.analysisConfig)} trends=${JSON.stringify(reduced.trends)} decomposition=${JSON.stringify(reduced.decomposition)}`);
   }
 }
 
